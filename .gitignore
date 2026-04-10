@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+.boxagent
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.DS_Store
+.litellm
+.harness/
+.test_bahome
+.test_bahome-local
+boxagent.code-workspace
