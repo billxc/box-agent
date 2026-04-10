@@ -4,19 +4,14 @@ BoxAgent, abbreviated as BA, is a self-hosted AI agent gateway: receive commands
 
 ## Documentation
 
-- Operator-oriented usage guide: `docs/usage-guide.md`
 - Backend setup overview: `docs/auth-api-keys.md`
 - Claude setup: `docs/claude-setup.md`
 - Codex setup: `docs/codex-setup.md`
 - Maintainer-oriented codebase guide: `docs/codebase-guide.md`
 - Product vision: `docs/vision.md`
-- Current status and known issues: `docs/status.md`
 - Design decisions log: `docs/decisions.md`
-- Historical design docs (archived): `docs/archive/`
-- Bug tracker: `docs/bugs/`
-- Feature tracker: `docs/features/`
 
-If you are trying to understand how the current implementation actually works, read `docs/codebase-guide.md` before relying on the older design docs.
+If you are trying to understand how the current implementation actually works, start with `docs/codebase-guide.md`.
 
 ## Quick Start
 
@@ -31,10 +26,10 @@ If you are trying to understand how the current implementation actually works, r
 
 ```bash
 # Run once from GitHub
-uvx --from git+https://github.com/billxc/box-agent.git boxagent
+uvx --from git+https://github.com/user/box-agent.git boxagent
 
 # Or install as a tool for repeated use
-uv tool install git+https://github.com/billxc/box-agent.git
+uv tool install git+https://github.com/user/box-agent.git
 boxagent doctor --fix
 boxagent
 ```
@@ -42,7 +37,7 @@ boxagent
 #### Option B: Clone and develop locally
 
 ```bash
-git clone https://github.com/billxc/box-agent.git && cd box-agent
+git clone https://github.com/user/box-agent.git && cd box-agent
 uv sync --dev
 
 # Check environment and auto-install missing dependencies
@@ -58,11 +53,11 @@ For backend auth / API keys, see `docs/auth-api-keys.md`.
 
 #### Running as a Background Service
 
-Use [easy-service](https://github.com/billxc/easy-service) to register BoxAgent as a system service:
+Use [easy-service](https://github.com/user/easy-service) to register BoxAgent as a system service:
 
 ```bash
 # Install easy-service
-uv tool install git+https://github.com/billxc/easy-service.git
+uv tool install git+https://github.com/user/easy-service.git
 
 # If installed as uv tool (Option A)
 easy-service install boxagent -- boxagent
@@ -227,9 +222,9 @@ check-updates:
   enabled: true
 
 node_overrides:
-  devbox-xl:
+  my-server:
     daily-report:
-      prompt: "Check disk usage on Edge XL and summarize"
+      prompt: "Check disk usage and summarize"
     xl-only-task:
       cron: "30 9 * * *"
       prompt: "Run only on XL"
@@ -312,15 +307,15 @@ Telegram
 TelegramChannel
   ↕
 Router
-  ├─ CLIProcess        ─ claude CLI
-  ├─ CodexCLIProcess   ─ codex CLI (exec --json)
+  ├─ ClaudeProcess     ─ claude CLI
+  ├─ CodexProcess      ─ codex CLI (exec --json)
   └─ ACPProcess        ─ codex-acp
   ↕
 Storage / Watchdog / Scheduler / HTTP API
 ```
 
-- **CLIProcess**: Spawns `claude --output-format stream-json -p <msg>` per turn. Parses NDJSON output and maintains session continuity via `--resume`. (Now `ClaudeProcess`, inherits from `BaseCLIProcess`.)
-- **CodexCLIProcess**: Spawns `codex exec --json <msg>` per turn. Parses JSONL output (thread.started, item.completed, etc.) and maintains session continuity via `codex exec resume <thread_id>`. (Now `CodexProcess`, inherits from `BaseCLIProcess`.)
+- **ClaudeProcess**: Spawns `claude --output-format stream-json -p <msg>` per turn. Parses NDJSON output and maintains session continuity via `--resume`. Inherits from `BaseCLIProcess`.
+- **CodexProcess**: Spawns `codex exec --json <msg>` per turn. Parses JSONL output (thread.started, item.completed, etc.) and maintains session continuity via `codex exec resume <thread_id>`. Inherits from `BaseCLIProcess`.
 - **ACPProcess**: Maintains an ACP connection to `codex-acp`, maps `session_update` events to `on_stream()` / `on_tool_update()`, and uses `session/cancel` for in-flight turn cancellation.
 - **TelegramChannel**: Sends/receives via aiogram 3. Streams responses by editing messages, throttled at 300ms / 200 chars. Uses MarkdownV2 formatting with a single-pass tokenizer (`mdv2.py`).
 - **Router**: Auth check → command dispatch → agent dispatch. Adapts AgentCallback to channel output.
@@ -365,27 +360,6 @@ uv run pytest -m integration
 
 # E2E tests (requires bot token + chat ID)
 BOXAGENT_TEST_BOT_TOKEN="..." BOXAGENT_TEST_CHAT_ID="..." uv run pytest -m integration
-
-# Backend regression harness (Claude CLI)
-python3 tools/acp_mock_chat.py \
-  --backend claude-cli \
-  --suite-json docs/research/claude-cli-smoke-suite.json \
-  --no-print-events \
-  --result-json /tmp/claude-results.json
-
-# Backend regression harness (Codex ACP)
-python3 tools/acp_mock_chat.py \
-  --backend codex-acp \
-  --suite-json docs/research/acp-integration/mock-bug-suite.json \
-  --workspace /tmp/acp-test \
-  --no-print-events \
-  --result-json /tmp/codex-acp-results.json
-
-# Judge harness output
-python3 tools/judge_harness_results.py \
-  --suite-json docs/research/acp-integration/mock-bug-suite.json \
-  --result-json /tmp/codex-acp-results.json \
-  --judge-json /tmp/codex-acp-judge.json
 ```
 
 ### Project Structure
@@ -422,18 +396,27 @@ tests/
 │   ├── test_claude_process.py     # ClaudeProcess stream parsing, cancel, queue
 │   ├── test_codex_process.py      # CodexProcess JSONL parsing, resume, cancel
 │   ├── test_acp_process.py        # ACPProcess event mapping, cancel, lifecycle
-│   ├── test_config.py       # Config loading, validation, env overrides
-│   ├── test_router.py       # Auth, commands, dispatch
-│   ├── test_commands.py     # /status, /new, /cancel, /compact, /model, /exec
-│   ├── test_gateway.py      # Start/stop orchestration
-│   ├── test_storage.py      # Session persistence helpers
-│   ├── test_watchdog.py     # Dead process detection
-│   ├── test_splitter.py     # Message splitting logic
-│   ├── test_mdv2.py         # MarkdownV2 conversion
-│   ├── test_telegram_channel.py  # TelegramChannel send/stream/throttle
-│   ├── test_display.py      # Tool call formatting modes
-│   └── test_scheduler.py    # Cron loading, catch-up, append/isolate flows
+│   ├── test_base_cli.py           # BaseCLIProcess command shim resolution
+│   ├── test_config.py             # Config loading, validation, env overrides
+│   ├── test_context.py            # Session context building and field injection
+│   ├── test_router.py             # Auth, commands, dispatch
+│   ├── test_router_cancel_integration.py  # Router-level /cancel with backend state
+│   ├── test_router_late_stream_race.py    # Late stream chunks after router close
+│   ├── test_commands.py           # /status, /new, /cancel, /compact, /model, /exec
+│   ├── test_gateway.py            # Start/stop orchestration
+│   ├── test_storage.py            # Session persistence helpers
+│   ├── test_watchdog.py           # Dead process detection
+│   ├── test_splitter.py           # Message splitting logic
+│   ├── test_mdv2.py               # MarkdownV2 conversion
+│   ├── test_telegram_channel.py   # TelegramChannel send/stream/throttle
+│   ├── test_typing_indicator.py   # Typing indicator lifecycle management
+│   ├── test_display.py            # Tool call formatting modes
+│   ├── test_scheduler.py          # Cron loading, catch-up, append/isolate flows
+│   ├── test_schedule_cli.py       # Schedule CLI subcommands (add, del, enable, list)
+│   ├── test_mcp_server.py         # MCP server tools and media sending
+│   ├── test_harness_judge.py      # Rule-based harness result judging
+│   └── test_main.py               # CLI entry point, --ba-dir flag
 └── integration/
-    ├── test_cli_real.py     # Real Claude CLI subprocess path
-    └── test_e2e.py          # Real Telegram + gateway flow
+    ├── test_cli_real.py           # Real Claude CLI subprocess path
+    └── test_e2e.py                # Real Telegram + gateway flow
 ```
