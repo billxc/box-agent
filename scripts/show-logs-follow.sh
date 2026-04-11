@@ -1,0 +1,1 @@
+easy-service logs boxagent -f
