@@ -26,10 +26,10 @@ If you are trying to understand how the current implementation actually works, s
 
 ```bash
 # Run once from GitHub
-uvx --from git+https://github.com/user/box-agent.git boxagent
+uvx --from git+https://github.com/billxc/box-agent.git boxagent
 
 # Or install as a tool for repeated use
-uv tool install git+https://github.com/user/box-agent.git
+uv tool install git+https://github.com/billxc/box-agent.git
 boxagent doctor --fix
 boxagent
 ```
@@ -37,7 +37,7 @@ boxagent
 #### Option B: Clone and develop locally
 
 ```bash
-git clone https://github.com/user/box-agent.git && cd box-agent
+git clone https://github.com/billxc/box-agent.git && cd box-agent
 uv sync --dev
 
 # Check environment and auto-install missing dependencies
@@ -53,11 +53,11 @@ For backend auth / API keys, see `docs/auth-api-keys.md`.
 
 #### Running as a Background Service
 
-Use [easy-service](https://github.com/user/easy-service) to register BoxAgent as a system service:
+Use [easy-service](https://github.com/billxc/easy-service) to register BoxAgent as a system service:
 
 ```bash
 # Install easy-service
-uv tool install git+https://github.com/user/easy-service.git
+uv tool install git+https://github.com/billxc/easy-service.git
 
 # If installed as uv tool (Option A)
 easy-service install boxagent -- boxagent

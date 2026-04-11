@@ -29,7 +29,7 @@ Both Claude CLI and Codex CLI need a backend API. Three common options:
 
 ### 2. xc-copilot-api (GitHub Copilot proxy)
 
-Use GitHub Copilot credits via [xc-copilot-api](https://github.com/user/xc-copilot-api):
+Use GitHub Copilot credits via [xc-copilot-api](https://github.com/billxc/xc-copilot-api):
 
 ```bash
 # Start the proxy
