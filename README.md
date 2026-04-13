@@ -63,6 +63,8 @@ uv tool install git+https://github.com/billxc/easy-service.git
 easy-service install boxagent -- boxagent
 # If running from cloned repo (Option B)
 easy-service install boxagent -- uv run --project /path/to/box-agent boxagent
+# If running via uvx (no install needed)
+easy-service install boxagent -- uvx --from git+https://github.com/billxc/box-agent.git boxagent
 
 easy-service start boxagent
 
