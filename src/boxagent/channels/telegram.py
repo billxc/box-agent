@@ -62,6 +62,7 @@ class TelegramChannel:
             BotCommand(command="exec", description="Run a shell command (e.g. /exec ls -la)"),
             BotCommand(command="sync_skills", description="Re-sync linked skill directories"),
             BotCommand(command="trust_workspace", description="Trust current workspace for agent"),
+            BotCommand(command="review_loop", description="Multi-agent adversarial review loop"),
             BotCommand(command="version", description="Show version and commit hash"),
             BotCommand(command="help", description="Show available commands"),
         ])

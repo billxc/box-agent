@@ -27,6 +27,7 @@ class ClaudeProcess(BaseCLIProcess):
     # Internal state for streaming tool input accumulation
     _tool_inputs: dict[int, list[str]] = field(default_factory=dict, repr=False)
     _tool_names: dict[int, str] = field(default_factory=dict, repr=False)
+    fork_session: bool = False
 
     @property
     def _backend_label(self) -> str:
@@ -62,6 +63,9 @@ class ClaudeProcess(BaseCLIProcess):
             args += ["--agent", self.agent]
         if self.session_id:
             args += ["--resume", self.session_id]
+            if self.fork_session:
+                args.append("--fork-session")
+                self.fork_session = False  # only fork on the first turn
 
         # MCP server config for Telegram media tools
         if self.bot_token and chat_id:

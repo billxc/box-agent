@@ -110,6 +110,7 @@ async def cmd_help(
         "/exec — Run a shell command (e.g. /exec ls -la)\n"
         "/sync\\_skills — Re-sync linked skill directories\n"
         "/trust\\_workspace — Trust current workspace in Claude\n"
+        "/review\\_loop — Multi-agent adversarial review loop\n"
         "/version — Show version and commit hash\n"
         "/help — Show this message\n\n"
         "Prefix with @model to use a model for one message:\n"

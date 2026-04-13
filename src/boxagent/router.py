@@ -21,7 +21,7 @@ from boxagent.router_commands import (
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_COMMANDS = {"/status", "/new", "/cancel", "/resume", "/start", "/help", "/verbose", "/sync_skills", "/compact", "/model", "/exec", "/version", "/trust_workspace"}
+SYSTEM_COMMANDS = {"/status", "/new", "/cancel", "/resume", "/start", "/help", "/verbose", "/sync_skills", "/compact", "/model", "/exec", "/version", "/trust_workspace", "/review_loop"}
 
 
 @dataclass
@@ -107,8 +107,42 @@ class Router:
             await cmd_version(msg, channel=self.channel)
         elif command == "/trust_workspace":
             await cmd_trust_workspace(msg, channel=self.channel, workspace=self.workspace)
+        elif command == "/review_loop":
+            await self._cmd_review_loop(msg)
 
     # ---- Core session commands ----
+
+    async def _cmd_review_loop(self, msg: IncomingMessage):
+        """Start a multi-agent review loop."""
+        parts = msg.text.split(maxsplit=1)
+        topic = parts[1] if len(parts) > 1 else ""
+        if not topic:
+            await self.channel.send_text(
+                msg.chat_id,
+                "Usage: /review_loop <topic>\n"
+                "Example: /review_loop write a thread-safe LRU cache",
+            )
+            return
+
+        if self.ai_backend != "claude-cli":
+            await self.channel.send_text(
+                msg.chat_id,
+                f"Review loop requires claude-cli backend (current: {self.ai_backend}). "
+                "Fork session is not supported by other backends yet.",
+            )
+            return
+
+        from boxagent.review_loop import ReviewLoopRunner
+
+        runner = ReviewLoopRunner(
+            cli_process=self.cli_process,
+            channel=self.channel,
+            chat_id=msg.chat_id,
+            workspace=self.workspace,
+            copilot_api_port=getattr(self.cli_process, "copilot_api_port", 0),
+            model=getattr(self.cli_process, "model", ""),
+        )
+        await runner.run(topic)
 
     async def _cmd_new(self, msg: IncomingMessage):
         await self._reset_backend_session()
