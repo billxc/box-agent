@@ -917,3 +917,68 @@ class TestTrustWorkspaceCommand:
         assert "ignorePatterns" in project
         # Existing data preserved
         assert data["numStartups"] == 1
+
+
+class TestCdCommand:
+    async def test_shows_current_workspace(self, router, mock_channel):
+        await router.handle_message(msg("/cd"))
+        text = mock_channel.send_text.call_args[0][1]
+        assert "/home/testuser/.boxagent/workspace" in text
+
+    async def test_invalid_directory(self, router, mock_channel):
+        await router.handle_message(msg("/cd /nonexistent/path"))
+        text = mock_channel.send_text.call_args[0][1]
+        assert "not found" in text.lower()
+
+    async def test_switches_workspace(self, router, mock_cli, mock_channel, mock_storage):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            await router.handle_message(msg(f"/cd {tmpdir}"))
+            text = mock_channel.send_text.call_args[0][1]
+            assert "switched" in text.lower()
+            assert mock_cli.workspace == router.workspace
+            assert router.workspace == str(Path(tmpdir).resolve())
+            mock_cli.reset_session.assert_called()
+            mock_storage.clear_session.assert_called_with("test-bot")
+
+    async def test_expands_tilde(self, router, mock_cli, mock_channel):
+        import os
+        home = os.path.expanduser("~")
+        await router.handle_message(msg("/cd ~"))
+        assert router.workspace == os.path.realpath(home)
+
+
+class TestBackendCommand:
+    async def test_shows_current_backend(self, router, mock_channel):
+        await router.handle_message(msg("/backend"))
+        text = mock_channel.send_text.call_args[0][1]
+        assert "claude-cli" in text
+
+    async def test_invalid_backend(self, router, mock_channel):
+        await router.handle_message(msg("/backend invalid"))
+        text = mock_channel.send_text.call_args[0][1]
+        assert "unknown" in text.lower()
+
+    async def test_same_backend_noop(self, router, mock_channel):
+        await router.handle_message(msg("/backend claude-cli"))
+        text = mock_channel.send_text.call_args[0][1]
+        assert "already" in text.lower()
+
+    async def test_switches_backend(self, router, mock_cli, mock_channel, mock_storage):
+        mock_cli.workspace = router.workspace
+        mock_cli.model = "opus"
+        mock_cli.agent = ""
+        mock_cli.bot_token = ""
+        mock_cli.copilot_api_port = 0
+        mock_cli.yolo = False
+        mock_cli.stop = AsyncMock()
+
+        await router.handle_message(msg("/backend codex-cli"))
+
+        mock_cli.stop.assert_awaited_once()
+        text = mock_channel.send_text.call_args[0][1]
+        assert "switched" in text.lower()
+        assert "codex-cli" in text
+        assert router.ai_backend == "codex-cli"
+        assert router.cli_process is not mock_cli
+        mock_storage.clear_session.assert_called_with("test-bot")

@@ -56,6 +56,8 @@ class TelegramChannel:
             BotCommand(command="resume", description="List or restore a previous session"),
             BotCommand(command="compact", description="Summarize and start new session with context"),
             BotCommand(command="model", description="Show or switch model (e.g. /model sonnet)"),
+            BotCommand(command="cd", description="Show or switch workspace directory"),
+            BotCommand(command="backend", description="Show or switch AI backend"),
             BotCommand(command="status", description="Show bot state and uptime"),
             BotCommand(command="cancel", description="Cancel the current running task"),
             BotCommand(command="verbose", description="Cycle tool call display mode"),

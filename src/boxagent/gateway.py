@@ -215,6 +215,7 @@ class Gateway:
             workspace=bot_cfg.workspace,
             extra_skill_dirs=bot_cfg.extra_skill_dirs,
             ai_backend=bot_cfg.ai_backend,
+            on_backend_switched=self._on_backend_switched,
         )
         # If resuming a saved session, skip context re-injection —
         # the backend already has context from the original session.
@@ -331,6 +332,16 @@ class Gateway:
             self._watchdogs[name].cli_process = new_cli
 
         logger.info("Bot '%s' backend restarted", name)
+
+    async def _on_backend_switched(self, bot_name: str, new_cli: object, new_backend: str) -> None:
+        """Called by Router after /backend switch — sync external references."""
+        self._cli_processes[bot_name] = new_cli
+        if self._scheduler and bot_name in self._scheduler.bot_refs:
+            self._scheduler.bot_refs[bot_name].cli_process = new_cli
+            self._scheduler.bot_refs[bot_name].ai_backend = new_backend
+        if bot_name in self._watchdogs:
+            self._watchdogs[bot_name].cli_process = new_cli
+        logger.info("Bot '%s' backend switched to %s (refs synced)", bot_name, new_backend)
 
     @property
     def _sock_path(self) -> Path:

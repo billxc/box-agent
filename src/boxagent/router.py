@@ -21,7 +21,7 @@ from boxagent.router_commands import (
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_COMMANDS = {"/status", "/new", "/cancel", "/resume", "/start", "/help", "/verbose", "/sync_skills", "/compact", "/model", "/exec", "/version", "/trust_workspace", "/review_loop"}
+SYSTEM_COMMANDS = {"/status", "/new", "/cancel", "/resume", "/start", "/help", "/verbose", "/sync_skills", "/compact", "/model", "/exec", "/version", "/trust_workspace", "/review_loop", "/cd", "/backend"}
 
 
 @dataclass
@@ -39,6 +39,7 @@ class Router:
     workspace: str = ""
     extra_skill_dirs: list[str] = field(default_factory=list)
     ai_backend: str = "claude-cli"
+    on_backend_switched: object = None  # async callback(bot_name, new_cli, new_backend)
     _compact_summary: str = field(default="", repr=False)
     _resume_context: str = field(default="", repr=False)
     _session_context_injected: bool = field(default=False, repr=False)
@@ -109,6 +110,10 @@ class Router:
             await cmd_trust_workspace(msg, channel=self.channel, workspace=self.workspace)
         elif command == "/review_loop":
             await self._cmd_review_loop(msg)
+        elif command == "/cd":
+            await self._cmd_cd(msg)
+        elif command == "/backend":
+            await self._cmd_backend(msg)
 
     # ---- Core session commands ----
 
@@ -346,6 +351,129 @@ class Router:
         self.cli_process.model = new_model
         await self.channel.send_text(
             msg.chat_id, f"Model switched: {current} → {new_model}"
+        )
+
+    async def _cmd_cd(self, msg: IncomingMessage):
+        """Show or switch the working directory."""
+        import os
+
+        parts = msg.text.strip().split(maxsplit=1)
+        current = self.workspace or "(not set)"
+
+        if len(parts) < 2:
+            await self.channel.send_text(
+                msg.chat_id, f"Current workspace: {current}"
+            )
+            return
+
+        new_path = os.path.expanduser(parts[1].strip())
+        if not os.path.isdir(new_path):
+            await self.channel.send_text(
+                msg.chat_id, f"Directory not found: {new_path}"
+            )
+            return
+
+        new_path = os.path.realpath(new_path)
+        self.cli_process.workspace = new_path
+        self.workspace = new_path
+        await self._reset_backend_session()
+        self._compact_summary = ""
+        self._resume_context = ""
+        self._session_context_injected = False
+        if self.storage:
+            self.storage.clear_session(self.bot_name)
+        await self.channel.send_text(
+            msg.chat_id, f"Workspace switched: {current} → {new_path}"
+        )
+
+    _VALID_BACKENDS = {"claude-cli", "codex-cli", "codex-acp"}
+
+    async def _cmd_backend(self, msg: IncomingMessage):
+        """Show or switch the AI backend."""
+        parts = msg.text.strip().split(maxsplit=1)
+
+        if len(parts) < 2:
+            await self.channel.send_text(
+                msg.chat_id,
+                f"Current backend: {self.ai_backend}\n"
+                f"Available: {', '.join(sorted(self._VALID_BACKENDS))}",
+            )
+            return
+
+        new_backend = parts[1].strip()
+        if new_backend not in self._VALID_BACKENDS:
+            await self.channel.send_text(
+                msg.chat_id,
+                f"Unknown backend: {new_backend}\n"
+                f"Available: {', '.join(sorted(self._VALID_BACKENDS))}",
+            )
+            return
+
+        if new_backend == self.ai_backend:
+            await self.channel.send_text(
+                msg.chat_id, f"Already using {new_backend}."
+            )
+            return
+
+        old_backend = self.ai_backend
+        old_proc = self.cli_process
+
+        # Carry over common attributes from old process.
+        workspace = getattr(old_proc, "workspace", self.workspace)
+        model = getattr(old_proc, "model", "")
+        agent = getattr(old_proc, "agent", "")
+        bot_token = getattr(old_proc, "bot_token", "")
+        copilot_api_port = getattr(old_proc, "copilot_api_port", 0)
+        yolo = getattr(old_proc, "yolo", False)
+
+        await old_proc.stop()
+
+        if new_backend == "codex-acp":
+            from boxagent.agent.acp_process import ACPProcess
+
+            new_proc = ACPProcess(
+                workspace=workspace,
+                model=model,
+                agent=agent,
+                bot_token=bot_token,
+                copilot_api_port=copilot_api_port,
+            )
+        elif new_backend == "codex-cli":
+            from boxagent.agent.codex_process import CodexProcess
+
+            new_proc = CodexProcess(
+                workspace=workspace,
+                model=model,
+                agent=agent,
+                bot_token=bot_token,
+                copilot_api_port=copilot_api_port,
+                yolo=yolo,
+            )
+        else:
+            from boxagent.agent.claude_process import ClaudeProcess
+
+            new_proc = ClaudeProcess(
+                workspace=workspace,
+                model=model,
+                agent=agent,
+                bot_token=bot_token,
+                copilot_api_port=copilot_api_port,
+                yolo=yolo,
+            )
+
+        new_proc.start()
+        self.cli_process = new_proc
+        self.ai_backend = new_backend
+        self._compact_summary = ""
+        self._resume_context = ""
+        self._session_context_injected = False
+        if self.storage:
+            self.storage.clear_session(self.bot_name)
+        # Notify Gateway so watchdog/scheduler refs are updated too.
+        if self.on_backend_switched:
+            await self.on_backend_switched(self.bot_name, new_proc, new_backend)
+        await self.channel.send_text(
+            msg.chat_id, f"Backend switched: {old_backend} → {new_backend}"
         )
 
     async def _cmd_compact(self, msg: IncomingMessage):
