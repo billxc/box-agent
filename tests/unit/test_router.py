@@ -247,7 +247,7 @@ class TestDispatch:
     async def test_failed_turn_logs_error_into_transcript(
         self, mock_channel, mock_cli, tmp_path
     ):
-        async def fail_send(prompt, callback, model="", chat_id=""):
+        async def fail_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
             mock_cli.last_turn_failed = True
             mock_cli.last_turn_error = "Claude CLI exit code 1: broken"
             await callback.on_error(mock_cli.last_turn_error)

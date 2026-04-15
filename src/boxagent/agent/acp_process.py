@@ -397,10 +397,18 @@ class ACPProcess:
             self._cancel_requested = asyncio.Event()
             self._client.set_callback(callback)
 
-            # TODO: ACP has no native system prompt support yet; prepend to
-            # user message as a fallback until upstream adds support.
+            # Inject system-level context via Codex's developer_instructions config
             if append_system_prompt:
-                message = f"{append_system_prompt}\n{message}"
+                try:
+                    await self._conn.set_config_option(
+                        config_id="developer_instructions",
+                        session_id=self._acp_session_id,
+                        value=append_system_prompt,
+                    )
+                except Exception:
+                    # Fallback: prepend to user message if config option unsupported
+                    logger.debug("ACP set_config_option failed; prepending to message", exc_info=True)
+                    message = f"{append_system_prompt}\n{message}"
 
             stop_reason = None
             try:

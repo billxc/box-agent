@@ -227,7 +227,6 @@ class TestRouterPromptSplit:
             allowed_users=[123456],
         )
         router._resume_context = "[Recovered previous session]\nUser: hi\n[End recovered session]"
-        router._session_context_injected = True  # skip session context
 
         await router.handle_message(make_msg("continue"))
 
@@ -243,7 +242,6 @@ class TestRouterPromptSplit:
             allowed_users=[123456],
         )
         router._compact_summary = "- discussed topic A\n- decided on B"
-        router._session_context_injected = True
 
         await router.handle_message(make_msg("what's next"))
 
@@ -269,7 +267,6 @@ class TestRouterPromptSplit:
             channel=mock_channel,
             allowed_users=[123456],
         )
-        router._session_context_injected = True  # skip session context
 
         await router.handle_message(msg)
 
@@ -282,7 +279,6 @@ class TestRouterPromptSplit:
             channel=mock_channel,
             allowed_users=[123456],
         )
-        router._session_context_injected = True
 
         await router.handle_message(make_msg("@opus explain this"))
 
@@ -292,7 +288,7 @@ class TestRouterPromptSplit:
         assert "explain this" in user_message
         assert "@opus" not in user_message
 
-    async def test_second_message_no_session_context(self, mock_cli, mock_channel):
+    async def test_second_message_also_has_session_context(self, mock_cli, mock_channel):
         router = Router(
             cli_process=mock_cli,
             channel=mock_channel,
@@ -307,20 +303,19 @@ class TestRouterPromptSplit:
 
         mock_cli.send.reset_mock()
 
-        # Second message — should NOT have session context
+        # Second message — should ALSO have session context
         await router.handle_message(make_msg("second"))
         second_system = mock_cli.send.call_args.kwargs.get("append_system_prompt", "")
-        assert "[BoxAgent Context]" not in second_system
+        assert "[BoxAgent Context]" in second_system
 
-    async def test_empty_append_system_prompt_when_no_context(self, mock_cli, mock_channel):
+    async def test_append_system_prompt_always_has_context(self, mock_cli, mock_channel):
         router = Router(
             cli_process=mock_cli,
             channel=mock_channel,
             allowed_users=[123456],
         )
-        router._session_context_injected = True
 
         await router.handle_message(make_msg("plain message"))
 
         append_system_prompt = mock_cli.send.call_args.kwargs.get("append_system_prompt", "")
-        assert append_system_prompt == ""
+        assert "[BoxAgent Context]" in append_system_prompt

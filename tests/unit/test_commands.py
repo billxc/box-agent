@@ -668,8 +668,8 @@ class TestAtModelPrefix:
         assert captured["prompt"] == "hello world"
         assert "[BoxAgent Context]" in captured["append_system_prompt"]
 
-    async def test_second_message_no_context(self, mock_channel, mock_storage):
-        """Context is only injected on the first message of a session."""
+    async def test_second_message_also_has_context(self, mock_channel, mock_storage):
+        """Context is injected on every message via --append-system-prompt."""
         cli = AsyncMock()
         cli.session_id = None
         cli.state = "idle"
@@ -703,6 +703,7 @@ class TestAtModelPrefix:
 
         await r.handle_message(msg("second"))
         assert captured["prompt"] == "second"
+        assert "[BoxAgent Context]" in captured["append_system_prompt"]
 
 
 class TestExecCommand:

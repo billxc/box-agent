@@ -217,10 +217,6 @@ class Gateway:
             ai_backend=bot_cfg.ai_backend,
             on_backend_switched=self._on_backend_switched,
         )
-        # If resuming a saved session, skip context re-injection —
-        # the backend already has context from the original session.
-        if session_id:
-            router._session_context_injected = True
         channel.on_message = router.handle_message
 
         await channel.start()

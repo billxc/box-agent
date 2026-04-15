@@ -42,7 +42,6 @@ class Router:
     on_backend_switched: object = None  # async callback(bot_name, new_cli, new_backend)
     _compact_summary: str = field(default="", repr=False)
     _resume_context: str = field(default="", repr=False)
-    _session_context_injected: bool = field(default=False, repr=False)
 
     async def handle_message(self, msg: IncomingMessage) -> None:
         try:
@@ -153,7 +152,6 @@ class Router:
         await self._reset_backend_session()
         self._compact_summary = ""
         self._resume_context = ""
-        self._session_context_injected = False
         if self.storage:
             self.storage.clear_session(self.bot_name)
         await self.channel.send_text(
@@ -379,7 +377,6 @@ class Router:
         await self._reset_backend_session()
         self._compact_summary = ""
         self._resume_context = ""
-        self._session_context_injected = False
         if self.storage:
             self.storage.clear_session(self.bot_name)
         await self.channel.send_text(
@@ -466,7 +463,6 @@ class Router:
         self.ai_backend = new_backend
         self._compact_summary = ""
         self._resume_context = ""
-        self._session_context_injected = False
         if self.storage:
             self.storage.clear_session(self.bot_name)
         # Notify Gateway so watchdog/scheduler refs are updated too.
@@ -521,7 +517,6 @@ class Router:
 
         self._resume_context = ""
         self._compact_summary = summary
-        self._session_context_injected = False
 
         await self.channel.send_text(
             msg.chat_id,
@@ -537,12 +532,12 @@ class Router:
         user_parts = []
         model_override = ""
 
-        # Inject session context on first message (system-level)
-        if not self._session_context_injected:
-            context = self._build_session_context()
-            if context:
-                system_parts.append(context)
-            self._session_context_injected = True
+        # Inject session context every turn via --append-system-prompt;
+        # the flag is independent of the conversation so it won't be
+        # compressed away by context window management.
+        context = self._build_session_context()
+        if context:
+            system_parts.append(context)
 
         if self._resume_context:
             system_parts.append(self._resume_context)
