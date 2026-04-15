@@ -49,6 +49,10 @@ async def cmd_status(
     bot_name: str,
     cli_process: object,
     start_time: float,
+    display_name: str = "",
+    ai_backend: str = "",
+    workspace: str = "",
+    node_id: str = "",
 ) -> None:
     uptime = int(time.time() - start_time)
     hours, remainder = divmod(uptime, 3600)
@@ -57,15 +61,30 @@ async def cmd_status(
 
     state = getattr(cli_process, "state", "unknown")
     session = getattr(cli_process, "session_id", None) or "none"
+    model = getattr(cli_process, "model", "") or "default"
+    yolo = getattr(cli_process, "yolo", False)
+    tool_display = getattr(channel, "tool_calls_display", "")
 
-    text = (
-        f"**Status**\n"
-        f"Bot: {bot_name}\n"
-        f"State: {state}\n"
-        f"Session: {session}\n"
-        f"Uptime: {uptime_str}"
-    )
-    await channel.send_text(msg.chat_id, text)
+    lines = [
+        f"**Status**",
+        f"Bot: {bot_name}",
+    ]
+    if display_name and display_name != bot_name:
+        lines.append(f"Display: {display_name}")
+    if node_id:
+        lines.append(f"Node: {node_id}")
+    lines.append(f"Backend: {ai_backend or 'unknown'}")
+    lines.append(f"Model: {model}")
+    lines.append(f"State: {state}")
+    lines.append(f"Session: {session}")
+    lines.append(f"Workspace: {workspace or '(not set)'}")
+    if yolo:
+        lines.append(f"Yolo: on")
+    if tool_display:
+        lines.append(f"Tool display: {tool_display}")
+    lines.append(f"Uptime: {uptime_str}")
+
+    await channel.send_text(msg.chat_id, "\n".join(lines))
 
 
 async def cmd_start(

@@ -89,6 +89,8 @@ class Router:
             await cmd_status(
                 msg, channel=self.channel, bot_name=self.display_name or self.bot_name,
                 cli_process=self.cli_process, start_time=self.start_time,
+                display_name=self.display_name, ai_backend=self.ai_backend,
+                workspace=self.workspace, node_id=self.node_id,
             )
         elif command == "/start":
             await cmd_start(msg, channel=self.channel, bot_name=self.display_name or self.bot_name)

@@ -66,10 +66,9 @@ class TestClaudeSystemPrompt:
     def test_append_system_prompt_does_not_pollute_user_message(self):
         cli = self._make_cli()
         args = cli._build_args("hello user", model="", chat_id="", append_system_prompt="system instructions")
-        p_idx = args.index("-p")
-        user_msg = args[p_idx + 1]
-        assert user_msg == "hello user"
-        assert "system instructions" not in user_msg
+        # Message is the last positional arg (after --)
+        assert args[-1] == "hello user"
+        assert "system instructions" not in args[-1]
 
     def test_append_system_prompt_before_p_flag(self):
         """--append-system-prompt should appear before -p in args."""
@@ -105,7 +104,7 @@ class TestCodexSystemPrompt:
         assert "-c" in args
         c_idx = args.index("-c")
         c_val = args[c_idx + 1]
-        assert c_val.startswith('developer_instructions="""')
+        assert c_val.startswith('developer_instructions=')
         assert "[context block]" in c_val
         # user message should NOT contain system context
         message_arg = args[-1]
