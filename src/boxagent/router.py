@@ -585,26 +585,45 @@ class Router:
             drain_output = getattr(self.cli_process, "drain_output", None)
             if callable(drain_output):
                 await drain_output()
-            if used_compact:
+            turn_failed = getattr(self.cli_process, "last_turn_failed", False) is True
+            if used_compact and not turn_failed:
                 self._compact_summary = ""
         finally:
             await callback.close()
 
-        logger.info(
-            "Turn complete: bot=%s chat_id=%s session=%s assistant_len=%d",
-            self.bot_name,
-            msg.chat_id,
-            getattr(self.cli_process, "session_id", None),
-            len(callback.collected_text),
-        )
+        turn_failed = getattr(self.cli_process, "last_turn_failed", False) is True
+        turn_error = getattr(self.cli_process, "last_turn_error", "")
+        if not isinstance(turn_error, str):
+            turn_error = ""
+
+        if turn_failed:
+            logger.warning(
+                "Turn failed: bot=%s chat_id=%s session=%s assistant_len=%d error=%s",
+                self.bot_name,
+                msg.chat_id,
+                getattr(self.cli_process, "session_id", None),
+                len(callback.collected_text),
+                turn_error,
+            )
+        else:
+            logger.info(
+                "Turn complete: bot=%s chat_id=%s session=%s assistant_len=%d",
+                self.bot_name,
+                msg.chat_id,
+                getattr(self.cli_process, "session_id", None),
+                len(callback.collected_text),
+            )
 
         # Log transcript
         if self.local_dir:
             sid = getattr(self.cli_process, "session_id", None) or "unknown"
+            assistant_text = callback.collected_text
+            if turn_failed and not assistant_text and turn_error:
+                assistant_text = f"Error: {turn_error}"
             log_turn(
                 self.local_dir / "transcripts" / f"{sid}.jsonl",
                 self.bot_name, msg.chat_id, text,
-                callback.collected_text,
+                assistant_text,
             )
 
         # Persist session after each turn

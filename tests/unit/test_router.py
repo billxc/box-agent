@@ -19,6 +19,8 @@ def mock_cli():
     proc.state = "idle"
     proc.session_id = "sess_123"
     proc.supports_session_persistence = True
+    proc.last_turn_failed = False
+    proc.last_turn_error = ""
     proc.reset_session = AsyncMock(
         side_effect=lambda: setattr(proc, "session_id", None)
     )
@@ -193,7 +195,12 @@ class TestDispatch:
 
         await router.handle_message(make_msg("hello"))
 
-        storage.save_session.assert_called_once_with("bot-1", "sess_123")
+        storage.save_session.assert_called_once_with(
+            "bot-1",
+            "sess_123",
+            preview="hello",
+            backend="claude-cli",
+        )
 
     async def test_stream_reply_does_not_use_display_name_prefix(self, mock_channel):
         backend = _StreamingBackend(stream_text="hello")
@@ -230,4 +237,31 @@ class TestDispatch:
 
         await router.handle_message(make_msg("hello"))
 
-        storage.save_session.assert_called_once_with("bot-1", "sess_123")
+        storage.save_session.assert_called_once_with(
+            "bot-1",
+            "sess_123",
+            preview="hello",
+            backend="claude-cli",
+        )
+
+    async def test_failed_turn_logs_error_into_transcript(
+        self, mock_channel, mock_cli, tmp_path
+    ):
+        async def fail_send(prompt, callback, model="", chat_id=""):
+            mock_cli.last_turn_failed = True
+            mock_cli.last_turn_error = "Claude CLI exit code 1: broken"
+            await callback.on_error(mock_cli.last_turn_error)
+
+        mock_cli.send.side_effect = fail_send
+        router = Router(
+            cli_process=mock_cli,
+            channel=mock_channel,
+            allowed_users=[123456],
+            bot_name="bot-1",
+            local_dir=tmp_path,
+        )
+
+        await router.handle_message(make_msg("hello"))
+
+        transcript = (tmp_path / "transcripts" / "sess_123.jsonl").read_text()
+        assert "Error: Claude CLI exit code 1: broken" in transcript

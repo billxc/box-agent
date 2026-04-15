@@ -29,6 +29,26 @@ class ClaudeProcess(BaseCLIProcess):
     _tool_names: dict[int, str] = field(default_factory=dict, repr=False)
     fork_session: bool = False
 
+    def _format_result_error(self, event: dict) -> str:
+        parts: list[str] = []
+        subtype = event.get("subtype")
+        if isinstance(subtype, str) and subtype:
+            parts.append(subtype.replace("_", " "))
+
+        errors = event.get("errors")
+        if isinstance(errors, list):
+            for item in errors:
+                if isinstance(item, str) and item.strip():
+                    parts.append(item.strip())
+        elif isinstance(errors, str) and errors.strip():
+            parts.append(errors.strip())
+
+        result = event.get("result")
+        if isinstance(result, str) and result.strip():
+            parts.append(result.strip())
+
+        return ": ".join(parts)
+
     @property
     def _backend_label(self) -> str:
         return "Claude CLI"
@@ -143,5 +163,10 @@ class ClaudeProcess(BaseCLIProcess):
                 self._tool_inputs.pop(index, None)
 
         elif event_type == "result":
+            if event.get("is_error"):
+                detail = self._format_result_error(event)
+                if detail:
+                    self._record_turn_error_detail(detail)
+                return
             if "session_id" in event:
                 self.session_id = event["session_id"]
