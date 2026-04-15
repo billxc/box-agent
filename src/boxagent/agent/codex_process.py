@@ -85,8 +85,12 @@ class CodexProcess(BaseCLIProcess):
         # Inject system-level context via Codex's developer_instructions config
         dev_instr_args: list[str] = []
         if append_system_prompt:
-            escaped = append_system_prompt.replace('\\', '\\\\').replace('"', '\\"')
-            dev_instr_args = ["-c", f'developer_instructions="""{escaped}"""']
+            escaped = (append_system_prompt
+                       .replace('\\', '\\\\')
+                       .replace('"', '\\"')
+                       .replace('\n', '\\n')
+                       .replace('\r', '\\r'))
+            dev_instr_args = ["-c", f'developer_instructions="{escaped}"']
 
         if self.session_id:
             # Resume: restricted flag set (no --color, --sandbox, -C)

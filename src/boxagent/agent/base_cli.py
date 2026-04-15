@@ -255,6 +255,7 @@ class BaseCLIProcess:
 
         self._process = await asyncio.create_subprocess_exec(
             *self._resolve_args(args),
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=self.workspace,

@@ -78,8 +78,6 @@ class ClaudeProcess(BaseCLIProcess):
         if append_system_prompt:
             args += ["--append-system-prompt", append_system_prompt]
 
-        args += ["-p", message]
-
         if model:
             args += ["--model", model]
         if self.agent:
@@ -106,6 +104,11 @@ class ClaudeProcess(BaseCLIProcess):
                 }
             }})
             args += ["--mcp-config", mcp_config]
+
+        # -p (print mode) is a boolean flag; message is a positional arg.
+        # Use "--" to stop option parsing so messages starting with "-"
+        # are not mistaken for unknown CLI options by Commander.js.
+        args += ["-p", "--", message]
 
         return args
 
