@@ -33,8 +33,18 @@ codex exec "reply with exactly OK"
 走 GitHub Copilot 额度：
 
 ```bash
+# 一次性认证
+npx xc-copilot-api@latest auth
+
+# 推荐：用 easy-service 注册为后台服务
+easy-service install copilot-api -- npx xc-copilot-api@latest start
+easy-service start copilot-api
+
+# 或手动运行
 npx xc-copilot-api@latest start
 ```
+
+> **Note:** BoxAgent 的 `global.copilot_api: true` 配置项已废弃。请按上面方式独立运行 xc-copilot-api，然后在下面配置 Codex CLI 直接连接。
 
 `~/.codex/config.toml`:
 

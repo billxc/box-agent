@@ -40,7 +40,7 @@ class AppConfig:
     node_id: str = ""
     log_level: str = "info"
     api_port: int = 0
-    copilot_api: bool = False
+    copilot_api: bool = False  # Deprecated: use easy-service to run xc-copilot-api instead
     bots: dict[str, BotConfig] = field(default_factory=dict)
     telegram_bots: dict[str, str] = field(default_factory=dict)
 

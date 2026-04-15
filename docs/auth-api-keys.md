@@ -32,10 +32,19 @@ Both Claude CLI and Codex CLI need a backend API. Three common options:
 Use GitHub Copilot credits via [xc-copilot-api](https://github.com/billxc/xc-copilot-api):
 
 ```bash
-# Start the proxy
+# One-time auth
+npx xc-copilot-api@latest auth
+
+# Run as a background service (recommended)
+easy-service install copilot-api -- npx xc-copilot-api@latest start
+easy-service start copilot-api
+
+# Or run manually
 npx xc-copilot-api@latest start
 # → Listening on http://localhost:4141/
 ```
+
+> **Note:** The `global.copilot_api: true` option in BoxAgent config is **deprecated**. It overrides Claude CLI's settings in ways that cause issues. Instead, run `xc-copilot-api` as a standalone service (as shown above) and configure Claude/Codex directly below.
 
 Claude config (`~/.claude/settings.json`):
 

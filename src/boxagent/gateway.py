@@ -150,8 +150,14 @@ class Gateway:
         self._storage = Storage(local_dir=self.local_dir)
         logger.info("Gateway starting (node=%s)", self.config.node_id or "(any)")
 
-        # Start copilot-api proxy if enabled
+        # Start copilot-api proxy if enabled (deprecated)
         if self.config.copilot_api:
+            logger.warning(
+                "global.copilot_api is deprecated and will be removed in a future release. "
+                "It overrides Claude CLI settings (--setting-sources '') causing issues. "
+                "Instead, run xc-copilot-api as a standalone service: "
+                "easy-service install copilot-api -- npx xc-copilot-api@latest start"
+            )
             await self._start_copilot_api()
 
         for name, bot_cfg in self.config.bots.items():

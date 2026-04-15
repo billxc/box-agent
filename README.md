@@ -51,6 +51,8 @@ uv run boxagent
 
 For backend auth / API keys, see `docs/auth-api-keys.md`.
 
+> **Note:** The `global.copilot_api` config option is deprecated and will be removed in a future release. It overrides Claude CLI's settings in ways that cause issues (e.g. `--setting-sources ""` clears all user config). Instead, run `xc-copilot-api` as a standalone service via [easy-service](https://github.com/billxc/easy-service) and configure Claude/Codex to use it directly — see `docs/auth-api-keys.md` for details.
+
 #### Running as a Background Service
 
 Use [easy-service](https://github.com/billxc/easy-service) to register BoxAgent as a system service:

@@ -15,8 +15,18 @@ claude -p "reply with exactly OK"
 走 GitHub Copilot 额度，免费：
 
 ```bash
+# 一次性认证
+npx xc-copilot-api@latest auth
+
+# 推荐：用 easy-service 注册为后台服务
+easy-service install copilot-api -- npx xc-copilot-api@latest start
+easy-service start copilot-api
+
+# 或手动运行
 npx xc-copilot-api@latest start
 ```
+
+> **Note:** BoxAgent 的 `global.copilot_api: true` 配置项已废弃，会覆盖 Claude CLI 的用户配置导致问题。请按上面方式独立运行 xc-copilot-api，然后在下面配置 Claude CLI 直接连接。
 
 `~/.claude/settings.json`:
 
