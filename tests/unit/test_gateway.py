@@ -151,6 +151,12 @@ class TestGateway:
 
             await gw._start_bot("my-bot", bot_cfg)
 
+            gw._storage.load_session.assert_called_once_with(
+                "my-bot",
+                backend="claude-cli",
+                workspace=str(tmp_path),
+            )
+
             mock_channel.send_text.assert_called_once()
             call_args = mock_channel.send_text.call_args
             assert call_args[0][0] == "111"
@@ -233,12 +239,22 @@ class TestGateway:
             await gw._start_bot("my-bot", bot_cfg)
 
         assert MockACP.call_args.kwargs["session_id"] == "saved-acp-session"
+        gw._storage.load_session.assert_called_once_with(
+            "my-bot",
+            backend="codex-acp",
+            workspace=str(tmp_path),
+        )
 
     async def test_stop_persists_codex_session_reference(self, tmp_path):
         from boxagent.gateway import Gateway
 
         mock_config = MagicMock()
-        mock_config.bots = {}
+        mock_config.bots = {
+            "test-bot": MagicMock(
+                ai_backend="claude-cli",
+                workspace=str(tmp_path),
+            )
+        }
 
         gw = Gateway(config=mock_config, config_dir=tmp_path)
         gw._storage = MagicMock()
@@ -248,10 +264,21 @@ class TestGateway:
         mock_cli.supports_session_persistence = True
         gw._channels = {"test-bot": mock_ch}
         gw._cli_processes = {"test-bot": mock_cli}
+        gw._routers = {
+            "test-bot": MagicMock(
+                ai_backend="claude-cli",
+                workspace=str(tmp_path),
+            )
+        }
 
         await gw.stop()
 
-        gw._storage.save_session.assert_called_once_with("test-bot", "sess_123")
+        gw._storage.save_session.assert_called_once_with(
+            "test-bot",
+            "sess_123",
+            backend="claude-cli",
+            workspace=str(tmp_path),
+        )
 
     def test_sync_skills_uses_agents_dir_for_codex_acp(self, tmp_path):
         from boxagent.gateway import sync_skills

@@ -81,7 +81,11 @@ class TestNewCommand:
         await router.handle_message(msg("/new"))
         mock_cli.reset_session.assert_called_once()
         assert mock_cli.session_id is None
-        mock_storage.clear_session.assert_called_once_with("test-bot")
+        mock_storage.clear_session.assert_called_once_with(
+            "test-bot",
+            backend="claude-cli",
+            workspace="/home/testuser/.boxagent/workspace",
+        )
 
     async def test_clears_pending_compact_summary(self, router):
         router._compact_summary = "stale summary"
@@ -117,9 +121,15 @@ class TestResumeCommand:
 
         await router.handle_message(msg("/resume"))
 
-        text = mock_channel.send_text.call_args[0][1]
+        mock_storage.list_session_history.assert_called_once_with(
+            "test-bot",
+            backend="claude-cli",
+            workspace="/home/testuser/.boxagent/workspace",
+        )
+
+        text = mock_channel.send_text_with_inline_keyboard.call_args[0][1]
+        assert "Resume Sessions" in text
         assert "sess_old" in text
-        assert "/resume <index>" in text
 
     async def test_resumes_native_session_by_index(
         self, router, mock_cli, mock_storage
@@ -133,7 +143,10 @@ class TestResumeCommand:
         mock_cli.reset_session.assert_awaited_once()
         assert mock_cli.session_id == "sess_old"
         mock_storage.save_session.assert_called_once_with(
-            "test-bot", "sess_old"
+            "test-bot",
+            "sess_old",
+            backend="claude-cli",
+            workspace="/home/testuser/.boxagent/workspace",
         )
 
     async def test_lists_codex_local_history(
@@ -144,6 +157,7 @@ class TestResumeCommand:
             {
                 "session_id": "019d15d3-3a69-7021-a4ce-95a06e322fad",
                 "saved_at": 1_710_000_000,
+                "backend": "codex-cli",
                 "preview": "fix /cancel after restart",
                 "path": "/tmp/rollout.jsonl",
             }
@@ -155,8 +169,8 @@ class TestResumeCommand:
             "/home/testuser/.boxagent/workspace",
             limit=10,
         )
-        text = mock_channel.send_text.call_args[0][1]
-        assert "soft" in text.lower()
+        text = mock_channel.send_text_with_inline_keyboard.call_args[0][1]
+        assert "codex-cli" in text.lower()
         assert "fix /cancel after restart" in text
 
     async def test_prepares_codex_resume_by_index(
@@ -180,7 +194,11 @@ class TestResumeCommand:
         mock_storage.build_codex_resume_context.assert_called_once_with(
             "/tmp/rollout.jsonl"
         )
-        mock_storage.clear_session.assert_called_once_with("test-bot")
+        mock_storage.clear_session.assert_called_once_with(
+            "test-bot",
+            backend="claude-cli",
+            workspace="/home/testuser/.boxagent/workspace",
+        )
         mock_storage.save_session.assert_not_called()
         assert router._compact_summary == ""
         assert "Recovered transcript" in router._resume_context
@@ -412,7 +430,11 @@ class TestCompactCommand:
         # Session should be cleared
         cli.reset_session.assert_awaited_once()
         assert cli.session_id is None
-        mock_storage.clear_session.assert_called_once_with("test-bot")
+        mock_storage.clear_session.assert_called_once_with(
+            "test-bot",
+            backend="claude-cli",
+            workspace="",
+        )
 
         # Summary should be in the response
         calls = mock_channel.send_text.call_args_list
@@ -949,7 +971,11 @@ class TestCdCommand:
             assert mock_cli.workspace == router.workspace
             assert router.workspace == str(Path(tmpdir).resolve())
             mock_cli.reset_session.assert_called()
-            mock_storage.clear_session.assert_called_with("test-bot")
+            mock_storage.clear_session.assert_called_with(
+                "test-bot",
+                backend="claude-cli",
+                workspace=str(Path(tmpdir).resolve()),
+            )
 
     async def test_expands_tilde(self, router, mock_cli, mock_channel):
         import os
@@ -991,4 +1017,8 @@ class TestBackendCommand:
         assert "codex-cli" in text
         assert router.ai_backend == "codex-cli"
         assert router.cli_process is not mock_cli
-        mock_storage.clear_session.assert_called_with("test-bot")
+        mock_storage.clear_session.assert_called_with(
+            "test-bot",
+            backend="codex-cli",
+            workspace="/home/testuser/.boxagent/workspace",
+        )
