@@ -48,6 +48,20 @@ def result_event(session_id: str = "sess_123", cost: float = 0.01) -> dict:
         "duration_ms": 1000,
     }
 
+
+def error_result_event(
+    session_id: str = "sess_error",
+    *errors: str,
+    subtype: str = "error_during_execution",
+) -> dict:
+    return {
+        "type": "result",
+        "subtype": subtype,
+        "is_error": True,
+        "session_id": session_id,
+        "errors": list(errors),
+    }
+
 from tests.unit.helpers import FakeProcess
 
 
@@ -163,6 +177,29 @@ class TestStreamJsonParsing:
 
         callback.on_error.assert_called_once()
         assert "exit code 1" in callback.on_error.call_args[0][0].lower()
+
+    async def test_structured_result_error_is_included_in_error_message(
+        self, make_cli_process, callback
+    ):
+        events = [
+            error_result_event(
+                "sess_new",
+                "No conversation found with session ID: stale_session",
+            )
+        ]
+        fake_proc = FakeProcess(make_stream_lines(*events), returncode=1)
+
+        cli = make_cli_process()
+        cli.session_id = "stale_session"
+        with patch("asyncio.create_subprocess_exec", return_value=fake_proc):
+            await cli._execute_turn("test", callback)
+
+        callback.on_error.assert_called_once()
+        error_text = callback.on_error.call_args[0][0]
+        assert "exit code 1" in error_text.lower()
+        assert "No conversation found with session ID: stale_session" in error_text
+        assert cli.session_id == "stale_session"
+        assert cli.last_turn_failed is True
 
     async def test_returncode_checked_after_wait(self, make_cli_process, callback):
         """After process.wait(), returncode is checked for errors."""

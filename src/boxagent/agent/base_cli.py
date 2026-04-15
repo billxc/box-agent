@@ -46,6 +46,9 @@ class BaseCLIProcess:
     _idle_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
     _queue: asyncio.Queue = field(default_factory=asyncio.Queue, repr=False)
     _queue_task: asyncio.Task | None = field(default=None, repr=False)
+    last_turn_failed: bool = field(default=False, init=False, repr=False)
+    last_turn_error: str = field(default="", init=False, repr=False)
+    _turn_error_detail: str = field(default="", init=False, repr=False)
 
     def __post_init__(self):
         self._idle_event.set()
@@ -133,12 +136,17 @@ class BaseCLIProcess:
             self._idle_event.clear()
             self.state = "busy"
             self._cancelled = False
+            self.last_turn_failed = False
+            self.last_turn_error = ""
+            self._turn_error_detail = ""
 
             try:
                 await self._execute_turn(message, callback, model_override, chat_id)
             except Exception as e:
+                self.last_turn_failed = True
+                self.last_turn_error = f"Turn failed: {e}"
                 if not self._cancelled:
-                    await callback.on_error(f"Turn failed: {e}")
+                    await callback.on_error(self.last_turn_error)
                 logger.exception("Error during turn execution")
             finally:
                 self.state = "idle"
@@ -164,6 +172,16 @@ class BaseCLIProcess:
     def _extra_env(self, chat_id: str) -> dict[str, str] | None:
         """Extra environment variables for the subprocess. Override in subclass."""
         return None
+
+    def _record_turn_error_detail(self, detail: str) -> None:
+        cleaned = detail.strip()
+        if not cleaned:
+            return
+        if not self._turn_error_detail:
+            self._turn_error_detail = cleaned
+            return
+        if cleaned not in self._turn_error_detail:
+            self._turn_error_detail = f"{self._turn_error_detail}\n{cleaned}"
 
     @staticmethod
     def _resolve_windows_node_shim(resolved: str) -> list[str] | None:
@@ -255,17 +273,38 @@ class BaseCLIProcess:
 
         await self._process.wait()
 
-        if (
-            not self._cancelled
-            and self._process.returncode
-            and self._process.returncode != 0
-        ):
-            stderr_out = b""
-            try:
-                stderr_out = await self._process.stderr.read()
-            except Exception:
-                pass
-            await callback.on_error(
-                f"{self._backend_label} exit code {self._process.returncode}: "
-                f"{stderr_out.decode(errors='replace')[:500]}"
-            )
+        if self._cancelled:
+            return
+
+        stderr_out = b""
+        try:
+            stderr_out = await self._process.stderr.read()
+        except Exception:
+            pass
+
+        stderr_text = stderr_out.decode(errors="replace").strip()
+        detail_parts: list[str] = []
+        if self._turn_error_detail:
+            detail_parts.append(self._turn_error_detail.strip())
+        if stderr_text:
+            compact_stderr = stderr_text[:500]
+            if not any(
+                compact_stderr == part
+                or compact_stderr in part
+                or part in compact_stderr
+                for part in detail_parts
+            ):
+                detail_parts.append(compact_stderr)
+
+        error_message = ""
+        if self._process.returncode and self._process.returncode != 0:
+            error_message = f"{self._backend_label} exit code {self._process.returncode}"
+            if detail_parts:
+                error_message += f": {' | '.join(detail_parts)}"
+        elif detail_parts:
+            error_message = f"{self._backend_label} error: {' | '.join(detail_parts)}"
+
+        if error_message:
+            self.last_turn_failed = True
+            self.last_turn_error = error_message
+            await callback.on_error(error_message)
