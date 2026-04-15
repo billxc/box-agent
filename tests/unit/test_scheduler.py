@@ -392,11 +392,14 @@ async def test_fire_append_sends_to_cli(tmp_path):
 
     mock_cli.send.assert_called_once()
     call_args = mock_cli.send.call_args
-    assert "[BoxAgent Schedule]" in call_args[0][0]
-    assert call_args[0][0].endswith("Do something")
-    assert "mode: append" in call_args[0][0]
-    assert "backend:" not in call_args[0][0]
-    assert "model:" not in call_args[0][0]
+    # append_system_prompt now carries schedule context
+    append_system_prompt = call_args.kwargs.get("append_system_prompt", "")
+    assert "[BoxAgent Schedule]" in append_system_prompt
+    assert "mode: append" in append_system_prompt
+    assert "backend:" not in append_system_prompt
+    assert "model:" not in append_system_prompt
+    # user_prompt is just the task prompt
+    assert call_args[0][0] == "Do something"
     assert "t1" not in sched._executing  # cleaned up
     # send_text called twice: task started notification + result
     assert mock_ch.send_text.call_count == 2
@@ -811,11 +814,12 @@ async def test_execute_once_append_ignores_model_and_backend_fields(tmp_path):
     )
     await sched.execute_once(task)
     call = mock_cli.send.call_args
-    assert "[BoxAgent Schedule]" in call.args[0]
-    assert call.args[0].endswith("Do something")
-    assert "backend:" not in call.args[0]
-    assert "model:" not in call.args[0]
-    assert call.kwargs == {"chat_id": "123"}
+    append_system_prompt = call.kwargs.get("append_system_prompt", "")
+    assert "[BoxAgent Schedule]" in append_system_prompt
+    assert call.args[0] == "Do something"
+    assert "backend:" not in append_system_prompt
+    assert "model:" not in append_system_prompt
+    assert call.kwargs.get("chat_id") == "123"
 
 
 async def test_execute_once_isolate_uses_requested_backend_and_model(tmp_path):
@@ -830,11 +834,12 @@ async def test_execute_once_isolate_uses_requested_backend_and_model(tmp_path):
             }
         def start(self):
             captured["started"] = True
-        async def send(self, message, callback, model="", chat_id=""):
+        async def send(self, message, callback, model="", chat_id="", append_system_prompt=""):
             captured["send"] = {
                 "message": message,
                 "model": model,
                 "chat_id": chat_id,
+                "append_system_prompt": append_system_prompt,
             }
             await callback.on_stream("done")
         async def stop(self):
@@ -860,9 +865,9 @@ async def test_execute_once_isolate_uses_requested_backend_and_model(tmp_path):
     }
     assert captured["send"]["model"] == "gpt-5.4"
     assert captured["send"]["chat_id"] == ""
-    assert "[BoxAgent Schedule]" in captured["send"]["message"]
-    assert captured["send"]["message"].endswith("hello")
-    assert "backend: codex-acp" in captured["send"]["message"]
+    assert captured["send"]["message"] == "hello"
+    assert "[BoxAgent Schedule]" in captured["send"]["append_system_prompt"]
+    assert "backend: codex-acp" in captured["send"]["append_system_prompt"]
     assert captured["started"] is True
     assert captured["stopped"] is True
 
@@ -875,7 +880,7 @@ async def test_isolate_prefers_telegram_bots_mapping_over_bot_name(tmp_path):
             captured["workspace"] = workspace
         def start(self):
             pass
-        async def send(self, message, callback, model="", chat_id=""):
+        async def send(self, message, callback, model="", chat_id="", append_system_prompt=""):
             await callback.on_stream("ok")
         async def stop(self):
             pass
@@ -926,17 +931,17 @@ def test_build_prompt_injects_schedule_context(tmp_path):
         bot="my_test_bot",
     )
 
-    prompt = sched._build_prompt(task, effective_backend="codex-acp", effective_model="gpt-5.4")
+    append_system_prompt, user_prompt = sched._build_prompt(task, effective_backend="codex-acp", effective_model="gpt-5.4")
 
-    assert "[BoxAgent Schedule]" in prompt
-    assert "task: daily-sync" in prompt
-    assert "mode: isolate" in prompt
-    assert "node: my-canary" in prompt
-    assert "backend: codex-acp" in prompt
-    assert "model: gpt-5.4" in prompt
-    assert "workspace: /ba/workspace" in prompt
-    assert "bot: my_test_bot" in prompt
-    assert prompt.endswith("Do work")
+    assert "[BoxAgent Schedule]" in append_system_prompt
+    assert "task: daily-sync" in append_system_prompt
+    assert "mode: isolate" in append_system_prompt
+    assert "node: my-canary" in append_system_prompt
+    assert "backend: codex-acp" in append_system_prompt
+    assert "model: gpt-5.4" in append_system_prompt
+    assert "workspace: /ba/workspace" in append_system_prompt
+    assert "bot: my_test_bot" in append_system_prompt
+    assert user_prompt == "Do work"
 
 
 async def test_notify_uses_direct_telegram_token_with_unique_chat_id(tmp_path):
@@ -1000,7 +1005,7 @@ async def test_isolate_run_logs_output_to_local_dir(tmp_path):
             pass
         def start(self):
             pass
-        async def send(self, message, callback, model="", chat_id=""):
+        async def send(self, message, callback, model="", chat_id="", append_system_prompt=""):
             await callback.on_stream("logged output")
         async def stop(self):
             pass
@@ -1032,7 +1037,7 @@ async def test_spawn_isolate_passes_yolo_to_claude(tmp_path):
             captured["yolo"] = kwargs.get("yolo", False)
         def start(self):
             pass
-        async def send(self, message, callback, model="", chat_id=""):
+        async def send(self, message, callback, model="", chat_id="", append_system_prompt=""):
             await callback.on_stream("ok")
         async def stop(self):
             pass
@@ -1057,7 +1062,7 @@ async def test_spawn_isolate_passes_yolo_to_codex(tmp_path):
             captured["yolo"] = kwargs.get("yolo", False)
         def start(self):
             pass
-        async def send(self, message, callback, model="", chat_id=""):
+        async def send(self, message, callback, model="", chat_id="", append_system_prompt=""):
             await callback.on_stream("ok")
         async def stop(self):
             pass

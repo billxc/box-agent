@@ -33,7 +33,7 @@ class ClaudeProcess(BaseCLIProcess):
     def _backend_label(self) -> str:
         return "Claude CLI"
 
-    def _build_args(self, message: str, model: str, chat_id: str) -> list[str]:
+    def _build_args(self, message: str, model: str, chat_id: str, append_system_prompt: str = "") -> list[str]:
         args = [
             "claude",
             "--output-format", "stream-json",
@@ -54,6 +54,9 @@ class ClaudeProcess(BaseCLIProcess):
                     "--setting-sources", "",
                     "--settings", json.dumps({"env": settings_env}),
                 ]
+
+        if append_system_prompt:
+            args += ["--append-system-prompt", append_system_prompt]
 
         args += ["-p", message]
 

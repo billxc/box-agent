@@ -165,7 +165,7 @@ class _StreamingBackend:
     session_id: str | None = None
     supports_session_persistence: bool = False
 
-    async def send(self, prompt, callback, model="", chat_id=""):
+    async def send(self, prompt, callback, model="", chat_id="", append_system_prompt=""):
         await callback.on_stream(self.stream_text)
 
     async def cancel(self):

@@ -330,9 +330,9 @@ class Scheduler:
         else:
             raise ValueError(f"Unknown mode '{task.mode}'")
 
-    def _build_prompt(self, task: ScheduleTask, *, effective_backend: str, effective_model: str) -> str:
-        """Build the prompt sent to the backend for a scheduled task."""
-        context = build_schedule_context(
+    def _build_prompt(self, task: ScheduleTask, *, effective_backend: str, effective_model: str) -> tuple[str, str]:
+        """Build (append_system_prompt, user_prompt) for a scheduled task."""
+        append_system_prompt = build_schedule_context(
             task_id=task.id,
             mode=task.mode,
             ai_backend=effective_backend,
@@ -341,19 +341,20 @@ class Scheduler:
             node_id=self.node_id,
             bot=task.bot,
         )
-        return f"{context}\n{task.prompt}"
+        return append_system_prompt, task.prompt
 
     async def _execute_isolate(self, task: ScheduleTask) -> str:
         """Spawn an isolated backend process for the task."""
         logger.info("Schedule '%s' starting (isolate)", task.id)
-        prompt = self._build_prompt(
+        append_system_prompt, user_prompt = self._build_prompt(
             task,
             effective_backend=task.ai_backend,
             effective_model=task.model,
         )
+        prompt = f"{append_system_prompt}\n{user_prompt}"
         t0 = datetime.now()
         try:
-            text, callback = await self._spawn_isolate(task, prompt)
+            text, callback = await self._spawn_isolate(task, user_prompt, append_system_prompt=append_system_prompt)
         except Exception as e:
             self._append_run_log(task, prompt=prompt, error=str(e))
             raise
@@ -396,7 +397,7 @@ class Scheduler:
             return f"{header}\n{meta_line}\n\n{text}"
         return f"{header} (no output)\n{meta_line}"
 
-    async def _spawn_isolate(self, task: ScheduleTask, prompt: str) -> tuple[str, "_SchedulerCallback"]:
+    async def _spawn_isolate(self, task: ScheduleTask, prompt: str, append_system_prompt: str = "") -> tuple[str, "_SchedulerCallback"]:
         """Spawn an isolated backend process and return (output_text, callback)."""
         backend = task.ai_backend
         workspace = self._get_workspace(task)
@@ -433,7 +434,7 @@ class Scheduler:
 
         proc.start()
         try:
-            await proc.send(prompt, callback, model=task.model)
+            await proc.send(prompt, callback, model=task.model, append_system_prompt=append_system_prompt)
             if callback._error:
                 raise RuntimeError(self._enrich_error(task, callback._error))
             return callback._text.strip(), callback
@@ -506,11 +507,12 @@ class Scheduler:
             raise ValueError(f"Schedule '{task.id}': bot '{task.bot}' not found")
 
         logger.info("Schedule '%s' starting (append to %s)", task.id, task.bot)
-        prompt = self._build_prompt(
+        append_system_prompt, user_prompt = self._build_prompt(
             task,
             effective_backend="",
             effective_model="",
         )
+        prompt = f"{append_system_prompt}\n{user_prompt}"
         await ref.channel.send_text(
             ref.chat_id,
             f"🤖【*Append*】*{task.id}*, prompt:\n\n{task.prompt}",
@@ -521,7 +523,7 @@ class Scheduler:
         # append 模式始终沿用目标 bot 当前 backend/model/session；
         # task.ai_backend / task.model 仅供 isolate 模式使用，这里忽略。
         try:
-            await ref.cli_process.send(prompt, callback, chat_id=ref.chat_id)
+            await ref.cli_process.send(user_prompt, callback, chat_id=ref.chat_id, append_system_prompt=append_system_prompt)
             await callback.send_result()
         except Exception as e:
             self._append_run_log(task, prompt=prompt, error=str(e))

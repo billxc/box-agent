@@ -320,7 +320,7 @@ class TestDispatchTyping:
         ch = _make_router_channel()
         cli = AsyncMock()
         # Make cli.send slow enough for typing loop to fire
-        async def slow_send(prompt, callback, model="", chat_id=""):
+        async def slow_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
             await asyncio.sleep(0.1)
         cli.send = slow_send
         cli.session_id = None
@@ -356,7 +356,7 @@ class TestConcurrentCommandDuringDispatch:
         ch = _make_router_channel()
         dispatch_done = asyncio.Event()
 
-        async def slow_send(prompt, callback, model="", chat_id=""):
+        async def slow_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
             await dispatch_done.wait()
 
         cli = AsyncMock()
@@ -388,7 +388,7 @@ class TestConcurrentCommandDuringDispatch:
         ch = _make_router_channel()
         dispatch_done = asyncio.Event()
 
-        async def slow_send(prompt, callback, model="", chat_id=""):
+        async def slow_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
             await dispatch_done.wait()
 
         cli = AsyncMock()
@@ -428,7 +428,7 @@ class TestConcurrentCommandDuringDispatch:
         ch = _make_router_channel()
         dispatch_done = asyncio.Event()
 
-        async def slow_send(prompt, callback, model="", chat_id=""):
+        async def slow_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
             await dispatch_done.wait()
 
         cli = AsyncMock()
@@ -456,7 +456,7 @@ class TestConcurrentCommandDuringDispatch:
         ch = _make_router_channel()
         dispatch_done = asyncio.Event()
 
-        async def slow_send(prompt, callback, model="", chat_id=""):
+        async def slow_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
             await dispatch_done.wait()
 
         cli = AsyncMock()
@@ -483,7 +483,7 @@ class TestConcurrentCommandDuringDispatch:
         dispatch_done = asyncio.Event()
         captured_callback = None
 
-        async def slow_send(prompt, callback, model="", chat_id=""):
+        async def slow_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
             nonlocal captured_callback
             captured_callback = callback
             await dispatch_done.wait()
