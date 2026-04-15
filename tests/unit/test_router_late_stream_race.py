@@ -22,7 +22,7 @@ class _FakeLateChunkBackend:
     supports_session_persistence: bool = False
     late_task: asyncio.Task | None = field(default=None, init=False)
 
-    async def send(self, prompt, callback, model="", chat_id=""):
+    async def send(self, prompt, callback, model="", chat_id="", append_system_prompt=""):
         self.state = "busy"
         await callback.on_stream("到")
 

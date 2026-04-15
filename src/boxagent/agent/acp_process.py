@@ -254,9 +254,10 @@ class ACPProcess:
         callback: AgentCallback,
         model: str = "",
         chat_id: str = "",
+        append_system_prompt: str = "",
     ) -> None:
         done = asyncio.Event()
-        await self._queue.put((message, callback, done, model, chat_id))
+        await self._queue.put((message, callback, done, model, chat_id, append_system_prompt))
         await done.wait()
 
     async def wait_idle(self) -> None:
@@ -386,7 +387,7 @@ class ACPProcess:
     async def _process_queue(self) -> None:
         while True:
             try:
-                message, callback, done, model, chat_id = await self._queue.get()
+                message, callback, done, model, chat_id, append_system_prompt = await self._queue.get()
             except asyncio.CancelledError:
                 return
 
@@ -395,6 +396,11 @@ class ACPProcess:
             self._cancelled = False
             self._cancel_requested = asyncio.Event()
             self._client.set_callback(callback)
+
+            # TODO: ACP has no native system prompt support yet; prepend to
+            # user message as a fallback until upstream adds support.
+            if append_system_prompt:
+                message = f"{append_system_prompt}\n{message}"
 
             stop_reason = None
             try:

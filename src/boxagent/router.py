@@ -532,25 +532,26 @@ class Router:
     # ---- Dispatch ----
 
     async def _dispatch(self, msg: IncomingMessage):
-        # Build prompt: text + attachment file paths
-        parts = []
+        # Build system prompt and user message separately
+        system_parts = []
+        user_parts = []
         model_override = ""
 
-        # Inject session context on first message
+        # Inject session context on first message (system-level)
         if not self._session_context_injected:
             context = self._build_session_context()
             if context:
-                parts.append(context)
+                system_parts.append(context)
             self._session_context_injected = True
 
         if self._resume_context:
-            parts.append(self._resume_context)
+            system_parts.append(self._resume_context)
             self._resume_context = ""
 
-        # Inject compact summary if available
+        # Inject compact summary if available (system-level)
         used_compact = False
         if self._compact_summary:
-            parts.append(
+            system_parts.append(
                 f"[Previous conversation summary]\n{self._compact_summary}\n"
                 f"[End of summary]\n"
             )
@@ -566,10 +567,12 @@ class Router:
                 text = text[first_space + 1:].strip()
 
         if text:
-            parts.append(text)
+            user_parts.append(text)
         for att in msg.attachments:
-            parts.append(f"[Attached {att.type}: {att.file_path}]")
-        prompt = "\n".join(parts)
+            user_parts.append(f"[Attached {att.type}: {att.file_path}]")
+
+        append_system_prompt = "\n".join(system_parts)
+        prompt = "\n".join(user_parts)
 
         callback = ChannelCallback(
             channel=self.channel,
@@ -578,7 +581,7 @@ class Router:
 
         await callback.start_typing()
         try:
-            await self.cli_process.send(prompt, callback, model=model_override, chat_id=msg.chat_id)
+            await self.cli_process.send(prompt, callback, model=model_override, chat_id=msg.chat_id, append_system_prompt=append_system_prompt)
             drain_output = getattr(self.cli_process, "drain_output", None)
             if callable(drain_output):
                 await drain_output()

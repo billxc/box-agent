@@ -54,10 +54,10 @@ class BaseCLIProcess:
         """Start the message processing loop."""
         self._queue_task = asyncio.create_task(self._process_queue())
 
-    async def send(self, message: str, callback: AgentCallback, model: str = "", chat_id: str = ""):
+    async def send(self, message: str, callback: AgentCallback, model: str = "", chat_id: str = "", append_system_prompt: str = ""):
         """Enqueue a message. Returns when the turn completes."""
         done = asyncio.Event()
-        await self._queue.put((message, callback, done, model, chat_id))
+        await self._queue.put((message, callback, done, model, chat_id, append_system_prompt))
         await done.wait()
 
     async def wait_idle(self):
@@ -126,7 +126,7 @@ class BaseCLIProcess:
         """Consume messages serially, spawning a process per turn."""
         while True:
             try:
-                message, callback, done, model_override, chat_id = await self._queue.get()
+                message, callback, done, model_override, chat_id, append_system_prompt = await self._queue.get()
             except asyncio.CancelledError:
                 return
 
@@ -135,7 +135,7 @@ class BaseCLIProcess:
             self._cancelled = False
 
             try:
-                await self._execute_turn(message, callback, model_override, chat_id)
+                await self._execute_turn(message, callback, model_override, chat_id, append_system_prompt)
             except Exception as e:
                 if not self._cancelled:
                     await callback.on_error(f"Turn failed: {e}")
@@ -148,7 +148,7 @@ class BaseCLIProcess:
 
     # --- Subclass hooks ---
 
-    def _build_args(self, message: str, model: str, chat_id: str) -> list[str]:
+    def _build_args(self, message: str, model: str, chat_id: str, append_system_prompt: str = "") -> list[str]:
         """Return the full argv list for this turn. Must be overridden."""
         raise NotImplementedError
 
@@ -215,10 +215,10 @@ class BaseCLIProcess:
 
     # --- Shared execution ---
 
-    async def _execute_turn(self, message: str, callback: AgentCallback, model_override: str = "", chat_id: str = ""):
+    async def _execute_turn(self, message: str, callback: AgentCallback, model_override: str = "", chat_id: str = "", append_system_prompt: str = ""):
         """Spawn a CLI process for one turn, stream-parse JSONL/NDJSON output."""
         effective_model = model_override or self.model
-        args = self._build_args(message, effective_model, chat_id)
+        args = self._build_args(message, effective_model, chat_id, append_system_prompt=append_system_prompt)
 
         logger.debug("%s args: %s", self._backend_label, args)
 

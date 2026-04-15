@@ -200,9 +200,11 @@ class TestResumeCommand:
         )
 
         prompts = []
+        append_system_prompts = []
 
-        async def fake_send(prompt, callback, model="", chat_id=""):
+        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
             prompts.append(prompt)
+            append_system_prompts.append(append_system_prompt)
 
         cli.send = fake_send
         mock_channel.show_typing = AsyncMock()
@@ -239,11 +241,12 @@ class TestResumeCommand:
         await r.handle_message(msg("继续修 /cancel"))
 
         assert len(prompts) == 1
-        assert "Recovered transcript" in prompts[0]
+        assert "Recovered transcript" in append_system_prompts[0]
         assert "继续修 /cancel" in prompts[0]
         assert r._resume_context == ""
 
         prompts.clear()
+        append_system_prompts.clear()
         await r.handle_message(msg("第二条消息"))
 
         assert prompts == ["第二条消息"]
@@ -391,7 +394,7 @@ class TestCompactCommand:
             side_effect=lambda: setattr(cli, "session_id", None)
         )
 
-        async def fake_send(prompt, callback, model="", chat_id=""):
+        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
             await callback.on_stream("- Discussed topic A\n- Decided B")
 
         cli.send = fake_send
@@ -426,9 +429,11 @@ class TestCompactCommand:
         )
 
         call_log = []
+        system_log = []
 
-        async def fake_send(prompt, callback, model="", chat_id=""):
+        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
             call_log.append(prompt)
+            system_log.append(append_system_prompt)
             await callback.on_stream("summary text here")
 
         cli.send = fake_send
@@ -452,11 +457,12 @@ class TestCompactCommand:
         # Compact
         await r.handle_message(msg("/compact"))
 
-        # Next message should include summary
+        # Next message should include summary in append_system_prompt
         call_log.clear()
+        system_log.clear()
         await r.handle_message(msg("hello"))
         assert len(call_log) == 1
-        assert "summary text here" in call_log[0]
+        assert "summary text here" in system_log[0]
         assert "hello" in call_log[0]
 
     async def test_not_dispatched_to_cli_directly(self, router, mock_cli, mock_channel):
@@ -475,7 +481,7 @@ class TestCompactCommand:
 
         captured_prompts = []
 
-        async def fake_send(prompt, callback, model="", chat_id=""):
+        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
             captured_prompts.append(prompt)
             await callback.on_stream("summary with focus")
 
@@ -506,7 +512,7 @@ class TestCompactCommand:
 
         captured_prompts = []
 
-        async def fake_send(prompt, callback, model="", chat_id=""):
+        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
             captured_prompts.append(prompt)
             await callback.on_stream("plain summary")
 
@@ -560,8 +566,9 @@ class TestAtModelPrefix:
 
         captured = {}
 
-        async def fake_send(prompt, callback, model="", chat_id=""):
+        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
             captured["prompt"] = prompt
+            captured["append_system_prompt"] = append_system_prompt
 
         cli.send = fake_send
         mock_channel.show_typing = AsyncMock()
@@ -585,8 +592,8 @@ class TestAtModelPrefix:
 
         await r.handle_message(msg("hello world"))
 
-        assert "bot: test-bot" in captured["prompt"]
-        assert "display_name: Demo Bot" in captured["prompt"]
+        assert "bot: test-bot" in captured["append_system_prompt"]
+        assert "display_name: Demo Bot" in captured["append_system_prompt"]
 
     async def test_at_model_passes_override(self, mock_channel, mock_storage):
         cli = AsyncMock()
@@ -596,9 +603,10 @@ class TestAtModelPrefix:
 
         captured = {}
 
-        async def fake_send(prompt, callback, model="", chat_id=""):
+        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
             captured["prompt"] = prompt
             captured["model"] = model
+            captured["append_system_prompt"] = append_system_prompt
 
         cli.send = fake_send
         mock_channel.show_typing = AsyncMock()
@@ -621,8 +629,8 @@ class TestAtModelPrefix:
         await r.handle_message(msg("@opus explain this"))
 
         assert captured["model"] == "opus"
-        assert captured["prompt"].endswith("explain this")
-        assert "[BoxAgent Context]" in captured["prompt"]
+        assert captured["prompt"] == "explain this"
+        assert "[BoxAgent Context]" in captured["append_system_prompt"]
 
     async def test_no_prefix_no_override(self, mock_channel, mock_storage):
         cli = AsyncMock()
@@ -631,9 +639,10 @@ class TestAtModelPrefix:
 
         captured = {}
 
-        async def fake_send(prompt, callback, model="", chat_id=""):
+        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
             captured["prompt"] = prompt
             captured["model"] = model
+            captured["append_system_prompt"] = append_system_prompt
 
         cli.send = fake_send
         mock_channel.show_typing = AsyncMock()
@@ -656,8 +665,8 @@ class TestAtModelPrefix:
         await r.handle_message(msg("hello world"))
 
         assert captured["model"] == ""
-        assert captured["prompt"].endswith("hello world")
-        assert "[BoxAgent Context]" in captured["prompt"]
+        assert captured["prompt"] == "hello world"
+        assert "[BoxAgent Context]" in captured["append_system_prompt"]
 
     async def test_second_message_no_context(self, mock_channel, mock_storage):
         """Context is only injected on the first message of a session."""
@@ -667,8 +676,9 @@ class TestAtModelPrefix:
 
         captured = {}
 
-        async def fake_send(prompt, callback, model="", chat_id=""):
+        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
             captured["prompt"] = prompt
+            captured["append_system_prompt"] = append_system_prompt
 
         cli.send = fake_send
         mock_channel.show_typing = AsyncMock()
@@ -689,7 +699,7 @@ class TestAtModelPrefix:
             bot_name="test-bot",
         )
         await r.handle_message(msg("first"))
-        assert "[BoxAgent Context]" in captured["prompt"]
+        assert "[BoxAgent Context]" in captured["append_system_prompt"]
 
         await r.handle_message(msg("second"))
         assert captured["prompt"] == "second"
