@@ -214,6 +214,7 @@ daily-report:
   mode: isolate
   ai_backend: codex-acp
   model: gpt-5.4
+  timeout_seconds: 1800
   bot: my-bot
   enabled_on_nodes: ""
   enabled: true
@@ -248,8 +249,9 @@ node_overrides:
 | `prompt` | yes | — | Prompt to send to the selected backend |
 | `mode` | no | `isolate` | `isolate` = spawn new process; `append` = send to bot's existing session |
 | `bot` | append only | `""` | Bot selector. In `append` mode it must be the configured bot name. In `isolate` mode it is treated as a Telegram bot id/name from `telegram_bots.yaml`; it is no longer resolved by configured bot name. This affects bot/channel resolution only; isolate workspace still defaults to `<ba-dir>/workspace`. |
-| `ai_backend` | no | inherited / `claude-cli` | Backend override for the schedule. Optional; only used by `isolate` mode (`claude-cli` / `codex-cli` / `codex-acp`) |
-| `model` | no | `""` | Per-task model override. Optional; only used by `isolate` mode |
+| `ai_backend` | isolate yes | `""` | Backend for isolate schedules: `claude-cli` / `codex-cli` / `codex-acp`. Ignored by `append` mode |
+| `model` | isolate yes | `""` | Model for isolate schedules. Ignored by `append` mode |
+| `timeout_seconds` | no | `1800` | Isolate timeout in seconds. On timeout, BoxAgent stops the child process, records a failed run log, and allows later cron ticks to continue |
 | `enabled_on_nodes` | no | `""` | Only run on matching nodes (matches `node_id` from `local.yaml`); accepts string or list |
 | `enabled` | no | `true` | Enable/disable without deleting |
 
@@ -257,14 +259,14 @@ Reserved key: top-level `node_overrides` is metadata, not a task id.
 
 ### Execution Modes
 
-- **isolate**: Runs the task in a fresh backend invocation. If `ai_backend` is set, it wins. Otherwise BoxAgent inherits the referenced bot backend when `bot` is set, and falls back to `claude-cli` when no bot is provided. `model` is passed through to the isolated backend.
+- **isolate**: Runs the task in a fresh backend invocation. `ai_backend` and `model` are required. `timeout_seconds` defaults to `1800`; on timeout, BoxAgent stops the isolate child process, writes a failed run log entry, and clears the scheduler's in-memory executing state so future runs are not blocked forever.
 - **append**: Queues the prompt into a bot's existing primary session. Shares that bot's current conversation context and always uses that bot's configured backend/model/session. `ai_backend` and `model` are optional fields but ignored in append mode.
 
 ### CLI Management
 
 ```bash
 # Add a schedule
-boxagent schedule add --id daily-report --cron "0 9 * * *" --prompt "Check disk usage" --mode isolate --ai-backend claude-cli --model sonnet
+boxagent schedule add --id daily-report --cron "0 9 * * *" --prompt "Check disk usage" --mode isolate --ai-backend claude-cli --model sonnet --timeout-seconds 900
 
 # List all schedules
 boxagent schedule list

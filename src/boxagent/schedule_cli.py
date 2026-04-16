@@ -9,7 +9,11 @@ from boxagent.utils import safe_print as _safe_print
 import yaml
 from croniter import croniter
 from boxagent.paths import default_config_dir, default_local_dir
-from boxagent.scheduler import SCHEDULE_NODE_OVERRIDES_KEY, load_schedule_entries
+from boxagent.scheduler import (
+    DEFAULT_ISOLATE_TIMEOUT_SECONDS,
+    SCHEDULE_NODE_OVERRIDES_KEY,
+    load_schedule_entries,
+)
 
 
 class _ScheduleDumper(yaml.SafeDumper):
@@ -42,6 +46,12 @@ def build_schedule_parser(subparsers) -> None:
     add.add_argument("--bot", default="", help="Bot name (required for append mode)")
     add.add_argument("--ai-backend", default="", choices=["", "claude-cli", "codex-cli", "codex-acp"], help="Backend override (required for isolate mode)")
     add.add_argument("--model", default="", help="Model override (required for isolate mode)")
+    add.add_argument(
+        "--timeout-seconds",
+        default=DEFAULT_ISOLATE_TIMEOUT_SECONDS,
+        type=float,
+        help=f"Isolate timeout in seconds (default: {DEFAULT_ISOLATE_TIMEOUT_SECONDS:g})",
+    )
     add.add_argument("--enabled-on-nodes", default="", help="Only run on this node")
     add.add_argument("--enabled", default=True, type=_parse_bool,
                      help="Enable the schedule (default: true)")
@@ -158,6 +168,11 @@ def schedule_add(args) -> None:
         print("Error: --model is required when mode=isolate", file=sys.stderr)
         sys.exit(1)
 
+    timeout_seconds = float(getattr(args, "timeout_seconds", DEFAULT_ISOLATE_TIMEOUT_SECONDS))
+    if timeout_seconds <= 0:
+        print("Error: --timeout-seconds must be > 0", file=sys.stderr)
+        sys.exit(1)
+
     path = _schedules_file(args)
     all_scheds = _load_all(path)
 
@@ -172,6 +187,7 @@ def schedule_add(args) -> None:
         "bot": args.bot,
         "ai_backend": args.ai_backend,
         "model": args.model,
+        "timeout_seconds": timeout_seconds,
         "enabled_on_nodes": args.enabled_on_nodes,
         "enabled": args.enabled,
     }

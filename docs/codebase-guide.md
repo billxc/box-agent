@@ -240,7 +240,7 @@ Codex ACP 这边要区分两层语义：
 - 重新从磁盘加载 `schedules.yaml`，并按当前 `node_id` 应用 `node_overrides`。
 - 根据 `_last_check` 计算这次要检查的分钟列表。
 - 对匹配 cron 的任务 `create_task(self._fire(task))`。
-- 用 `_executing` 防止同一个任务并发重入。
+- 用 `_executing` 防止同一个任务并发重入；如果任务还没结束，新一轮 cron 会记 warning 并跳过本次触发。
 
 这里的设计重点有两个：
 
@@ -258,16 +258,15 @@ Codex ACP 这边要区分两层语义：
 `isolate`：
 
 - 起一个全新的独立 backend 调用，不复用 bot 当前会话。
-- 如果 `task.bot` 指向某个 bot，就只借用它的 backend 类型和通知通道。
-- 如果 `task.bot` 为空，backend 默认是 `claude-cli`。
+- `ai_backend` 和 `model` 由任务配置显式指定。
+- 如果 `task.bot` 指向某个 bot，就只借用它的通知通道解析，不继承该 bot 的会话或 backend 状态。
+- isolate 调用默认有 `1800s` timeout，可由 `timeout_seconds` 覆盖；超时会 stop 子进程、写失败 run log，并释放 `_executing`。
 
 ### isolate 模式当前的几个现实限制
 
 这些点对维护者很关键，因为名字容易让人误以为"隔离任务继承了 bot 的全部配置"，但当前并不是：
 
-- `claude-cli` isolate 只传了 `prompt` 和可选 `agent`，没有传 `workspace`。
-- `claude-cli` isolate 没有传 `model`。
-- isolate 当前没有专门的 `codex-acp` 特化执行路径。
+- isolate 使用 scheduler 自己的 workspace，不继承目标 bot 的 workspace / 会话状态。
 - isolate 模式不会注入 Telegram 媒体 MCP 工具。
 - `append` 模式才会真正跑在 bot 的长生命周期 backend 上。
 

@@ -1,6 +1,7 @@
 """Tests for scheduler — YAML loading, cron, execution."""
 
 import asyncio
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,6 +11,7 @@ import yaml
 
 from boxagent.scheduler import (
     BotRef,
+    DEFAULT_ISOLATE_TIMEOUT_SECONDS,
     Scheduler,
     ScheduleTask,
     _SchedulerCallback,
@@ -135,6 +137,39 @@ def test_validate_ai_backend_and_model():
     })
     assert task.ai_backend == "codex-acp"
     assert task.model == "gpt-5.4"
+
+
+def test_validate_timeout_seconds_default():
+    task = _validate_entry("timeout-task", {
+        "cron": "0 9 * * *",
+        "prompt": "Do it",
+        "ai_backend": "claude-cli",
+        "model": "sonnet",
+    })
+    assert task.timeout_seconds == DEFAULT_ISOLATE_TIMEOUT_SECONDS
+
+
+def test_validate_timeout_seconds_custom():
+    task = _validate_entry("timeout-task", {
+        "cron": "0 9 * * *",
+        "prompt": "Do it",
+        "ai_backend": "claude-cli",
+        "model": "sonnet",
+        "timeout_seconds": 42.5,
+    })
+    assert task.timeout_seconds == 42.5
+
+
+@pytest.mark.parametrize("bad_timeout", [0, -1, "soon", True])
+def test_validate_timeout_seconds_requires_positive_number(bad_timeout):
+    with pytest.raises(ValueError, match="timeout_seconds"):
+        _validate_entry("timeout-task", {
+            "cron": "0 9 * * *",
+            "prompt": "Do it",
+            "ai_backend": "claude-cli",
+            "model": "sonnet",
+            "timeout_seconds": bad_timeout,
+        })
 
 
 def test_validate_isolate_requires_ai_backend():
@@ -1077,3 +1112,75 @@ async def test_spawn_isolate_passes_yolo_to_codex(tmp_path):
         await sched.execute_once(task)
 
     assert captured["yolo"] is True
+
+
+async def test_execute_once_isolate_timeout_stops_process_and_logs_error(tmp_path):
+    captured = {}
+
+    class FakeCodex:
+        def __init__(self, workspace, model="", copilot_api_port=0, **kwargs):
+            captured["workspace"] = workspace
+            captured["model"] = model
+
+        def start(self):
+            captured["started"] = True
+
+        async def send(self, message, callback, model="", chat_id="", append_system_prompt=""):
+            captured["message"] = message
+            captured["send_model"] = model
+            captured["append_system_prompt"] = append_system_prompt
+            await asyncio.Event().wait()
+
+        async def stop(self):
+            captured["stopped"] = captured.get("stopped", 0) + 1
+
+    real_wait_for = asyncio.wait_for
+
+    async def fast_wait_for(awaitable, timeout):
+        return await real_wait_for(awaitable, timeout=0.01)
+
+    local_dir = tmp_path / "local"
+    sched = _make_scheduler(tmp_path)
+    sched.default_workspace = "/ba/workspace"
+    sched.local_dir = str(local_dir)
+    task = ScheduleTask(
+        id="timeout-task", cron="* * * * *", prompt="hello",
+        mode="isolate", ai_backend="codex-cli", model="gpt-5.4", timeout_seconds=1.0,
+    )
+
+    with patch("boxagent.agent.codex_process.CodexProcess", FakeCodex), \
+         patch("boxagent.scheduler.asyncio.wait_for", side_effect=fast_wait_for):
+        with pytest.raises(TimeoutError, match="timed out after 1s"):
+            await sched.execute_once(task)
+
+    assert captured["workspace"] == "/ba/workspace"
+    assert captured["model"] == "gpt-5.4"
+    assert captured["started"] is True
+    assert captured["send_model"] == "gpt-5.4"
+    assert "[BoxAgent Schedule]" in captured["append_system_prompt"]
+    assert captured["stopped"] == 1
+
+    log_path = local_dir / "schedule-runs" / "timeout-task.jsonl"
+    record = json.loads(log_path.read_text(encoding="utf-8").strip())
+    assert record["timeout_seconds"] == 1.0
+    assert record["error"] == "Schedule 'timeout-task' timed out after 1s"
+
+
+async def test_fire_timeout_clears_executing_and_notifies(tmp_path):
+    sched = _make_scheduler(tmp_path)
+    sched.default_workspace = "/ba/workspace"
+    task = ScheduleTask(
+        id="timeout-task", cron="* * * * *", prompt="hello",
+        mode="isolate", ai_backend="codex-cli", model="gpt-5.4",
+    )
+    sched._executing.add(task.id)
+
+    with patch.object(sched, "_run_task", AsyncMock(side_effect=TimeoutError("Schedule 'timeout-task' timed out after 30s"))), \
+         patch.object(sched, "_notify", AsyncMock()) as mock_notify:
+        await sched._fire(task)
+
+    assert task.id not in sched._executing
+    mock_notify.assert_awaited_once()
+    notified = mock_notify.await_args.args[1]
+    assert "timed out after 30s" in notified
+    assert "timeout=1800s" in notified

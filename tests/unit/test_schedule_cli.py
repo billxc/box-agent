@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from boxagent.scheduler import DEFAULT_ISOLATE_TIMEOUT_SECONDS
 from boxagent.schedule_cli import (
     _get_api_port,
     _get_api_port_file,
@@ -48,6 +49,7 @@ def _write_sched(tmp_path, task_id, **overrides):
         "bot": "",
         "ai_backend": "claude-cli",
         "model": "sonnet",
+        "timeout_seconds": DEFAULT_ISOLATE_TIMEOUT_SECONDS,
         "enabled_on_nodes": "",
         "enabled": True,
     }
@@ -99,6 +101,27 @@ def test_add_creates_entry(tmp_path):
     assert data["my-task"]["cron"] == "0 9 * * *"
     assert data["my-task"]["prompt"] == "Do something"
     assert data["my-task"]["enabled"] is True
+    assert data["my-task"]["timeout_seconds"] == DEFAULT_ISOLATE_TIMEOUT_SECONDS
+
+
+def test_add_persists_custom_timeout_seconds(tmp_path):
+    args = _make_args(
+        tmp_path,
+        id="my-task",
+        cron="0 9 * * *",
+        prompt="Do something",
+        mode="isolate",
+        bot="",
+        ai_backend="claude-cli",
+        model="sonnet",
+        timeout_seconds=42.5,
+        enabled_on_nodes="",
+        enabled=True,
+    )
+    schedule_add(args)
+
+    data = yaml.safe_load((tmp_path / "schedules.yaml").read_text())
+    assert data["my-task"]["timeout_seconds"] == 42.5
 
 
 def test_add_multiline_prompt_uses_block_scalar(tmp_path):
@@ -185,6 +208,24 @@ def test_add_isolate_requires_model(tmp_path):
         bot="",
         ai_backend="claude-cli",
         model="",
+        enabled_on_nodes="",
+        enabled=True,
+    )
+    with pytest.raises(SystemExit):
+        schedule_add(args)
+
+
+def test_add_rejects_non_positive_timeout(tmp_path):
+    args = _make_args(
+        tmp_path,
+        id="bad-timeout",
+        cron="0 9 * * *",
+        prompt="Do it",
+        mode="isolate",
+        bot="",
+        ai_backend="claude-cli",
+        model="sonnet",
+        timeout_seconds=0,
         enabled_on_nodes="",
         enabled=True,
     )

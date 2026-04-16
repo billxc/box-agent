@@ -19,6 +19,7 @@ from boxagent.context import build_schedule_context
 logger = logging.getLogger(__name__)
 
 SCHEDULE_NODE_OVERRIDES_KEY = "node_overrides"
+DEFAULT_ISOLATE_TIMEOUT_SECONDS = 1800.0
 
 
 @dataclass
@@ -32,9 +33,26 @@ class ScheduleTask:
     bot: str = ""
     ai_backend: str = ""
     model: str = ""
+    timeout_seconds: float = DEFAULT_ISOLATE_TIMEOUT_SECONDS
     yolo: bool = False
     enabled_on_nodes: str | list[str] = ""
     enabled: bool = True
+
+
+def _validate_timeout_seconds(task_id: str, raw: dict) -> float:
+    """Validate timeout_seconds and return a positive float."""
+    timeout_raw = raw.get("timeout_seconds", DEFAULT_ISOLATE_TIMEOUT_SECONDS)
+    if timeout_raw in ("", None):
+        return DEFAULT_ISOLATE_TIMEOUT_SECONDS
+    if isinstance(timeout_raw, bool) or not isinstance(timeout_raw, (int, float)):
+        raise ValueError(
+            f"Schedule '{task_id}': timeout_seconds must be a positive number"
+        )
+
+    timeout = float(timeout_raw)
+    if timeout <= 0:
+        raise ValueError(f"Schedule '{task_id}': timeout_seconds must be > 0")
+    return timeout
 
 
 def _validate_entry(task_id: str, raw: dict) -> ScheduleTask:
@@ -77,6 +95,8 @@ def _validate_entry(task_id: str, raw: dict) -> ScheduleTask:
                 f"Schedule '{task_id}': 'model' is required when mode=isolate"
             )
 
+    timeout_seconds = _validate_timeout_seconds(task_id, raw)
+
     return ScheduleTask(
         id=task_id,
         cron=cron_expr,
@@ -85,6 +105,7 @@ def _validate_entry(task_id: str, raw: dict) -> ScheduleTask:
         bot=bot,
         ai_backend=ai_backend,
         model=model,
+        timeout_seconds=timeout_seconds,
         yolo=bool(raw.get("yolo", False)),
         enabled_on_nodes=raw.get("enabled_on_nodes", ""),
         enabled=raw.get("enabled", True),
@@ -281,11 +302,18 @@ class Scheduler:
                     continue
                 if not node_matches(task.enabled_on_nodes, self.node_id):
                     continue
-                if task.id in self._executing:
+                matched = any(croniter.match(task.cron, t) for t in check_times)
+                if not matched:
                     continue
-                if any(croniter.match(task.cron, t) for t in check_times):
-                    self._executing.add(task.id)
-                    asyncio.create_task(self._fire(task))
+                if task.id in self._executing:
+                    logger.warning(
+                        "Schedule '%s' is still executing; skipping cron match at %s",
+                        task.id,
+                        now.isoformat(timespec="seconds"),
+                    )
+                    continue
+                self._executing.add(task.id)
+                asyncio.create_task(self._fire(task))
 
             self._last_check = now
 
@@ -434,7 +462,20 @@ class Scheduler:
 
         proc.start()
         try:
-            await proc.send(prompt, callback, model=task.model, append_system_prompt=append_system_prompt)
+            try:
+                await asyncio.wait_for(
+                    proc.send(
+                        prompt,
+                        callback,
+                        model=task.model,
+                        append_system_prompt=append_system_prompt,
+                    ),
+                    timeout=task.timeout_seconds,
+                )
+            except asyncio.TimeoutError as e:
+                raise TimeoutError(
+                    f"Schedule '{task.id}' timed out after {task.timeout_seconds:g}s"
+                ) from e
             if callback._error:
                 raise RuntimeError(self._enrich_error(task, callback._error))
             return callback._text.strip(), callback
@@ -486,6 +527,7 @@ class Scheduler:
             f"backend={task.ai_backend or '(inherit)'}",
             f"model={task.model or '(inherit)'}",
             f"mode={task.mode}",
+            f"timeout={task.timeout_seconds:g}s",
             f"workspace={workspace or '(unknown)'}",
         ]
         return f"[{', '.join(parts)}]"
@@ -582,6 +624,7 @@ class Scheduler:
             "bot": task.bot,
             "ai_backend": task.ai_backend,
             "model": task.model,
+            "timeout_seconds": task.timeout_seconds,
             "workspace": self._get_workspace(task),
             "prompt": prompt,
             "output": output,
