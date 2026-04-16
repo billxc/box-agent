@@ -1,5 +1,6 @@
 """CLI subcommands for managing schedules in a single YAML file."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -76,6 +77,14 @@ def build_schedule_parser(subparsers) -> None:
     run.add_argument("--sync", action="store_true", default=False,
                      help="Wait for completion and print output (default: async fire-and-forget)")
     run.set_defaults(func=schedule_run)
+
+    # logs
+    logs = schedule_sub.add_parser("logs", help="Show schedule execution logs")
+    logs.add_argument("--id", default="", help="Filter by task ID")
+    logs.add_argument("-n", "--lines", type=int, default=20, help="Number of recent entries (default: 20)")
+    logs.add_argument("--json", dest="output_json", action="store_true", default=False,
+                      help="Output as JSON")
+    logs.set_defaults(func=schedule_logs)
 
 
 def _parse_bool(v: str) -> bool:
@@ -334,3 +343,81 @@ def _get_api_port(args) -> int:
             config = yaml.safe_load(f) or {}
         return int(config.get("global", {}).get("api_port", 0))
     return 0
+
+
+def _local_dir(args) -> Path:
+    return default_local_dir(getattr(args, "box_agent_dir", None))
+
+
+def _load_run_logs(local_dir: Path, task_id: str = "") -> list[dict]:
+    """Load schedule run log entries from jsonl files.
+
+    Returns a list of records sorted by time descending.
+    """
+    runs_dir = local_dir / "schedule-runs"
+    if not runs_dir.is_dir():
+        return []
+
+    entries: list[dict] = []
+    if task_id:
+        files = [runs_dir / f"{task_id}.jsonl"]
+    else:
+        files = list(runs_dir.glob("*.jsonl"))
+
+    for f in files:
+        if not f.is_file():
+            continue
+        try:
+            with open(f, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entries.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        except OSError:
+            continue
+
+    entries.sort(key=lambda e: e.get("time", ""), reverse=True)
+    return entries
+
+
+def schedule_logs(args) -> None:
+    """Show schedule execution logs."""
+    task_id = getattr(args, "id", "")
+    n = getattr(args, "lines", 20)
+    entries = _load_run_logs(_local_dir(args), task_id=task_id)
+
+    if not entries:
+        if task_id:
+            print(f"No logs found for '{task_id}'.")
+        else:
+            print("No schedule logs found.")
+        return
+
+    entries = entries[:n]
+
+    if getattr(args, "output_json", False):
+        _safe_print(json.dumps(entries, indent=2, ensure_ascii=False))
+        return
+
+    for e in entries:
+        time = e.get("time", "?")
+        tid = e.get("task", "?")
+        mode = e.get("mode", "?")
+        backend = e.get("ai_backend", "")
+        model = e.get("model", "")
+        error = e.get("error", "")
+        output = e.get("output", "")
+
+        status = "ERROR" if error else "OK"
+        header = f"[{time}] {tid} ({mode}, {backend}/{model}) {status}"
+        print(header)
+
+        if error:
+            print(f"  Error: {_summarize_prompt(error, 120)}")
+        elif output:
+            print(f"  Output: {_summarize_prompt(output, 120)}")
+        print()

@@ -67,6 +67,10 @@ def main():
     from boxagent.schedule_cli import build_schedule_parser
     build_schedule_parser(subparsers)
 
+    # Register sessions subcommands
+    from boxagent.sessions_cli import build_sessions_parser
+    build_sessions_parser(subparsers)
+
     # Top-level doctor
     doc = subparsers.add_parser("doctor", help="Check environment, dependencies, and config")
     doc.add_argument("--fix", action="store_true", default=False,
@@ -85,6 +89,14 @@ def main():
             args.func(args)
         else:
             parser.parse_args(["schedule", "--help"])
+        return
+
+    # Dispatch to sessions CLI
+    if args.command == "sessions":
+        if hasattr(args, "func"):
+            args.func(args)
+        else:
+            parser.parse_args(["sessions", "--help"])
         return
 
     # Dispatch to top-level doctor / install

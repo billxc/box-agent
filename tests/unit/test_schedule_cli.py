@@ -12,6 +12,7 @@ from boxagent.schedule_cli import (
     _get_api_ports,
     _get_runtime_api_port,
     _get_sock_path,
+    _load_run_logs,
     _request_targets,
     _safe_print,
     _save_all,
@@ -21,6 +22,7 @@ from boxagent.schedule_cli import (
     schedule_disable,
     schedule_enable,
     schedule_list,
+    schedule_logs,
     schedule_run,
     schedule_show,
 )
@@ -668,3 +670,124 @@ def test_run_api_fallback_append_errors(tmp_path, monkeypatch):
     with patch("httpx.Client", return_value=mock_client):
         with pytest.raises(SystemExit):
             schedule_run(args)
+
+
+# --- schedule_logs ---
+
+
+def _write_run_log(tmp_path, task_id, records):
+    """Write jsonl run log entries for a task."""
+    import json
+
+    runs_dir = tmp_path / "local" / "schedule-runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    path = runs_dir / f"{task_id}.jsonl"
+    with open(path, "a", encoding="utf-8") as f:
+        for r in records:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+
+def _sample_log(task_id="test-task", time="2026-04-16T10:00:00", **overrides):
+    record = {
+        "time": time,
+        "task": task_id,
+        "mode": "isolate",
+        "bot": "my-bot",
+        "ai_backend": "claude-cli",
+        "model": "sonnet",
+        "workspace": "/tmp/ws",
+        "prompt": "Say hello",
+        "output": "Hello!",
+        "error": "",
+    }
+    record.update(overrides)
+    return record
+
+
+def test_logs_empty(tmp_path, capsys):
+    args = _make_args(tmp_path, id="", lines=20, output_json=False, box_agent_dir=tmp_path)
+    schedule_logs(args)
+    assert "No schedule logs found" in capsys.readouterr().out
+
+
+def test_logs_empty_for_task(tmp_path, capsys):
+    args = _make_args(tmp_path, id="nonexistent", lines=20, output_json=False, box_agent_dir=tmp_path)
+    schedule_logs(args)
+    assert "No logs found for 'nonexistent'" in capsys.readouterr().out
+
+
+def test_logs_shows_entries(tmp_path, capsys):
+    _write_run_log(tmp_path, "task-a", [
+        _sample_log("task-a", "2026-04-16T10:00:00", output="Hello!"),
+    ])
+    args = _make_args(tmp_path, id="", lines=20, output_json=False, box_agent_dir=tmp_path)
+    schedule_logs(args)
+    out = capsys.readouterr().out
+    assert "task-a" in out
+    assert "OK" in out
+    assert "Hello!" in out
+
+
+def test_logs_shows_error(tmp_path, capsys):
+    _write_run_log(tmp_path, "task-a", [
+        _sample_log("task-a", error="something broke", output=""),
+    ])
+    args = _make_args(tmp_path, id="", lines=20, output_json=False, box_agent_dir=tmp_path)
+    schedule_logs(args)
+    out = capsys.readouterr().out
+    assert "ERROR" in out
+    assert "something broke" in out
+
+
+def test_logs_filter_by_id(tmp_path, capsys):
+    _write_run_log(tmp_path, "task-a", [_sample_log("task-a")])
+    _write_run_log(tmp_path, "task-b", [_sample_log("task-b")])
+    args = _make_args(tmp_path, id="task-a", lines=20, output_json=False, box_agent_dir=tmp_path)
+    schedule_logs(args)
+    out = capsys.readouterr().out
+    assert "task-a" in out
+    assert "task-b" not in out
+
+
+def test_logs_limit(tmp_path, capsys):
+    records = [_sample_log("task-a", f"2026-04-16T{10+i}:00:00") for i in range(5)]
+    _write_run_log(tmp_path, "task-a", records)
+    args = _make_args(tmp_path, id="", lines=2, output_json=False, box_agent_dir=tmp_path)
+    schedule_logs(args)
+    out = capsys.readouterr().out
+    # Should only show 2 entries (most recent)
+    assert out.count("task-a") == 2
+
+
+def test_logs_json_output(tmp_path, capsys):
+    import json
+
+    _write_run_log(tmp_path, "task-a", [_sample_log("task-a")])
+    args = _make_args(tmp_path, id="", lines=20, output_json=True, box_agent_dir=tmp_path)
+    schedule_logs(args)
+    data = json.loads(capsys.readouterr().out)
+    assert len(data) == 1
+    assert data[0]["task"] == "task-a"
+
+
+def test_logs_sorted_desc(tmp_path):
+    _write_run_log(tmp_path, "task-a", [
+        _sample_log("task-a", "2026-04-16T08:00:00"),
+        _sample_log("task-a", "2026-04-16T12:00:00"),
+        _sample_log("task-a", "2026-04-16T10:00:00"),
+    ])
+    local_dir = tmp_path / "local"
+    entries = _load_run_logs(local_dir)
+    assert entries[0]["time"] == "2026-04-16T12:00:00"
+    assert entries[1]["time"] == "2026-04-16T10:00:00"
+    assert entries[2]["time"] == "2026-04-16T08:00:00"
+
+
+def test_logs_multiple_tasks_merged(tmp_path):
+    _write_run_log(tmp_path, "task-a", [_sample_log("task-a", "2026-04-16T10:00:00")])
+    _write_run_log(tmp_path, "task-b", [_sample_log("task-b", "2026-04-16T11:00:00")])
+    local_dir = tmp_path / "local"
+    entries = _load_run_logs(local_dir)
+    assert len(entries) == 2
+    assert entries[0]["task"] == "task-b"
+    assert entries[1]["task"] == "task-a"
