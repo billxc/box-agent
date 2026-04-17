@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -93,14 +94,20 @@ class ClaudeProcess(BaseCLIProcess):
             mcp_server_path = str(
                 Path(__file__).parent.parent / "mcp_server.py"
             )
+            mcp_env = {
+                "BOXAGENT_BOT_TOKEN": self.bot_token,
+                "BOXAGENT_CHAT_ID": chat_id,
+            }
+            # Pass schedule/session config paths to MCP server
+            for key in ("BOXAGENT_CONFIG_DIR", "BOXAGENT_LOCAL_DIR", "BOXAGENT_NODE_ID"):
+                val = os.environ.get(key, "")
+                if val:
+                    mcp_env[key] = val
             mcp_config = json.dumps({"mcpServers": {
                 "boxagent-telegram": {
                     "command": sys.executable,
                     "args": [mcp_server_path],
-                    "env": {
-                        "BOXAGENT_BOT_TOKEN": self.bot_token,
-                        "BOXAGENT_CHAT_ID": chat_id,
-                    },
+                    "env": mcp_env,
                 }
             }})
             args += ["--mcp-config", mcp_config]

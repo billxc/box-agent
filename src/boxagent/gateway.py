@@ -150,6 +150,12 @@ class Gateway:
         self._storage = Storage(local_dir=self.local_dir)
         logger.info("Gateway starting (node=%s)", self.config.node_id or "(any)")
 
+        # Expose paths for MCP server subprocesses (schedule/session tools)
+        os.environ.setdefault("BOXAGENT_CONFIG_DIR", str(self.config_dir))
+        os.environ.setdefault("BOXAGENT_LOCAL_DIR", str(self.local_dir))
+        if self.config.node_id:
+            os.environ.setdefault("BOXAGENT_NODE_ID", self.config.node_id)
+
         # Start copilot-api proxy if enabled (deprecated)
         if self.config.copilot_api:
             logger.warning(

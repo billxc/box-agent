@@ -196,22 +196,32 @@ def schedule_add(args) -> None:
     print(f"Created schedule '{args.id}'")
 
 
-def schedule_list(args) -> None:
-    """List all schedules."""
-    all_scheds = _load_effective_schedules(args)
+def format_schedule_list(config_dir: str | Path, node_id: str = "") -> str:
+    """Return a formatted string listing all schedules."""
+    path = Path(config_dir) / "schedules.yaml"
+    all_scheds = load_schedule_entries(path, node_id=node_id)
 
     if not all_scheds:
-        print("No schedules found.")
-        return
+        return "No schedules found."
 
-    print(f"{'ID':<20} {'CRON':<16} {'MODE':<8} {'ENABLED':<8} {'PROMPT'}")
-    print("-" * 80)
+    lines = []
     for task_id, entry in all_scheds.items():
         cron = entry.get("cron", "?")
         mode = entry.get("mode", "isolate")
-        enabled = "yes" if entry.get("enabled", True) else "no"
-        prompt = _summarize_prompt(entry.get("prompt", ""))
-        print(f"{task_id:<20} {cron:<16} {mode:<8} {enabled:<8} {prompt}")
+        enabled = "on" if entry.get("enabled", True) else "off"
+        prompt = _summarize_prompt(entry.get("prompt", ""), 50)
+        lines.append(f"`{task_id}` {enabled} `{cron}` ({mode})")
+        if prompt:
+            lines.append(f"  {prompt}")
+    return "\n".join(lines)
+
+
+def schedule_list(args) -> None:
+    """List all schedules."""
+    _safe_print(format_schedule_list(
+        _schedules_file(args).parent,
+        node_id=_load_node_id(args),
+    ))
 
 
 def schedule_del(args) -> None:
@@ -252,113 +262,86 @@ def _set_enabled(args, enabled: bool) -> None:
     print(f"Schedule '{args.id}' {state}")
 
 
+def format_schedule_show(config_dir: str | Path, node_id: str, task_id: str) -> str:
+    """Return formatted details for a single schedule."""
+    path = Path(config_dir) / "schedules.yaml"
+    all_scheds = load_schedule_entries(path, node_id=node_id)
+
+    if task_id not in all_scheds:
+        return f"Schedule '{task_id}' not found."
+
+    entry = {task_id: all_scheds[task_id]}
+    return yaml.dump(
+        entry, Dumper=_ScheduleDumper, default_flow_style=False,
+        sort_keys=False, allow_unicode=False,
+    ).rstrip()
+
+
 def schedule_show(args) -> None:
     """Show a schedule's details."""
-    all_scheds = _load_effective_schedules(args)
+    _safe_print(format_schedule_show(
+        _schedules_file(args).parent,
+        node_id=_load_node_id(args),
+        task_id=args.id,
+    ))
 
-    if args.id not in all_scheds:
-        print(f"Error: schedule '{args.id}' not found", file=sys.stderr)
-        sys.exit(1)
 
-    entry = {args.id: all_scheds[args.id]}
-    print(yaml.dump(entry, Dumper=_ScheduleDumper, default_flow_style=False, sort_keys=False, allow_unicode=False), end="")
+def trigger_schedule_run(local_dir: str | Path, task_id: str, sync: bool = False) -> str:
+    """Trigger a schedule run via gateway HTTP API. Returns status message."""
+    import httpx
+
+    local_dir = Path(local_dir)
+    sock_path = local_dir / "api.sock"
+    timeout = 10.0 if not sync else 300.0
+
+    targets = []
+    if sock_path.exists():
+        targets.append(
+            (httpx.HTTPTransport(uds=str(sock_path)), "http://localhost/api/schedule/run")
+        )
+    port_file = local_dir / API_PORT_FILE
+    if port_file.is_file():
+        try:
+            port = int(port_file.read_text(encoding="utf-8").strip())
+            if port:
+                targets.append(
+                    (httpx.HTTPTransport(), f"http://127.0.0.1:{port}/api/schedule/run")
+                )
+        except (OSError, ValueError):
+            pass
+
+    if not targets:
+        return "Error: gateway not running."
+
+    payload = {"id": task_id}
+    if not sync:
+        payload["async"] = True
+
+    for transport, url in targets:
+        try:
+            with httpx.Client(transport=transport, timeout=timeout) as client:
+                resp = client.post(url, json=payload)
+            data = resp.json()
+            if data.get("ok"):
+                if not sync:
+                    return f"Schedule '{task_id}' triggered (async)."
+                output = data.get("output", "")
+                return output if output else f"Schedule '{task_id}' completed (no output)."
+            return f"Error: {data.get('error', 'unknown')}"
+        except httpx.ConnectError:
+            continue
+
+    return "Error: gateway not running."
 
 
 def schedule_run(args) -> None:
     """Run a schedule once immediately via the gateway HTTP API."""
-    import httpx
-
-    sync = getattr(args, "sync", False)
-    sock_path = _get_sock_path(args)
-    api_ports = _get_api_ports(args)
-
-    payload = {"id": args.id}
-    if not sync:
-        payload["async"] = True
-
-    timeout = 10.0 if not sync else 300.0
-
-    connected = False
-    for transport, url in _request_targets(sock_path, api_ports):
-        try:
-            with httpx.Client(transport=transport, timeout=timeout) as client:
-                resp = client.post(
-                    url,
-                    json=payload,
-                )
-            connected = True
-            data = resp.json()
-            if data.get("ok"):
-                if not sync:
-                    _safe_print(f"Schedule '{args.id}' triggered (async)")
-                else:
-                    output = data.get("output", "")
-                    if output:
-                        _safe_print(output)
-                    else:
-                        _safe_print(f"Schedule '{args.id}' completed (no output)")
-            else:
-                print(f"Error: {data.get('error', 'unknown')}", file=sys.stderr)
-                sys.exit(1)
-            break
-        except httpx.ConnectError:
-            continue
-
-    if not connected:
-        print("Error: gateway not running", file=sys.stderr)
+    result = trigger_schedule_run(
+        _local_dir(args), args.id, sync=getattr(args, "sync", False),
+    )
+    _safe_print(result)
+    if result.startswith("Error:"):
         sys.exit(1)
-
-
-def _get_sock_path(args) -> Path:
-    """Return the Unix socket path."""
-    return default_local_dir(getattr(args, "box_agent_dir", None)) / "api.sock"
-
-
-def _get_api_port_file(args) -> Path:
-    """Return the runtime API port file path."""
-    return default_local_dir(getattr(args, "box_agent_dir", None)) / API_PORT_FILE
-
-
-def _request_targets(sock_path: Path, api_ports: list[int]):
-    """Yield request targets to try: Unix socket first, then TCP ports."""
-    import httpx
-
-    if sock_path.exists():
-        yield httpx.HTTPTransport(uds=str(sock_path)), "http://localhost/api/schedule/run"
-    for port in api_ports:
-        yield httpx.HTTPTransport(), f"http://127.0.0.1:{port}/api/schedule/run"
-
-
-def _get_api_ports(args) -> list[int]:
-    """Return candidate TCP ports to try, preferring runtime-discovered ports."""
-    ports: list[int] = []
-    for port in (_get_runtime_api_port(args), _get_api_port(args)):
-        if port and port not in ports:
-            ports.append(port)
-    return ports
-
-
-def _get_runtime_api_port(args) -> int:
-    """Read the runtime-discovered API port, default 0 when absent/invalid."""
-    port_file = _get_api_port_file(args)
-    if not port_file.is_file():
-        return 0
-    try:
-        return int(port_file.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        return 0
-
-
-def _get_api_port(args) -> int:
-    """Read api_port from config.yaml, default 0 (disabled)."""
-    box_agent_dir = getattr(args, "box_agent_dir", None)
-    config_dir = getattr(args, "config", None) or default_config_dir(box_agent_dir)
-    config_file = Path(config_dir) / "config.yaml"
-    if config_file.is_file():
-        with open(config_file, encoding="utf-8") as f:
-            config = yaml.safe_load(f) or {}
-        return int(config.get("global", {}).get("api_port", 0))
-    return 0
 
 
 def _local_dir(args) -> Path:
@@ -400,27 +383,19 @@ def _load_run_logs(local_dir: Path, task_id: str = "") -> list[dict]:
     return entries
 
 
-def schedule_logs(args) -> None:
-    """Show schedule execution logs."""
-    task_id = getattr(args, "id", "")
-    n = getattr(args, "lines", 20)
-    entries = _load_run_logs(_local_dir(args), task_id=task_id)
+def format_schedule_logs(local_dir: str | Path, task_id: str = "", n: int = 20) -> str:
+    """Return a formatted string of schedule execution logs."""
+    entries = _load_run_logs(Path(local_dir), task_id=task_id)
 
     if not entries:
         if task_id:
-            print(f"No logs found for '{task_id}'.")
-        else:
-            print("No schedule logs found.")
-        return
+            return f"No logs found for '{task_id}'."
+        return "No schedule logs found."
 
     entries = entries[:n]
-
-    if getattr(args, "output_json", False):
-        _safe_print(json.dumps(entries, indent=2, ensure_ascii=False))
-        return
-
+    lines = []
     for e in entries:
-        time = e.get("time", "?")
+        t = e.get("time", "?")
         tid = e.get("task", "?")
         mode = e.get("mode", "?")
         backend = e.get("ai_backend", "")
@@ -429,11 +404,23 @@ def schedule_logs(args) -> None:
         output = e.get("output", "")
 
         status = "ERROR" if error else "OK"
-        header = f"[{time}] {tid} ({mode}, {backend}/{model}) {status}"
-        print(header)
+        lines.append(f"[{t}] {tid} ({mode}, {backend}/{model}) {status}")
 
         if error:
-            print(f"  Error: {_summarize_prompt(error, 120)}")
+            lines.append(f"  Error: {_summarize_prompt(error, 120)}")
         elif output:
-            print(f"  Output: {_summarize_prompt(output, 120)}")
-        print()
+            lines.append(f"  Output: {_summarize_prompt(output, 120)}")
+    return "\n".join(lines)
+
+
+def schedule_logs(args) -> None:
+    """Show schedule execution logs."""
+    task_id = getattr(args, "id", "")
+    n = getattr(args, "lines", 20)
+
+    if getattr(args, "output_json", False):
+        entries = _load_run_logs(_local_dir(args), task_id=task_id)[:n]
+        _safe_print(json.dumps(entries, indent=2, ensure_ascii=False))
+        return
+
+    _safe_print(format_schedule_logs(_local_dir(args), task_id=task_id, n=n))

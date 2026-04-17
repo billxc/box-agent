@@ -320,160 +320,41 @@ async def cmd_schedule(
     node_id: str = "",
 ) -> None:
     """Dispatch /schedule subcommands: list, logs, show, run."""
+    from boxagent.schedule_cli import (
+        format_schedule_list,
+        format_schedule_logs,
+        format_schedule_show,
+        trigger_schedule_run,
+    )
+
     parts = msg.text.strip().split(maxsplit=2)
     sub = parts[1] if len(parts) > 1 else ""
     arg = parts[2] if len(parts) > 2 else ""
 
     if sub == "list":
-        await _schedule_list(channel, msg.chat_id, config_dir, node_id)
+        text = format_schedule_list(config_dir, node_id)
     elif sub == "logs":
-        await _schedule_logs(channel, msg.chat_id, local_dir, task_id=arg)
+        if not local_dir:
+            text = "Local dir not configured."
+        else:
+            text = format_schedule_logs(local_dir, task_id=arg, n=15)
     elif sub == "show" and arg:
-        await _schedule_show(channel, msg.chat_id, config_dir, node_id, task_id=arg)
+        text = format_schedule_show(config_dir, node_id, arg)
     elif sub == "run" and arg:
-        await _schedule_run(channel, msg.chat_id, local_dir, task_id=arg)
+        if not local_dir:
+            text = "Local dir not configured."
+        else:
+            text = trigger_schedule_run(local_dir, arg)
     else:
-        await channel.send_text(
-            msg.chat_id,
+        text = (
             "**Usage**\n"
             "/schedule list — List all schedules\n"
             "/schedule logs [task\\_id] — Show execution logs\n"
             "/schedule show <task\\_id> — Show schedule details\n"
-            "/schedule run <task\\_id> — Run a schedule once",
+            "/schedule run <task\\_id> — Run a schedule once"
         )
 
-
-async def _schedule_list(channel, chat_id: str, config_dir: str, node_id: str) -> None:
-    from boxagent.scheduler import load_schedule_entries
-
-    schedules_file = Path(config_dir) / "schedules.yaml"
-    entries = load_schedule_entries(schedules_file, node_id=node_id)
-
-    if not entries:
-        await channel.send_text(chat_id, "No schedules found.")
-        return
-
-    lines = ["**Schedules**"]
-    for tid, entry in entries.items():
-        cron = entry.get("cron", "?")
-        mode = entry.get("mode", "isolate")
-        enabled = "on" if entry.get("enabled", True) else "off"
-        prompt = " ".join(str(entry.get("prompt", "")).split())
-        if len(prompt) > 50:
-            prompt = prompt[:47] + "..."
-        lines.append(f"`{tid}` {enabled} `{cron}` ({mode})")
-        if prompt:
-            lines.append(f"  {prompt}")
-
-    await channel.send_text(chat_id, "\n".join(lines))
-
-
-async def _schedule_logs(
-    channel, chat_id: str, local_dir: Path | None, task_id: str = "",
-) -> None:
-    from boxagent.schedule_cli import _load_run_logs, _summarize_prompt
-
-    if not local_dir:
-        await channel.send_text(chat_id, "Local dir not configured.")
-        return
-
-    entries = _load_run_logs(local_dir, task_id=task_id)
-    if not entries:
-        text = f"No logs found for '{task_id}'." if task_id else "No schedule logs found."
-        await channel.send_text(chat_id, text)
-        return
-
-    lines = ["**Schedule Logs**"]
-    for e in entries[:15]:
-        ts = e.get("time", "?")
-        time_str = ts
-        try:
-            from datetime import datetime
-            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-            time_str = dt.strftime("%m-%d %H:%M")
-        except (ValueError, TypeError, AttributeError):
-            pass
-        tid = e.get("task", "?")
-        error = e.get("error", "")
-        status = "ERR" if error else "OK"
-        detail = _summarize_prompt(error, 60) if error else _summarize_prompt(e.get("output", ""), 60)
-        lines.append(f"`{tid}` {time_str} {status}")
-        if detail:
-            lines.append(f"  {detail}")
-
-    await channel.send_text(chat_id, "\n".join(lines))
-
-
-async def _schedule_show(
-    channel, chat_id: str, config_dir: str, node_id: str, task_id: str,
-) -> None:
-    from boxagent.scheduler import load_schedule_entries
-
-    schedules_file = Path(config_dir) / "schedules.yaml"
-    entries = load_schedule_entries(schedules_file, node_id=node_id)
-
-    if task_id not in entries:
-        await channel.send_text(chat_id, f"Schedule '{task_id}' not found.")
-        return
-
-    entry = entries[task_id]
-    lines = [f"**{task_id}**"]
-    for key in ("cron", "mode", "enabled", "ai_backend", "model", "bot", "timeout_seconds", "enabled_on_nodes"):
-        val = entry.get(key)
-        if val is not None and val != "":
-            lines.append(f"{key}: {val}")
-    prompt = str(entry.get("prompt", ""))
-    if prompt:
-        if len(prompt) > 200:
-            prompt = prompt[:197] + "..."
-        lines.append(f"prompt: {prompt}")
-
-    await channel.send_text(chat_id, "\n".join(lines))
-
-
-async def _schedule_run(channel, chat_id: str, local_dir: Path | None, task_id: str) -> None:
-    import httpx
-
-    if not local_dir:
-        await channel.send_text(chat_id, "Local dir not configured.")
-        return
-
-    sock_path = local_dir / "api.sock"
-    targets = []
-    if sock_path.exists():
-        targets.append(
-            (httpx.HTTPTransport(uds=str(sock_path)), "http://localhost/api/schedule/run")
-        )
-    port_file = local_dir / "api-port.txt"
-    if port_file.is_file():
-        try:
-            port = int(port_file.read_text(encoding="utf-8").strip())
-            if port:
-                targets.append(
-                    (httpx.HTTPTransport(), f"http://127.0.0.1:{port}/api/schedule/run")
-                )
-        except (OSError, ValueError):
-            pass
-
-    if not targets:
-        await channel.send_text(chat_id, "Gateway API not reachable.")
-        return
-
-    payload = {"id": task_id, "async": True}
-    for transport, url in targets:
-        try:
-            with httpx.Client(transport=transport, timeout=10.0) as client:
-                resp = client.post(url, json=payload)
-            data = resp.json()
-            if data.get("ok"):
-                await channel.send_text(chat_id, f"Schedule '{task_id}' triggered.")
-            else:
-                await channel.send_text(chat_id, f"Error: {data.get('error', 'unknown')}")
-            return
-        except httpx.ConnectError:
-            continue
-
-    await channel.send_text(chat_id, "Gateway API not reachable.")
+    await channel.send_text(msg.chat_id, text)
 
 
 async def cmd_sessions(
@@ -482,48 +363,11 @@ async def cmd_sessions(
     channel: object,
 ) -> None:
     """List Claude CLI sessions from ~/.claude/projects/."""
-    from boxagent.sessions_cli import _load_all_sessions, _truncate
+    from boxagent.sessions_cli import format_sessions_list
 
     arg = msg.text.strip().partition(" ")[2].strip()
-    entries = _load_all_sessions()
-
-    if arg:
-        entries = [
-            e for e in entries
-            if arg.lower() in e.get("projectPath", "").lower()
-        ]
-
-    if not entries:
-        await channel.send_text(msg.chat_id, "No sessions found.")
-        return
-
-    lines = ["**Claude CLI Sessions**"]
-    for idx, e in enumerate(entries[:20], 1):
-        sid = e.get("sessionId", "?")[:8]
-        msgs = e.get("messageCount", "")
-        modified = e.get("modified", "")
-        # Format time: "04-17 14:30"
-        time_str = ""
-        if modified:
-            try:
-                from datetime import datetime
-                dt = datetime.fromisoformat(modified.replace("Z", "+00:00"))
-                time_str = dt.strftime("%m-%d %H:%M")
-            except (ValueError, TypeError):
-                time_str = modified[:10]
-        # Project: use last meaningful dir name
-        project_path = e.get("projectPath", "")
-        project = Path(project_path).name if project_path else ""
-        # Summary or firstPrompt
-        summary = _truncate(
-            e.get("summary", "") or e.get("firstPrompt", ""), 60,
-        )
-        line = f"{idx}. `{sid}` {msgs}msg {time_str} **{project}**"
-        if summary:
-            line += f"\n    {summary}"
-        lines.append(line)
-
-    await channel.send_text(msg.chat_id, "\n".join(lines))
+    text = format_sessions_list(project_filter=arg)
+    await channel.send_text(msg.chat_id, text)
 
 
 async def cmd_trust_workspace(

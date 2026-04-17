@@ -138,6 +138,43 @@ def _truncate(text: str, limit: int) -> str:
     return s
 
 
+def format_sessions_list(project_filter: str = "", limit: int = 20) -> str:
+    """Return a formatted string listing Claude CLI sessions."""
+    entries = _load_all_sessions()
+
+    if project_filter:
+        entries = [
+            e for e in entries
+            if project_filter.lower() in e.get("projectPath", "").lower()
+        ]
+
+    if not entries:
+        return "No sessions found."
+
+    lines = []
+    for idx, e in enumerate(entries[:limit], 1):
+        sid = e.get("sessionId", "?")[:8]
+        msgs = e.get("messageCount", "")
+        modified = e.get("modified", "")
+        time_str = ""
+        if modified:
+            try:
+                dt = datetime.fromisoformat(modified.replace("Z", "+00:00"))
+                time_str = dt.strftime("%m-%d %H:%M")
+            except (ValueError, TypeError):
+                time_str = modified[:10]
+        project_path = e.get("projectPath", "")
+        project = Path(project_path).name if project_path else ""
+        summary = _truncate(
+            e.get("summary", "") or e.get("firstPrompt", ""), 60,
+        )
+        line = f"{idx}. `{sid}` {msgs}msg {time_str} **{project}**"
+        if summary:
+            line += f"\n    {summary}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def sessions_list(args) -> None:
     """List all Claude CLI sessions."""
     entries = _load_all_sessions()
