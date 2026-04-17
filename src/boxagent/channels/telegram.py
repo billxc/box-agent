@@ -66,6 +66,7 @@ class TelegramChannel:
             BotCommand(command="trust_workspace", description="Trust current workspace for agent"),
             BotCommand(command="review_loop", description="Multi-agent adversarial review loop"),
             BotCommand(command="sessions", description="List Claude CLI sessions"),
+            BotCommand(command="schedule", description="Manage schedules (list/logs/show/run)"),
             BotCommand(command="version", description="Show version and commit hash"),
             BotCommand(command="help", description="Show available commands"),
         ])
