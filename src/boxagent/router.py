@@ -11,6 +11,7 @@ from boxagent.router_callback import ChannelCallback, TextCollector, log_turn
 from boxagent.router_commands import (
     cmd_exec,
     cmd_help,
+    cmd_sessions,
     cmd_start,
     cmd_status,
     cmd_sync_skills,
@@ -21,7 +22,7 @@ from boxagent.router_commands import (
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_COMMANDS = {"/status", "/new", "/cancel", "/resume", "/start", "/help", "/verbose", "/sync_skills", "/compact", "/model", "/exec", "/version", "/trust_workspace", "/review_loop", "/cd", "/backend"}
+SYSTEM_COMMANDS = {"/status", "/new", "/cancel", "/resume", "/start", "/help", "/verbose", "/sync_skills", "/compact", "/model", "/exec", "/version", "/trust_workspace", "/review_loop", "/cd", "/backend", "/sessions"}
 
 
 @dataclass
@@ -115,6 +116,8 @@ class Router:
             await self._cmd_cd(msg)
         elif command == "/backend":
             await self._cmd_backend(msg)
+        elif command == "/sessions":
+            await cmd_sessions(msg, channel=self.channel)
 
     # ---- Core session commands ----
 

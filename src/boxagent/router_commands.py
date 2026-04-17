@@ -132,6 +132,7 @@ async def cmd_help(
         "/sync\\_skills — Re-sync linked skill directories\n"
         "/trust\\_workspace — Trust current workspace in Claude\n"
         "/review\\_loop — Multi-agent adversarial review loop\n"
+        "/sessions — List Claude CLI sessions\n"
         "/version — Show version and commit hash\n"
         "/help — Show this message\n\n"
         "Prefix with @model to use a model for one message:\n"
@@ -307,6 +308,41 @@ async def cmd_exec(
             await channel.send_text(
                 msg.chat_id, f"{header}\n```\n{truncated}\n```",
             )
+
+
+async def cmd_sessions(
+    msg: IncomingMessage,
+    *,
+    channel: object,
+) -> None:
+    """List Claude CLI sessions from ~/.claude/projects/."""
+    from boxagent.sessions_cli import _load_all_sessions, _truncate
+
+    arg = msg.text.strip().partition(" ")[2].strip()
+    entries = _load_all_sessions()
+
+    if arg:
+        entries = [
+            e for e in entries
+            if arg in e.get("projectPath", "")
+        ]
+
+    if not entries:
+        await channel.send_text(msg.chat_id, "No sessions found.")
+        return
+
+    lines = ["**Claude CLI Sessions**"]
+    for idx, e in enumerate(entries[:20], 1):
+        sid = e.get("sessionId", "?")[:8]
+        msgs = e.get("messageCount", "")
+        modified = e.get("modified", "")[:10]
+        project = _truncate(e.get("projectPath", ""), 28)
+        summary = _truncate(e.get("summary", e.get("firstPrompt", "")), 40)
+        lines.append(f"{idx}. `{sid}` ({msgs}msg) {modified} {project}")
+        if summary:
+            lines.append(f"    {summary}")
+
+    await channel.send_text(msg.chat_id, "\n".join(lines))
 
 
 async def cmd_trust_workspace(
