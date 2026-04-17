@@ -121,6 +121,43 @@ def schedule_list() -> str:
 
 
 @mcp.tool()
+def schedule_add(
+    task_id: str,
+    cron: str,
+    prompt: str,
+    mode: str = "isolate",
+    bot: str = "",
+    ai_backend: str = "",
+    model: str = "",
+) -> str:
+    """Add a new scheduled task.
+
+    Args:
+        task_id: Unique task ID
+        cron: Cron expression (5-field, e.g. "0 9 * * 1-5")
+        prompt: Prompt to send when the schedule fires
+        mode: Execution mode - "isolate" (standalone) or "append" (send to bot)
+        bot: Bot name (required when mode=append)
+        ai_backend: Backend for isolate mode (claude-cli, codex-cli, codex-acp)
+        model: Model for isolate mode (e.g. sonnet, opus)
+    """
+    if not CONFIG_DIR:
+        return "BOXAGENT_CONFIG_DIR not set."
+    from boxagent.schedule_cli import add_schedule as _add
+
+    return _add(
+        config_dir=CONFIG_DIR,
+        task_id=task_id,
+        cron=cron,
+        prompt=prompt,
+        mode=mode,
+        bot=bot,
+        ai_backend=ai_backend,
+        model=model,
+    )
+
+
+@mcp.tool()
 def schedule_logs(task_id: str = "") -> str:
     """Show recent schedule execution logs.
 

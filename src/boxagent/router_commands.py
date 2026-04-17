@@ -319,8 +319,9 @@ async def cmd_schedule(
     local_dir: Path | None,
     node_id: str = "",
 ) -> None:
-    """Dispatch /schedule subcommands: list, logs, show, run."""
+    """Dispatch /schedule subcommands: list, logs, show, run, add."""
     from boxagent.schedule_cli import (
+        add_schedule,
         format_schedule_list,
         format_schedule_logs,
         format_schedule_show,
@@ -345,16 +346,59 @@ async def cmd_schedule(
             text = "Local dir not configured."
         else:
             text = trigger_schedule_run(local_dir, arg)
+    elif sub == "add":
+        text = _parse_and_add_schedule(arg, config_dir, add_schedule)
     else:
         text = (
             "**Usage**\n"
             "/schedule list — List all schedules\n"
             "/schedule logs [task\\_id] — Show execution logs\n"
             "/schedule show <task\\_id> — Show schedule details\n"
-            "/schedule run <task\\_id> — Run a schedule once"
+            "/schedule run <task\\_id> — Run a schedule once\n"
+            "/schedule add <params> — Add a schedule\n"
+            "  params: id=<id> cron=<expr> prompt=<text> "
+            "[mode=isolate] [ai\\_backend=claude-cli] [model=sonnet] [bot=<name>]"
         )
 
     await channel.send_text(msg.chat_id, text)
+
+
+def _parse_and_add_schedule(arg: str, config_dir: str, add_fn) -> str:
+    """Parse key=value params from /schedule add and call add_schedule."""
+    if not arg:
+        return (
+            "Usage: /schedule add id=<id> cron=<expr> prompt=<text> "
+            "[mode=isolate] [ai\\_backend=claude-cli] [model=sonnet] [bot=<name>]"
+        )
+
+    import shlex
+    try:
+        tokens = shlex.split(arg)
+    except ValueError:
+        tokens = arg.split()
+
+    params: dict[str, str] = {}
+    for token in tokens:
+        if "=" in token:
+            k, _, v = token.partition("=")
+            params[k] = v
+
+    task_id = params.get("id", "")
+    cron = params.get("cron", "")
+    prompt = params.get("prompt", "")
+    if not task_id or not cron or not prompt:
+        return "Error: id, cron, and prompt are required."
+
+    return add_fn(
+        config_dir=config_dir,
+        task_id=task_id,
+        cron=cron,
+        prompt=prompt,
+        mode=params.get("mode", "isolate"),
+        bot=params.get("bot", ""),
+        ai_backend=params.get("ai_backend", ""),
+        model=params.get("model", ""),
+    )
 
 
 async def cmd_sessions(

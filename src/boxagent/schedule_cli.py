@@ -145,55 +145,76 @@ def _summarize_prompt(prompt: str, limit: int = 40) -> str:
     return summary
 
 
-def schedule_add(args) -> None:
-    """Add a new schedule entry."""
-    if args.id == SCHEDULE_NODE_OVERRIDES_KEY:
-        print(
-            f"Error: '{SCHEDULE_NODE_OVERRIDES_KEY}' is a reserved schedule id",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+def add_schedule(
+    config_dir: str | Path,
+    task_id: str,
+    cron: str,
+    prompt: str,
+    *,
+    mode: str = "isolate",
+    bot: str = "",
+    ai_backend: str = "",
+    model: str = "",
+    timeout_seconds: float = DEFAULT_ISOLATE_TIMEOUT_SECONDS,
+    enabled_on_nodes: str = "",
+    enabled: bool = True,
+) -> str:
+    """Add a new schedule entry. Returns status message."""
+    if task_id == SCHEDULE_NODE_OVERRIDES_KEY:
+        return f"Error: '{SCHEDULE_NODE_OVERRIDES_KEY}' is a reserved schedule id."
 
-    if not croniter.is_valid(args.cron):
-        print(f"Error: invalid cron expression '{args.cron}'", file=sys.stderr)
-        sys.exit(1)
+    if not croniter.is_valid(cron):
+        return f"Error: invalid cron expression '{cron}'."
 
-    if args.mode == "append" and not args.bot:
-        print("Error: --bot is required when mode=append", file=sys.stderr)
-        sys.exit(1)
-    if args.mode == "isolate" and not args.ai_backend:
-        print("Error: --ai-backend is required when mode=isolate", file=sys.stderr)
-        sys.exit(1)
-    if args.mode == "isolate" and not args.model:
-        print("Error: --model is required when mode=isolate", file=sys.stderr)
-        sys.exit(1)
-
-    timeout_seconds = float(getattr(args, "timeout_seconds", DEFAULT_ISOLATE_TIMEOUT_SECONDS))
+    if mode == "append" and not bot:
+        return "Error: bot is required when mode=append."
+    if mode == "isolate" and not ai_backend:
+        return "Error: ai_backend is required when mode=isolate."
+    if mode == "isolate" and not model:
+        return "Error: model is required when mode=isolate."
     if timeout_seconds <= 0:
-        print("Error: --timeout-seconds must be > 0", file=sys.stderr)
-        sys.exit(1)
+        return "Error: timeout_seconds must be > 0."
 
-    path = _schedules_file(args)
+    path = Path(config_dir) / "schedules.yaml"
     all_scheds = _load_all(path)
 
-    if args.id in all_scheds:
-        print(f"Error: schedule '{args.id}' already exists", file=sys.stderr)
-        sys.exit(1)
+    if task_id in all_scheds:
+        return f"Error: schedule '{task_id}' already exists."
 
     entry = {
-        "cron": args.cron,
-        "prompt": args.prompt,
-        "mode": args.mode,
-        "bot": args.bot,
-        "ai_backend": args.ai_backend,
-        "model": args.model,
+        "cron": cron,
+        "prompt": prompt,
+        "mode": mode,
+        "bot": bot,
+        "ai_backend": ai_backend,
+        "model": model,
         "timeout_seconds": timeout_seconds,
-        "enabled_on_nodes": args.enabled_on_nodes,
-        "enabled": args.enabled,
+        "enabled_on_nodes": enabled_on_nodes,
+        "enabled": enabled,
     }
-    all_scheds[args.id] = entry
+    all_scheds[task_id] = entry
     _save_all(path, all_scheds)
-    print(f"Created schedule '{args.id}'")
+    return f"Created schedule '{task_id}'."
+
+
+def schedule_add(args) -> None:
+    """Add a new schedule entry."""
+    result = add_schedule(
+        config_dir=_schedules_file(args).parent,
+        task_id=args.id,
+        cron=args.cron,
+        prompt=args.prompt,
+        mode=args.mode,
+        bot=args.bot,
+        ai_backend=args.ai_backend,
+        model=args.model,
+        timeout_seconds=float(getattr(args, "timeout_seconds", DEFAULT_ISOLATE_TIMEOUT_SECONDS)),
+        enabled_on_nodes=args.enabled_on_nodes,
+        enabled=args.enabled,
+    )
+    _safe_print(result)
+    if result.startswith("Error:"):
+        sys.exit(1)
 
 
 def format_schedule_list(config_dir: str | Path, node_id: str = "") -> str:
