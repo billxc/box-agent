@@ -90,10 +90,6 @@ def _validate_entry(task_id: str, raw: dict) -> ScheduleTask:
             raise ValueError(
                 f"Schedule '{task_id}': 'ai_backend' is required when mode=isolate"
             )
-        if not model:
-            raise ValueError(
-                f"Schedule '{task_id}': 'model' is required when mode=isolate"
-            )
 
     timeout_seconds = _validate_timeout_seconds(task_id, raw)
 

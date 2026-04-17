@@ -139,7 +139,7 @@ def schedule_add(
         mode: Execution mode - "isolate" (standalone) or "append" (send to bot)
         bot: Bot name (required when mode=append)
         ai_backend: Backend for isolate mode (claude-cli, codex-cli, codex-acp)
-        model: Model for isolate mode (e.g. sonnet, opus)
+        model: Model for isolate mode (e.g. sonnet, opus). Empty = default model
     """
     if not CONFIG_DIR:
         return "BOXAGENT_CONFIG_DIR not set."

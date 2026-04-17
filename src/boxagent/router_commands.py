@@ -357,7 +357,7 @@ async def cmd_schedule(
             "/schedule run <task\\_id> — Run a schedule once\n"
             "/schedule add <params> — Add a schedule\n"
             "  params: id=<id> cron=<expr> prompt=<text> "
-            "[mode=isolate] [ai\\_backend=claude-cli] [model=sonnet] [bot=<name>]"
+            "[mode=isolate] [ai\\_backend=claude-cli] [model=<model>]"
         )
 
     await channel.send_text(msg.chat_id, text)
