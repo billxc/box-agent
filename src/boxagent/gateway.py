@@ -100,6 +100,12 @@ def sync_skills(
     skills_dir = Path(workspace) / skills_root / "skills"
     skills_dir.mkdir(parents=True, exist_ok=True)
 
+    # Clean up broken symlinks
+    for entry in skills_dir.iterdir():
+        if entry.is_symlink() and not entry.exists():
+            logger.info("Removing broken skill symlink: %s", entry)
+            entry.unlink()
+
     linked = []
     for src_dir in extra_skill_dirs:
         src_path = Path(src_dir).expanduser().resolve()
