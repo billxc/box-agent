@@ -324,7 +324,7 @@ async def cmd_sessions(
     if arg:
         entries = [
             e for e in entries
-            if arg in e.get("projectPath", "")
+            if arg.lower() in e.get("projectPath", "").lower()
         ]
 
     if not entries:
@@ -335,12 +335,27 @@ async def cmd_sessions(
     for idx, e in enumerate(entries[:20], 1):
         sid = e.get("sessionId", "?")[:8]
         msgs = e.get("messageCount", "")
-        modified = e.get("modified", "")[:10]
-        project = _truncate(e.get("projectPath", ""), 28)
-        summary = _truncate(e.get("summary", e.get("firstPrompt", "")), 40)
-        lines.append(f"{idx}. `{sid}` ({msgs}msg) {modified} {project}")
+        modified = e.get("modified", "")
+        # Format time: "04-17 14:30"
+        time_str = ""
+        if modified:
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(modified.replace("Z", "+00:00"))
+                time_str = dt.strftime("%m-%d %H:%M")
+            except (ValueError, TypeError):
+                time_str = modified[:10]
+        # Project: use last meaningful dir name
+        project_path = e.get("projectPath", "")
+        project = Path(project_path).name if project_path else ""
+        # Summary or firstPrompt
+        summary = _truncate(
+            e.get("summary", "") or e.get("firstPrompt", ""), 60,
+        )
+        line = f"{idx}. `{sid}` {msgs}msg {time_str} **{project}**"
         if summary:
-            lines.append(f"    {summary}")
+            line += f"\n    {summary}"
+        lines.append(line)
 
     await channel.send_text(msg.chat_id, "\n".join(lines))
 
