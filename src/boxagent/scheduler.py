@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import re
 from copy import deepcopy
 from contextlib import suppress
 from datetime import datetime, timedelta
@@ -20,6 +21,40 @@ logger = logging.getLogger(__name__)
 
 SCHEDULE_NODE_OVERRIDES_KEY = "node_overrides"
 DEFAULT_ISOLATE_TIMEOUT_SECONDS = 1800.0
+
+_SCHEDULE_RESULT_RE = re.compile(
+    r"<ScheduleResult>\s*\n(.*?)</ScheduleResult>", re.DOTALL
+)
+
+
+def extract_schedule_result(text: str) -> tuple[str, dict | None]:
+    """Extract structured result from AI output.
+
+    Returns (display_text, result_dict):
+    - If <ScheduleResult> YAML found: display_text is the formatted summary, result_dict is the parsed YAML
+    - If not found or parse fails: display_text is the original text, result_dict is None
+    """
+    m = _SCHEDULE_RESULT_RE.search(text)
+    if not m:
+        return text, None
+    try:
+        result = yaml.safe_load(m.group(1))
+    except Exception:
+        return text, None
+    if not isinstance(result, dict):
+        return text, None
+    # Normalize fields
+    result.setdefault("status", "unknown")
+    result.setdefault("summary", "")
+    result.setdefault("details", "")
+    # Build display text
+    summary = result["summary"]
+    details = str(result["details"]).strip()
+    if details:
+        display = f"{summary}\n{details}"
+    else:
+        display = summary or text
+    return display, result
 
 
 @dataclass
@@ -384,13 +419,14 @@ class Scheduler:
             raise
         elapsed = datetime.now() - t0
 
-        self._append_run_log(task, prompt=prompt, output=text)
+        display_text, result = extract_schedule_result(text)
+        self._append_run_log(task, prompt=prompt, output=text, result=result)
         if task.bot:
-            msg = self._format_isolate_notification(task, text, elapsed, callback)
+            msg = self._format_isolate_notification(task, display_text, elapsed, callback)
             await self._notify(task, msg)
 
         logger.info("Schedule '%s' completed (isolate, %.1fs)", task.id, elapsed.total_seconds())
-        return text
+        return display_text
 
     def _format_isolate_notification(
         self,
@@ -570,8 +606,10 @@ class Scheduler:
         if callback._error:
             self._append_run_log(task, prompt=prompt, error=callback._error)
             raise RuntimeError(self._enrich_error(task, callback._error))
-        self._append_run_log(task, prompt=prompt, output=callback._text.strip())
-        return callback._text.strip()
+        full_text = callback._text.strip()
+        display_text, result = extract_schedule_result(full_text)
+        self._append_run_log(task, prompt=prompt, output=full_text, result=result)
+        return display_text
 
     async def _notify(self, task: ScheduleTask, msg: str) -> None:
         """Send an isolate schedule notification via a Telegram bot token."""
@@ -607,7 +645,15 @@ class Scheduler:
                 e,
             )
 
-    def _append_run_log(self, task: ScheduleTask, *, prompt: str, output: str = "", error: str = "") -> None:
+    def _append_run_log(
+        self,
+        task: ScheduleTask,
+        *,
+        prompt: str,
+        output: str = "",
+        error: str = "",
+        result: dict | None = None,
+    ) -> None:
         """Append a scheduler run record to local/schedule-runs/<task>.jsonl."""
         if not self.local_dir:
             return
@@ -616,6 +662,7 @@ class Scheduler:
         record = {
             "time": datetime.now().isoformat(timespec="seconds"),
             "task": task.id,
+            "node_id": self.node_id,
             "mode": task.mode,
             "bot": task.bot,
             "ai_backend": task.ai_backend,
@@ -626,6 +673,8 @@ class Scheduler:
             "output": output,
             "error": error,
         }
+        if result is not None:
+            record["result"] = result
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 

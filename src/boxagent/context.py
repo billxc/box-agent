@@ -72,6 +72,20 @@ def build_schedule_context(
         lines.append(f"bot: {bot}")
     lines.append(f"time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
     lines.append("[/BoxAgent Schedule]")
+    lines.append("")
+    lines.append(
+        "IMPORTANT: After completing the task, you MUST wrap your final result "
+        "in <ScheduleResult> tags using YAML format as the LAST thing in your response. "
+        "Example:"
+    )
+    lines.append(
+        "<ScheduleResult>\n"
+        "status: success\n"
+        "summary: one-line summary of what was done or found\n"
+        "details: |\n"
+        "  additional details if needed\n"
+        "</ScheduleResult>"
+    )
     return "\n".join(lines)
 
 

@@ -229,9 +229,29 @@ def format_schedule_list(config_dir: str | Path, node_id: str = "") -> str:
         mode = entry.get("mode", "isolate")
         enabled = "on" if entry.get("enabled", True) else "off"
         prompt = _summarize_prompt(entry.get("prompt", ""), 50)
-        lines.append(f"`{task_id}` {enabled} `{cron}` ({mode})")
+        ai_backend = entry.get("ai_backend", "")
+        model = entry.get("model", "")
+        enabled_on_nodes = entry.get("enabled_on_nodes", "")
+
+        # Build backend/model suffix
+        if ai_backend and model:
+            backend_info = f" {ai_backend}/{model}"
+        elif ai_backend:
+            backend_info = f" {ai_backend}"
+        elif model:
+            backend_info = f" {model}"
+        else:
+            backend_info = ""
+
+        lines.append(f"`{task_id}` {enabled} `{cron}` ({mode}){backend_info}")
         if prompt:
             lines.append(f"  {prompt}")
+        if enabled_on_nodes:
+            if isinstance(enabled_on_nodes, list):
+                nodes_str = ", ".join(str(n) for n in enabled_on_nodes)
+            else:
+                nodes_str = str(enabled_on_nodes)
+            lines.append(f"  nodes: {nodes_str}")
     return "\n".join(lines)
 
 
@@ -419,14 +439,19 @@ def format_schedule_logs(local_dir: str | Path, task_id: str = "", n: int = 20) 
         mode = e.get("mode", "?")
         backend = e.get("ai_backend", "")
         model = e.get("model", "")
+        node = e.get("node_id", "")
         error = e.get("error", "")
         output = e.get("output", "")
+        result = e.get("result")
 
         status = "ERROR" if error else "OK"
-        lines.append(f"[{t}] {tid} ({mode}, {backend}/{model}) {status}")
+        node_suffix = f" @{node}" if node else ""
+        lines.append(f"[{t}] {tid} ({mode}, {backend}/{model}) {status}{node_suffix}")
 
         if error:
             lines.append(f"  Error: {_summarize_prompt(error, 120)}")
+        elif isinstance(result, dict) and result.get("summary"):
+            lines.append(f"  Result: {_summarize_prompt(result['summary'], 120)}")
         elif output:
             lines.append(f"  Output: {_summarize_prompt(output, 120)}")
     return "\n".join(lines)
