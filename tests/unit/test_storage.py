@@ -31,6 +31,47 @@ class TestSessionTracking:
         storage.save_session("test-bot", "sess_abc")
         assert storage.load_session("test-bot") == "sess_abc"
 
+    def test_scoped_sessions_are_isolated_by_backend_and_workspace(self, storage):
+        storage.save_session(
+            "test-bot",
+            "sess_claude_a",
+            backend="claude-cli",
+            workspace="/tmp/work-a",
+        )
+        storage.save_session(
+            "test-bot",
+            "sess_claude_b",
+            backend="claude-cli",
+            workspace="/tmp/work-b",
+        )
+        storage.save_session(
+            "test-bot",
+            "sess_codex_a",
+            backend="codex-cli",
+            workspace="/tmp/work-a",
+        )
+
+        assert storage.load_session(
+            "test-bot",
+            backend="claude-cli",
+            workspace="/tmp/work-a",
+        ) == "sess_claude_a"
+        assert storage.load_session(
+            "test-bot",
+            backend="claude-cli",
+            workspace="/tmp/work-b",
+        ) == "sess_claude_b"
+        assert storage.load_session(
+            "test-bot",
+            backend="codex-cli",
+            workspace="/tmp/work-a",
+        ) == "sess_codex_a"
+        assert storage.load_session(
+            "test-bot",
+            backend="claude-cli",
+            workspace="/tmp/missing",
+        ) is None
+
     def test_load_missing_session(self, storage):
         """Loading nonexistent bot returns None."""
         assert storage.load_session("nonexistent") is None
@@ -59,6 +100,29 @@ class TestSessionTracking:
             "sess_1",
         ]
         assert "saved_at" in history[0]
+
+    def test_list_session_history_filters_by_scope(self, storage):
+        storage.save_session(
+            "test-bot",
+            "sess_a",
+            backend="claude-cli",
+            workspace="/tmp/work-a",
+        )
+        storage.save_session(
+            "test-bot",
+            "sess_b",
+            backend="claude-cli",
+            workspace="/tmp/work-b",
+        )
+
+        history = storage.list_session_history(
+            "test-bot",
+            backend="claude-cli",
+            workspace="/tmp/work-a",
+        )
+
+        assert [entry["session_id"] for entry in history] == ["sess_a"]
+        assert history[0]["workspace"] == str(Path("/tmp/work-a").resolve())
 
 
 class TestCodexSessionTracking:

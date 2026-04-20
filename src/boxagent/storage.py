@@ -53,18 +53,61 @@ class Storage:
         with open(path, "w") as f:
             yaml.safe_dump(data, f)
 
-    def save_session(self, bot_id: str, session_id: str, *, preview: str = "", backend: str = "") -> None:
+    def save_session(
+        self,
+        bot_id: str,
+        session_id: str,
+        *,
+        preview: str = "",
+        backend: str = "",
+        workspace: str = "",
+    ) -> None:
         sessions = self._load_sessions()
-        sessions[bot_id] = session_id
+        scoped_key = self._session_scope_key(
+            bot_id,
+            backend=backend,
+            workspace=workspace,
+        )
+        sessions[scoped_key or bot_id] = session_id
         self._save_sessions(sessions)
-        self._remember_session(bot_id, session_id, preview=preview, backend=backend)
+        self._remember_session(
+            bot_id,
+            session_id,
+            preview=preview,
+            backend=backend,
+            workspace=workspace,
+        )
 
-    def load_session(self, bot_id: str) -> str | None:
-        return self._load_sessions().get(bot_id)
-
-    def clear_session(self, bot_id: str) -> None:
+    def load_session(
+        self,
+        bot_id: str,
+        *,
+        backend: str = "",
+        workspace: str = "",
+    ) -> str | None:
         sessions = self._load_sessions()
-        sessions.pop(bot_id, None)
+        scoped_key = self._session_scope_key(
+            bot_id,
+            backend=backend,
+            workspace=workspace,
+        )
+        value = sessions.get(scoped_key or bot_id)
+        return value if isinstance(value, str) and value else None
+
+    def clear_session(
+        self,
+        bot_id: str,
+        *,
+        backend: str = "",
+        workspace: str = "",
+    ) -> None:
+        sessions = self._load_sessions()
+        scoped_key = self._session_scope_key(
+            bot_id,
+            backend=backend,
+            workspace=workspace,
+        )
+        sessions.pop(scoped_key or bot_id, None)
         self._save_sessions(sessions)
 
     def _session_history_path(self) -> Path:
@@ -84,11 +127,20 @@ class Storage:
         with open(path, "w") as f:
             yaml.safe_dump(data, f)
 
-    def _remember_session(self, bot_id: str, session_id: str, *, preview: str = "", backend: str = "") -> None:
+    def _remember_session(
+        self,
+        bot_id: str,
+        session_id: str,
+        *,
+        preview: str = "",
+        backend: str = "",
+        workspace: str = "",
+    ) -> None:
         history = self._load_session_history()
         entries = self._normalize_session_history_entries(
             history.get(bot_id, [])
         )
+        normalized_workspace = self._normalize_workspace_path(workspace)
         # Update existing entry or create new one
         existing = None
         for entry in entries:
@@ -108,6 +160,10 @@ class Storage:
             new_entry["backend"] = backend
         elif existing and existing.get("backend"):
             new_entry["backend"] = existing["backend"]
+        if normalized_workspace:
+            new_entry["workspace"] = normalized_workspace
+        elif existing and existing.get("workspace"):
+            new_entry["workspace"] = existing["workspace"]
         # Keep existing preview if no new one provided
         if preview:
             compact = " ".join(preview.split())
@@ -118,16 +174,42 @@ class Storage:
         history[bot_id] = entries[:50]
         self._save_session_history(history)
 
-    def list_session_history(self, bot_id: str) -> list[dict[str, object]]:
+    def list_session_history(
+        self,
+        bot_id: str,
+        *,
+        backend: str = "",
+        workspace: str = "",
+    ) -> list[dict[str, object]]:
         entries = self._normalize_session_history_entries(
             self._load_session_history().get(bot_id, [])
         )
+        if backend or workspace:
+            entries = [
+                entry
+                for entry in entries
+                if self._matches_session_scope(
+                    entry,
+                    backend=backend,
+                    workspace=workspace,
+                )
+            ]
         if entries:
             return entries
 
-        current = self.load_session(bot_id)
+        current = self.load_session(
+            bot_id,
+            backend=backend,
+            workspace=workspace,
+        )
         if current:
-            return [{"session_id": current}]
+            entry: dict[str, object] = {"session_id": current}
+            if backend:
+                entry["backend"] = backend
+            normalized_workspace = self._normalize_workspace_path(workspace)
+            if normalized_workspace:
+                entry["workspace"] = normalized_workspace
+            return [entry]
         return []
 
     def _normalize_session_history_entries(
@@ -157,8 +239,45 @@ class Storage:
             backend = entry.get("backend")
             if isinstance(backend, str) and backend:
                 normalized_entry["backend"] = backend
+            workspace = entry.get("workspace")
+            if isinstance(workspace, str) and workspace:
+                normalized_entry["workspace"] = workspace
             normalized.append(normalized_entry)
         return normalized
+
+    def _session_scope_key(
+        self,
+        bot_id: str,
+        *,
+        backend: str = "",
+        workspace: str = "",
+    ) -> str | None:
+        normalized_workspace = self._normalize_workspace_path(workspace)
+        if not backend and not normalized_workspace:
+            return None
+        return f"{bot_id}::{backend}::{normalized_workspace or ''}"
+
+    def _matches_session_scope(
+        self,
+        entry: dict[str, object],
+        *,
+        backend: str = "",
+        workspace: str = "",
+    ) -> bool:
+        if backend:
+            entry_backend = entry.get("backend")
+            if not isinstance(entry_backend, str) or entry_backend != backend:
+                return False
+
+        normalized_workspace = self._normalize_workspace_path(workspace)
+        if normalized_workspace:
+            entry_workspace = entry.get("workspace")
+            if not isinstance(entry_workspace, str):
+                return False
+            if self._normalize_workspace_path(entry_workspace) != normalized_workspace:
+                return False
+
+        return True
 
     # --- Codex local session history ---
 

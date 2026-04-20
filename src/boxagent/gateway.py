@@ -191,7 +191,11 @@ class Gateway:
     async def _start_bot(self, name: str, bot_cfg: BotConfig) -> None:
         session_id = None
         if _supports_persistent_session(bot_cfg.ai_backend):
-            session_id = self._storage.load_session(name)
+            session_id = self._storage.load_session(
+                name,
+                backend=bot_cfg.ai_backend,
+                workspace=bot_cfg.workspace,
+            )
 
         cli = _create_backend(bot_cfg, session_id, self._copilot_api_port)
         cli.start()
@@ -629,7 +633,20 @@ class Gateway:
             try:
                 # Save session before stopping
                 if self._storage and cli.session_id:
-                    self._storage.save_session(name, cli.session_id)
+                    router = self._routers.get(name)
+                    backend = getattr(router, "ai_backend", "")
+                    workspace = getattr(router, "workspace", "")
+                    if not backend or not workspace:
+                        bot_cfg = self.config.bots.get(name)
+                        if bot_cfg:
+                            backend = backend or getattr(bot_cfg, "ai_backend", "")
+                            workspace = workspace or getattr(bot_cfg, "workspace", "")
+                    self._storage.save_session(
+                        name,
+                        cli.session_id,
+                        backend=backend,
+                        workspace=workspace,
+                    )
                 await cli.stop()
             except Exception as e:
                 logger.error("Error stopping CLI %s: %s", name, e)

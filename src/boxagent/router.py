@@ -164,7 +164,10 @@ class Router:
         self._compact_summary = ""
         self._resume_context = ""
         if self.storage:
-            self.storage.clear_session(self.bot_name)
+            self.storage.clear_session(
+                self.bot_name,
+                **self._session_scope_kwargs(),
+            )
         await self.channel.send_text(
             msg.chat_id, "Started a fresh conversation."
         )
@@ -185,7 +188,10 @@ class Router:
         arg = msg.text.strip().partition(" ")[2].strip()
 
         # Gather sessions from both sources
-        native_history = self.storage.list_session_history(self.bot_name)
+        native_history = self.storage.list_session_history(
+            self.bot_name,
+            **self._session_scope_kwargs(),
+        )
         codex_history = self.storage.list_codex_session_history(
             self.workspace, limit=None if arg else 10,
         )
@@ -310,7 +316,11 @@ class Router:
         self._compact_summary = ""
         self._resume_context = ""
         self.cli_process.session_id = target_session_id
-        self.storage.save_session(self.bot_name, target_session_id)
+        self.storage.save_session(
+            self.bot_name,
+            target_session_id,
+            **self._session_scope_kwargs(),
+        )
         await self.channel.send_text(
             msg.chat_id,
             f"Resume target set to `{target_session_id}`. Your next message will continue that session.",
@@ -336,7 +346,10 @@ class Router:
         await self._reset_backend_session()
         self._compact_summary = ""
         self._resume_context = resume_context
-        self.storage.clear_session(self.bot_name)
+        self.storage.clear_session(
+            self.bot_name,
+            **self._session_scope_kwargs(),
+        )
 
         session_id = str(entry["session_id"])
         await self.channel.send_text(
@@ -389,7 +402,10 @@ class Router:
         self._compact_summary = ""
         self._resume_context = ""
         if self.storage:
-            self.storage.clear_session(self.bot_name)
+            self.storage.clear_session(
+                self.bot_name,
+                **self._session_scope_kwargs(),
+            )
         await self.channel.send_text(
             msg.chat_id, f"Workspace switched: {current} → {new_path}"
         )
@@ -475,7 +491,10 @@ class Router:
         self._compact_summary = ""
         self._resume_context = ""
         if self.storage:
-            self.storage.clear_session(self.bot_name)
+            self.storage.clear_session(
+                self.bot_name,
+                **self._session_scope_kwargs(),
+            )
         # Notify Gateway so watchdog/scheduler refs are updated too.
         if self.on_backend_switched:
             await self.on_backend_switched(self.bot_name, new_proc, new_backend)
@@ -524,7 +543,10 @@ class Router:
         # Reset session
         await self._reset_backend_session()
         if self.storage:
-            self.storage.clear_session(self.bot_name)
+            self.storage.clear_session(
+                self.bot_name,
+                **self._session_scope_kwargs(),
+            )
 
         self._resume_context = ""
         self._compact_summary = summary
@@ -637,7 +659,9 @@ class Router:
             try:
                 self.storage.save_session(
                     self.bot_name, self.cli_process.session_id,
-                    preview=text, backend=self.ai_backend,
+                    preview=text,
+                    backend=self.ai_backend,
+                    workspace=self.workspace,
                 )
             except Exception as e:
                 logger.warning("Failed to save session: %s", e)
@@ -651,6 +675,12 @@ class Router:
             await reset_session()
         else:
             self.cli_process.session_id = None
+
+    def _session_scope_kwargs(self) -> dict[str, str]:
+        return {
+            "backend": self.ai_backend,
+            "workspace": self.workspace,
+        }
 
     def _build_session_context(self) -> str:
         """Build a one-time context block for the first message of a session."""
