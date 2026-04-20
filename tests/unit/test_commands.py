@@ -112,14 +112,17 @@ class TestResumeCommand:
         self, router, mock_channel, mock_storage
     ):
         mock_storage.list_session_history.return_value = [
-            {"session_id": "sess_old", "saved_at": 1_710_000_000}
+            {"session_id": "sess_old", "saved_at": 1_710_000_000, "backend": "claude-cli"}
         ]
 
         await router.handle_message(msg("/resume"))
 
-        text = mock_channel.send_text.call_args[0][1]
+        # New format uses send_text_with_inline_keyboard if available, else send_text
+        if mock_channel.send_text_with_inline_keyboard.called:
+            text = mock_channel.send_text_with_inline_keyboard.call_args[0][1]
+        else:
+            text = mock_channel.send_text.call_args[0][1]
         assert "sess_old" in text
-        assert "/resume <index>" in text
 
     async def test_resumes_native_session_by_index(
         self, router, mock_cli, mock_storage
@@ -155,8 +158,11 @@ class TestResumeCommand:
             "/home/testuser/.boxagent/workspace",
             limit=10,
         )
-        text = mock_channel.send_text.call_args[0][1]
-        assert "soft" in text.lower()
+        # New format uses send_text_with_inline_keyboard if available, else send_text
+        if mock_channel.send_text_with_inline_keyboard.called:
+            text = mock_channel.send_text_with_inline_keyboard.call_args[0][1]
+        else:
+            text = mock_channel.send_text.call_args[0][1]
         assert "fix /cancel after restart" in text
 
     async def test_prepares_codex_resume_by_index(

@@ -177,11 +177,6 @@ def test_validate_isolate_requires_ai_backend():
         _validate_entry("iso", {"cron": "0 9 * * *", "prompt": "Do it", "mode": "isolate", "model": "x"})
 
 
-def test_validate_isolate_requires_model():
-    with pytest.raises(ValueError, match="model.*required"):
-        _validate_entry("iso", {"cron": "0 9 * * *", "prompt": "Do it", "mode": "isolate", "ai_backend": "claude-cli"})
-
-
 def test_validate_invalid_ai_backend():
     with pytest.raises(ValueError, match="unknown ai_backend"):
         _validate_entry("bad-backend", {

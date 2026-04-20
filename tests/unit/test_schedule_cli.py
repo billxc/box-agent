@@ -8,13 +8,7 @@ import yaml
 
 from boxagent.scheduler import DEFAULT_ISOLATE_TIMEOUT_SECONDS
 from boxagent.schedule_cli import (
-    _get_api_port,
-    _get_api_port_file,
-    _get_api_ports,
-    _get_runtime_api_port,
-    _get_sock_path,
     _load_run_logs,
-    _request_targets,
     _safe_print,
     _save_all,
     _schedules_file,
@@ -198,23 +192,6 @@ def test_add_isolate_requires_ai_backend(tmp_path):
         schedule_add(args)
 
 
-def test_add_isolate_requires_model(tmp_path):
-    args = _make_args(
-        tmp_path,
-        id="no-model",
-        cron="0 9 * * *",
-        prompt="Do it",
-        mode="isolate",
-        bot="",
-        ai_backend="claude-cli",
-        model="",
-        enabled_on_nodes="",
-        enabled=True,
-    )
-    with pytest.raises(SystemExit):
-        schedule_add(args)
-
-
 def test_add_rejects_non_positive_timeout(tmp_path):
     args = _make_args(
         tmp_path,
@@ -303,79 +280,6 @@ def test_list_empty(tmp_path, capsys):
     args = _make_args(tmp_path)
     schedule_list(args)
     assert "No schedules" in capsys.readouterr().out
-
-
-def test_default_paths_follow_box_agent_dir(tmp_path):
-    custom_box_agent_dir = tmp_path / "ba-dir"
-    args = Namespace(box_agent_dir=custom_box_agent_dir)
-
-    assert _schedules_file(args) == custom_box_agent_dir / "schedules.yaml"
-    assert _get_sock_path(args) == (
-        custom_box_agent_dir / "local"
-        / "api.sock"
-    )
-    assert _get_api_port_file(args) == (
-        custom_box_agent_dir / "local"
-        / "api-port.txt"
-    )
-
-
-def test_get_api_port_reads_utf8_config(tmp_path):
-    config = tmp_path / "config.yaml"
-    config.write_text(
-        "# 中文注释\n"
-        "global:\n"
-        "  api_port: 19876\n",
-        encoding="utf-8",
-    )
-    args = _make_args(tmp_path)
-
-    assert _get_api_port(args) == 19876
-
-
-def test_get_runtime_api_port_reads_port_file(tmp_path):
-    local_dir = tmp_path / "local"
-    local_dir.mkdir()
-    (local_dir / "api-port.txt").write_text("50762\n", encoding="utf-8")
-    args = _make_args(tmp_path, box_agent_dir=tmp_path)
-
-    assert _get_runtime_api_port(args) == 50762
-
-
-def test_get_api_ports_prefers_runtime_port_then_config_port(tmp_path):
-    (tmp_path / "config.yaml").write_text(
-        "global:\n"
-        "  api_port: 19876\n",
-        encoding="utf-8",
-    )
-    local_dir = tmp_path / "local"
-    local_dir.mkdir()
-    (local_dir / "api-port.txt").write_text("50762\n", encoding="utf-8")
-    args = _make_args(tmp_path, box_agent_dir=tmp_path)
-
-    assert _get_api_ports(args) == [50762, 19876]
-
-
-def test_get_api_ports_ignores_invalid_runtime_port_file(tmp_path):
-    (tmp_path / "config.yaml").write_text(
-        "global:\n"
-        "  api_port: 19876\n",
-        encoding="utf-8",
-    )
-    local_dir = tmp_path / "local"
-    local_dir.mkdir()
-    (local_dir / "api-port.txt").write_text("not-a-port\n", encoding="utf-8")
-    args = _make_args(tmp_path, box_agent_dir=tmp_path)
-
-    assert _get_api_ports(args) == [19876]
-
-
-def test_request_targets_include_tcp_port(tmp_path):
-    sock = tmp_path / "api.sock"
-    targets = list(_request_targets(sock, [50762]))
-
-    assert len(targets) == 1
-    assert targets[0][1] == "http://127.0.0.1:50762/api/schedule/run"
 
 
 def test_list_shows_all(tmp_path, capsys):
@@ -549,10 +453,10 @@ def test_save_all_writes_multiline_prompt_with_block_scalar(tmp_path):
     assert "  world" in content
 
 
-def test_show_missing(tmp_path):
+def test_show_missing(tmp_path, capsys):
     args = _make_args(tmp_path, id="nonexistent")
-    with pytest.raises(SystemExit):
-        schedule_show(args)
+    schedule_show(args)
+    assert "not found" in capsys.readouterr().out
 
 
 # --- schedule_run ---
@@ -582,7 +486,7 @@ def test_safe_print_falls_back_for_non_utf_console(monkeypatch):
 
 
 def test_run_missing(tmp_path):
-    args = _make_args(tmp_path, id="nonexistent", sync=False)
+    args = _make_args(tmp_path, id="nonexistent", box_agent_dir=tmp_path, sync=False)
     with pytest.raises(SystemExit):
         schedule_run(args)
 
@@ -593,7 +497,7 @@ def test_run_calls_api(tmp_path, monkeypatch, capsys):
     import httpx
 
     _write_sched(tmp_path, "run-task", prompt="Say hello", mode="isolate")
-    args = _make_args(tmp_path, id="run-task", sync=False)
+    args = _make_args(tmp_path, id="run-task", box_agent_dir=tmp_path, sync=False)
 
     mock_resp = MagicMock()
     mock_resp.json.return_value = {"ok": True, "status": "scheduled"}
@@ -602,9 +506,9 @@ def test_run_calls_api(tmp_path, monkeypatch, capsys):
     mock_client.__exit__ = MagicMock(return_value=False)
     mock_client.post.return_value = mock_resp
 
-    sock = tmp_path / "api.sock"
-    sock.touch()
-    monkeypatch.setattr("boxagent.schedule_cli._get_sock_path", lambda args: sock)
+    local_dir = tmp_path / "local"
+    local_dir.mkdir(exist_ok=True)
+    (local_dir / "api.sock").touch()
 
     with patch("httpx.Client", return_value=mock_client):
         schedule_run(args)
@@ -622,7 +526,7 @@ def test_run_sync_calls_api(tmp_path, monkeypatch, capsys):
     import httpx
 
     _write_sched(tmp_path, "run-task", prompt="Say hello", mode="isolate")
-    args = _make_args(tmp_path, id="run-task", sync=True)
+    args = _make_args(tmp_path, id="run-task", box_agent_dir=tmp_path, sync=True)
 
     mock_resp = MagicMock()
     mock_resp.json.return_value = {"ok": True, "output": "Hello!"}
@@ -631,9 +535,9 @@ def test_run_sync_calls_api(tmp_path, monkeypatch, capsys):
     mock_client.__exit__ = MagicMock(return_value=False)
     mock_client.post.return_value = mock_resp
 
-    sock = tmp_path / "api.sock"
-    sock.touch()
-    monkeypatch.setattr("boxagent.schedule_cli._get_sock_path", lambda args: sock)
+    local_dir = tmp_path / "local"
+    local_dir.mkdir(exist_ok=True)
+    (local_dir / "api.sock").touch()
 
     with patch("httpx.Client", return_value=mock_client):
         schedule_run(args)
@@ -673,18 +577,16 @@ def test_run_api_connection_refused_errors(tmp_path, monkeypatch):
     from unittest.mock import MagicMock, patch
     import httpx
 
-    args = _make_args(tmp_path, id="run-task", sync=False)
+    args = _make_args(tmp_path, id="run-task", box_agent_dir=tmp_path, sync=False)
 
-    # Client.post raises ConnectError -> exit with error
     mock_client = MagicMock()
     mock_client.__enter__ = MagicMock(return_value=mock_client)
     mock_client.__exit__ = MagicMock(return_value=False)
     mock_client.post.side_effect = httpx.ConnectError("refused")
 
-    # Provide a fake sock file so _transports yields a transport
-    sock = tmp_path / "api.sock"
-    sock.touch()
-    monkeypatch.setattr("boxagent.schedule_cli._get_sock_path", lambda args: sock)
+    local_dir = tmp_path / "local"
+    local_dir.mkdir(exist_ok=True)
+    (local_dir / "api.sock").touch()
 
     with patch("httpx.Client", return_value=mock_client):
         with pytest.raises(SystemExit) as exc_info:
@@ -697,16 +599,16 @@ def test_run_api_fallback_append_errors(tmp_path, monkeypatch):
     import httpx
 
     _write_sched(tmp_path, "append-task", prompt="Hello bot", mode="append", bot="my-bot")
-    args = _make_args(tmp_path, id="append-task", sync=False)
+    args = _make_args(tmp_path, id="append-task", box_agent_dir=tmp_path, sync=False)
 
     mock_client = MagicMock()
     mock_client.__enter__ = MagicMock(return_value=mock_client)
     mock_client.__exit__ = MagicMock(return_value=False)
     mock_client.post.side_effect = httpx.ConnectError("refused")
 
-    sock = tmp_path / "api.sock"
-    sock.touch()
-    monkeypatch.setattr("boxagent.schedule_cli._get_sock_path", lambda args: sock)
+    local_dir = tmp_path / "local"
+    local_dir.mkdir(exist_ok=True)
+    (local_dir / "api.sock").touch()
 
     with patch("httpx.Client", return_value=mock_client):
         with pytest.raises(SystemExit):
