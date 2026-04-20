@@ -324,6 +324,7 @@ async def cmd_schedule(
         add_schedule,
         format_schedule_list,
         format_schedule_logs,
+        format_schedule_run_detail,
         format_schedule_show,
         trigger_schedule_run,
     )
@@ -346,6 +347,20 @@ async def cmd_schedule(
             text = "Local dir not configured."
         else:
             text = trigger_schedule_run(local_dir, arg)
+    elif sub == "run-log" and arg:
+        if not local_dir:
+            text = "Local dir not configured."
+        else:
+            # arg format: "<task_id> [N]"
+            run_parts = arg.split(maxsplit=1)
+            rid = run_parts[0]
+            run_n = 1
+            if len(run_parts) > 1:
+                try:
+                    run_n = int(run_parts[1])
+                except ValueError:
+                    pass
+            text = format_schedule_run_detail(local_dir, rid, run_n)
     elif sub == "add":
         text = _parse_and_add_schedule(arg, config_dir, add_schedule)
     else:
@@ -353,6 +368,7 @@ async def cmd_schedule(
             "**Usage**\n"
             "/schedule list — List all schedules\n"
             "/schedule logs [task\\_id] — Show execution logs\n"
+            "/schedule run-log <task\\_id> [N] — Show full detail for Nth run (1=latest)\n"
             "/schedule show <task\\_id> — Show schedule details\n"
             "/schedule run <task\\_id> — Run a schedule once\n"
             "/schedule add <params> — Add a schedule\n"

@@ -92,6 +92,7 @@ def build_schedule_parser(subparsers) -> None:
     logs = schedule_sub.add_parser("logs", help="Show schedule execution logs")
     logs.add_argument("--id", default="", help="Filter by task ID")
     logs.add_argument("-n", "--lines", type=int, default=20, help="Number of recent entries (default: 20)")
+    logs.add_argument("--run", type=int, default=0, help="Show full detail for the Nth most recent run (1 = latest, requires --id)")
     logs.add_argument("--json", dest="output_json", action="store_true", default=False,
                       help="Output as JSON")
     logs.set_defaults(func=schedule_logs)
@@ -457,10 +458,58 @@ def format_schedule_logs(local_dir: str | Path, task_id: str = "", n: int = 20) 
     return "\n".join(lines)
 
 
+def format_schedule_run_detail(local_dir: str | Path, task_id: str, run_index: int = 1) -> str:
+    """Return full details for a single run log entry.
+
+    Args:
+        local_dir: Path to local data directory
+        task_id: Task ID to look up
+        run_index: 1-indexed run number (1 = most recent), default 1
+    """
+    entries = _load_run_logs(Path(local_dir), task_id=task_id)
+    if not entries:
+        return f"No logs found for '{task_id}'."
+
+    if run_index < 1 or run_index > len(entries):
+        return f"Run #{run_index} not found. '{task_id}' has {len(entries)} run(s)."
+
+    e = entries[run_index - 1]
+    lines = [f"**Run #{run_index}** of `{task_id}`", ""]
+
+    for key in ("time", "node_id", "mode", "ai_backend", "model", "bot", "workspace", "timeout_seconds"):
+        val = e.get(key, "")
+        if val not in ("", None):
+            lines.append(f"**{key}**: {val}")
+
+    error = e.get("error", "")
+    result = e.get("result", "")
+    output = e.get("output", "")
+
+    lines.append(f"**status**: {'ERROR' if error else 'OK'}")
+    lines.append("")
+
+    if error:
+        lines.append("**Error:**")
+        lines.append(error)
+    if result:
+        lines.append("**Result:**")
+        lines.append(str(result))
+    if output:
+        lines.append("**Output:**")
+        lines.append(output)
+
+    return "\n".join(lines)
+
+
 def schedule_logs(args) -> None:
     """Show schedule execution logs."""
     task_id = getattr(args, "id", "")
     n = getattr(args, "lines", 20)
+    run_index = getattr(args, "run", 0)
+
+    if run_index > 0 and task_id:
+        _safe_print(format_schedule_run_detail(_local_dir(args), task_id, run_index))
+        return
 
     if getattr(args, "output_json", False):
         entries = _load_run_logs(_local_dir(args), task_id=task_id)[:n]

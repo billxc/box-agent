@@ -200,6 +200,21 @@ def schedule_run(task_id: str) -> str:
 
 
 @mcp.tool()
+def schedule_run_detail(task_id: str, run_index: int = 1) -> str:
+    """Show full details for a specific schedule run log entry.
+
+    Args:
+        task_id: The schedule task ID
+        run_index: Which run to show (1 = most recent, 2 = second most recent, etc.)
+    """
+    if not LOCAL_DIR:
+        return "BOXAGENT_LOCAL_DIR not set."
+    from boxagent.schedule_cli import format_schedule_run_detail
+
+    return format_schedule_run_detail(LOCAL_DIR, task_id, run_index)
+
+
+@mcp.tool()
 def sessions_list(project_filter: str = "") -> str:
     """List Claude CLI sessions from ~/.claude/projects/.
 
