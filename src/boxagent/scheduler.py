@@ -27,34 +27,20 @@ _SCHEDULE_RESULT_RE = re.compile(
 )
 
 
-def extract_schedule_result(text: str) -> tuple[str, dict | None]:
-    """Extract structured result from AI output.
+def extract_schedule_result(text: str) -> tuple[str, str | None]:
+    """Extract plain-text result from AI output.
 
-    Returns (display_text, result_dict):
-    - If <ScheduleResult> YAML found: display_text is the formatted summary, result_dict is the parsed YAML
-    - If not found or parse fails: display_text is the original text, result_dict is None
+    Returns (display_text, result_text):
+    - If <ScheduleResult> found: display_text is the extracted content, result_text is same
+    - If not found: display_text is the original text, result_text is None
     """
     m = _SCHEDULE_RESULT_RE.search(text)
     if not m:
         return text, None
-    try:
-        result = yaml.safe_load(m.group(1))
-    except Exception:
+    extracted = m.group(1).strip()
+    if not extracted:
         return text, None
-    if not isinstance(result, dict):
-        return text, None
-    # Normalize fields
-    result.setdefault("status", "unknown")
-    result.setdefault("summary", "")
-    result.setdefault("details", "")
-    # Build display text
-    summary = result["summary"]
-    details = str(result["details"]).strip()
-    if details:
-        display = f"{summary}\n{details}"
-    else:
-        display = summary or text
-    return display, result
+    return extracted, extracted
 
 
 @dataclass

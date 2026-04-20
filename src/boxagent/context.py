@@ -74,16 +74,14 @@ def build_schedule_context(
     lines.append("[/BoxAgent Schedule]")
     lines.append("")
     lines.append(
-        "IMPORTANT: After completing the task, you MUST wrap your final result "
-        "in <ScheduleResult> tags using YAML format as the LAST thing in your response. "
+        "IMPORTANT: After completing the task, you MUST wrap your final result summary "
+        "in <ScheduleResult> tags as the LAST thing in your response. "
+        "Write plain text inside — one to three concise sentences describing what was done or found. "
         "Example:"
     )
     lines.append(
         "<ScheduleResult>\n"
-        "status: success\n"
-        "summary: one-line summary of what was done or found\n"
-        "details: |\n"
-        "  additional details if needed\n"
+        "Checked disk usage: /dev/sda1 at 45%, all healthy.\n"
         "</ScheduleResult>"
     )
     return "\n".join(lines)

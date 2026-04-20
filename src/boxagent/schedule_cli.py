@@ -450,8 +450,8 @@ def format_schedule_logs(local_dir: str | Path, task_id: str = "", n: int = 20) 
 
         if error:
             lines.append(f"  Error: {_summarize_prompt(error, 120)}")
-        elif isinstance(result, dict) and result.get("summary"):
-            lines.append(f"  Result: {_summarize_prompt(result['summary'], 120)}")
+        elif isinstance(result, str) and result:
+            lines.append(f"  Result: {_summarize_prompt(result, 120)}")
         elif output:
             lines.append(f"  Output: {_summarize_prompt(output, 120)}")
     return "\n".join(lines)
