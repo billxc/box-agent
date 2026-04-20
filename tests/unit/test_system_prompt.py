@@ -106,16 +106,14 @@ class TestCodexSystemPrompt:
         c_val = args[c_idx + 1]
         assert c_val.startswith('developer_instructions=')
         assert "[context block]" in c_val
-        # user message should NOT contain system context
-        message_arg = args[-1]
-        assert message_arg == "user question"
+        # prompt is piped via stdin, args should end with "-" sentinel
+        assert args[-1] == "-"
 
     def test_empty_append_system_prompt_no_developer_instructions(self):
         cli = self._make_cli()
         args = cli._build_args("user question", model="", chat_id="", append_system_prompt="")
         assert 'developer_instructions' not in str(args)
-        message_arg = args[-1]
-        assert message_arg == "user question"
+        assert args[-1] == "-"
 
     def test_append_system_prompt_in_resume_mode(self):
         cli = self._make_cli()
@@ -124,9 +122,8 @@ class TestCodexSystemPrompt:
         assert "-c" in args
         c_idx = args.index("-c")
         assert "[sys]" in args[c_idx + 1]
-        # message should be clean
-        message_arg = args[-1]
-        assert message_arg == "follow up"
+        # prompt is piped via stdin, args should end with "-" sentinel
+        assert args[-1] == "-"
 
 
 # ---- ACP system prompt tests ----

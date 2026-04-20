@@ -3,6 +3,20 @@
 from unittest.mock import AsyncMock
 
 
+class FakeStdin:
+    """Mock stdin that records written data."""
+
+    def __init__(self):
+        self.written = b""
+        self._closed = False
+
+    def write(self, data: bytes):
+        self.written += data
+
+    def close(self):
+        self._closed = True
+
+
 class FakeProcess:
     """Mock asyncio.subprocess.Process with configurable stdout."""
 
@@ -10,6 +24,7 @@ class FakeProcess:
         self._stdout_data = stdout_data
         self.returncode = None
         self._final_returncode = returncode
+        self.stdin = FakeStdin()
         self.stderr = AsyncMock()
         self.stderr.read = AsyncMock(return_value=b"")
         self.pid = 12345

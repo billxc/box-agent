@@ -265,6 +265,57 @@ async def test_cancel_terminates_process(process_factory):
     assert proc.state == "idle"
 
 
+# --- Stdin pipe mode (codex exec -) ---
+
+
+@pytest.mark.asyncio
+async def test_prompt_piped_via_stdin(callback, process_factory):
+    """Prompt should be piped via stdin, args should end with '-' sentinel."""
+    data = make_jsonl(
+        thread_started_event("tid-stdin"),
+        turn_started_event(),
+        agent_message_event("got it"),
+        turn_completed_event(),
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=FakeProcess(data)) as mock_exec:
+        proc = process_factory()
+        await proc.send("hello world", callback)
+        await proc.stop()
+
+    # Args should end with "-", not the message text
+    args = mock_exec.call_args[0]
+    assert args[-1] == "-"
+    assert "hello world" not in args
+
+    # stdin should be PIPE, not DEVNULL
+    kwargs = mock_exec.call_args[1]
+    assert kwargs["stdin"] == asyncio.subprocess.PIPE
+
+    callback.on_stream.assert_called_once_with("got it")
+
+
+@pytest.mark.asyncio
+async def test_resume_also_uses_stdin_pipe(callback, process_factory):
+    """Resume turns should also pipe the prompt via stdin."""
+    data = make_jsonl(
+        thread_started_event("tid-resume2"),
+        turn_started_event(),
+        agent_message_event("resumed"),
+        turn_completed_event(),
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=FakeProcess(data)) as mock_exec:
+        proc = process_factory(session_id="tid-resume2")
+        await proc.send("follow up", callback)
+        await proc.stop()
+
+    args = mock_exec.call_args[0]
+    assert "resume" in args
+    assert args[-1] == "-"
+    assert "follow up" not in args
+
+
 # --- Reset session ---
 
 

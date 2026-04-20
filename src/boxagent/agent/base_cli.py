@@ -169,6 +169,14 @@ class BaseCLIProcess:
         """Short name for log messages."""
         return "cli"
 
+    def _stdin_input(self, message: str) -> str | None:
+        """Return text to pipe into stdin, or None to use DEVNULL.
+
+        Override in subclass when the CLI expects prompt via stdin
+        (e.g. ``codex exec -``).
+        """
+        return None
+
     def _extra_env(self, chat_id: str) -> dict[str, str] | None:
         """Extra environment variables for the subprocess. Override in subclass."""
         return None
@@ -253,9 +261,12 @@ class BaseCLIProcess:
             import os
             env = {**os.environ, **extra}
 
+        stdin_text = self._stdin_input(message)
+        stdin_mode = asyncio.subprocess.PIPE if stdin_text is not None else asyncio.subprocess.DEVNULL
+
         self._process = await asyncio.create_subprocess_exec(
             *self._resolve_args(args),
-            stdin=asyncio.subprocess.DEVNULL,
+            stdin=stdin_mode,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=self.workspace,
@@ -263,6 +274,10 @@ class BaseCLIProcess:
             limit=10 * 1024 * 1024,
             start_new_session=(sys.platform != "win32"),
         )
+
+        if stdin_text is not None and self._process.stdin:
+            self._process.stdin.write(stdin_text.encode())
+            self._process.stdin.close()
 
         async for line in self._process.stdout:
             try:

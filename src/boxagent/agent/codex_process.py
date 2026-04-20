@@ -48,7 +48,8 @@ def build_mcp_args(bot_token: str, chat_id: str) -> list[str]:
 class CodexProcess(BaseCLIProcess):
     """Codex CLI backend.
 
-    Spawns ``codex exec --json <message>`` per turn.
+    Spawns ``codex exec --json -`` per turn, piping the prompt via stdin
+    to avoid the "Reading additional input from stdin" warning.
     Session continuity via ``codex exec resume <thread_id>``.
 
     JSONL event types (Codex CLI 0.116+):
@@ -58,6 +59,10 @@ class CodexProcess(BaseCLIProcess):
     - item.completed   → agent_message (text), command_execution, or mcp_tool_call
     - turn.completed   → {usage}
     """
+
+    def _stdin_input(self, message: str) -> str | None:
+        """Pipe the prompt via stdin (``codex exec -`` mode)."""
+        return message
 
     @property
     def _backend_label(self) -> str:
@@ -106,7 +111,7 @@ class CodexProcess(BaseCLIProcess):
             args += dev_instr_args
             if model:
                 args += ["--model", model]
-            args += [self.session_id, message]
+            args += [self.session_id, "-"]
         else:
             # Fresh session
             args = [
@@ -123,7 +128,7 @@ class CodexProcess(BaseCLIProcess):
             args += dev_instr_args
             if model:
                 args += ["--model", model]
-            args.append(message)
+            args.append("-")
 
         return args
 
