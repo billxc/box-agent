@@ -366,10 +366,10 @@ def run_doctor(ba_dir: Path, fix: bool = False) -> None:
     all_issues.extend(dep_issues)
 
     # --- Copilot token ---
-    from boxagent.copilot_api import find_token_path
-    token = find_token_path()
-    if token:
-        all_ok.append(f"✅ Copilot token: {token}")
+    # xc-copilot-api stores its token at ~/.local/share/copilot-api/github_token
+    token_path = Path.home() / ".local" / "share" / "copilot-api" / "github_token"
+    if token_path.is_file():
+        all_ok.append(f"✅ Copilot token: {token_path}")
     else:
         all_issues.append("⚠️  Copilot token not found (run 'xc-copilot-api auth')")
 

@@ -44,8 +44,6 @@ easy-service start copilot-api
 npx xc-copilot-api@latest start
 ```
 
-> **Note:** BoxAgent 的 `global.copilot_api: true` 配置项已废弃。请按上面方式独立运行 xc-copilot-api，然后在下面配置 Codex CLI 直接连接。
-
 `~/.codex/config.toml`:
 
 ```toml

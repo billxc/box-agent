@@ -856,11 +856,10 @@ async def test_execute_once_isolate_uses_requested_backend_and_model(tmp_path):
     captured = {}
 
     class FakeACP:
-        def __init__(self, workspace, model="", copilot_api_port=0, **kwargs):
+        def __init__(self, workspace, model="", **kwargs):
             captured["init"] = {
                 "workspace": workspace,
                 "model": model,
-                "copilot_api_port": copilot_api_port,
             }
         def start(self):
             captured["started"] = True
@@ -879,7 +878,6 @@ async def test_execute_once_isolate_uses_requested_backend_and_model(tmp_path):
         "my-bot": BotRef(cli_process=MagicMock(workspace="/tmp/work"), channel=AsyncMock(), chat_id="123", ai_backend="claude-cli"),
     })
     sched.default_workspace = "/ba/workspace"
-    sched.copilot_api_port = 4141
     task = ScheduleTask(
         id="iso", cron="0 9 * * *", prompt="hello",
         ai_backend="codex-acp", model="gpt-5.4",
@@ -891,7 +889,6 @@ async def test_execute_once_isolate_uses_requested_backend_and_model(tmp_path):
     assert captured["init"] == {
         "workspace": "/ba/workspace",
         "model": "gpt-5.4",
-        "copilot_api_port": 4141,
     }
     assert captured["send"]["model"] == "gpt-5.4"
     assert captured["send"]["chat_id"] == ""
@@ -906,7 +903,7 @@ async def test_isolate_prefers_telegram_bots_mapping_over_bot_name(tmp_path):
     captured = {}
 
     class FakeClaude:
-        def __init__(self, workspace, model="", copilot_api_port=0, **kwargs):
+        def __init__(self, workspace, model="", **kwargs):
             captured["workspace"] = workspace
         def start(self):
             pass
@@ -1031,7 +1028,7 @@ def test_resolve_unique_notify_chat_id_requires_single_chat(tmp_path):
 
 async def test_isolate_run_logs_output_to_local_dir(tmp_path):
     class FakeClaude:
-        def __init__(self, workspace, model="", copilot_api_port=0, **kwargs):
+        def __init__(self, workspace, model="", **kwargs):
             pass
         def start(self):
             pass
@@ -1063,7 +1060,7 @@ async def test_spawn_isolate_passes_yolo_to_claude(tmp_path):
     captured = {}
 
     class FakeClaude:
-        def __init__(self, workspace, model="", copilot_api_port=0, **kwargs):
+        def __init__(self, workspace, model="", **kwargs):
             captured["yolo"] = kwargs.get("yolo", False)
         def start(self):
             pass
@@ -1088,7 +1085,7 @@ async def test_spawn_isolate_passes_yolo_to_codex(tmp_path):
     captured = {}
 
     class FakeCodex:
-        def __init__(self, workspace, model="", copilot_api_port=0, **kwargs):
+        def __init__(self, workspace, model="", **kwargs):
             captured["yolo"] = kwargs.get("yolo", False)
         def start(self):
             pass
@@ -1113,7 +1110,7 @@ async def test_execute_once_isolate_timeout_stops_process_and_logs_error(tmp_pat
     captured = {}
 
     class FakeCodex:
-        def __init__(self, workspace, model="", copilot_api_port=0, **kwargs):
+        def __init__(self, workspace, model="", **kwargs):
             captured["workspace"] = workspace
             captured["model"] = model
 

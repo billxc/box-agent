@@ -154,7 +154,6 @@ class Router:
             channel=self.channel,
             chat_id=msg.chat_id,
             workspace=self.workspace,
-            copilot_api_port=getattr(self.cli_process, "copilot_api_port", 0),
             model=getattr(self.cli_process, "model", ""),
         )
         await runner.run(topic)
@@ -431,7 +430,6 @@ class Router:
         model = getattr(old_proc, "model", "")
         agent = getattr(old_proc, "agent", "")
         bot_token = getattr(old_proc, "bot_token", "")
-        copilot_api_port = getattr(old_proc, "copilot_api_port", 0)
         yolo = getattr(old_proc, "yolo", False)
 
         await old_proc.stop()
@@ -444,7 +442,6 @@ class Router:
                 model=model,
                 agent=agent,
                 bot_token=bot_token,
-                copilot_api_port=copilot_api_port,
             )
         elif new_backend == "codex-cli":
             from boxagent.agent.codex_process import CodexProcess
@@ -454,7 +451,6 @@ class Router:
                 model=model,
                 agent=agent,
                 bot_token=bot_token,
-                copilot_api_port=copilot_api_port,
                 yolo=yolo,
             )
         else:
@@ -465,7 +461,6 @@ class Router:
                 model=model,
                 agent=agent,
                 bot_token=bot_token,
-                copilot_api_port=copilot_api_port,
                 yolo=yolo,
             )
 

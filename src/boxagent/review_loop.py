@@ -37,7 +37,6 @@ class ReviewLoopRunner:
     channel: object  # messaging channel
     chat_id: str
     workspace: str
-    copilot_api_port: int = 0
     max_rounds: int = 3
     model: str = ""
 
@@ -126,7 +125,6 @@ class ReviewLoopRunner:
         proc = ClaudeProcess(
             workspace=self.workspace,
             session_id=session_id,
-            copilot_api_port=self.copilot_api_port,
             yolo=True,
             fork_session=True,
         )
@@ -184,7 +182,6 @@ class ReviewLoopRunner:
 
         proc = ClaudeProcess(
             workspace=self.workspace,
-            copilot_api_port=self.copilot_api_port,
             yolo=True,
         )
         proc.start()

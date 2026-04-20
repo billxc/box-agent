@@ -518,7 +518,6 @@ class TestNodeId:
         config = dedent("""\
             global:
               log_level: info
-              copilot_api: false
             bots:
               my-bot:
                 ai_backend: claude-cli
@@ -532,12 +531,11 @@ class TestNodeId:
         local_dir = tmp_path / "local"
         local_dir.mkdir()
         (local_dir / "local.yaml").write_text(
-            "node_id: test-node\nglobal:\n  log_level: debug\n  copilot_api: true\n"
+            "node_id: test-node\nglobal:\n  log_level: debug\n"
         )
         cfg = load_config(tmp_path, local_dir=local_dir)
         assert cfg.node_id == "test-node"
         assert cfg.log_level == "debug"
-        assert cfg.copilot_api is True
 
     def test_local_yaml_partial_global_override(self, tmp_path):
         """local.yaml can override only some global fields."""

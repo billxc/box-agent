@@ -64,18 +64,6 @@ class ClaudeProcess(BaseCLIProcess):
         if self.yolo:
             args.append("--dangerously-skip-permissions")
 
-        # When using copilot-api proxy, inject --settings to override
-        # user's ~/.claude/settings.json env (which would otherwise
-        # clobber our ANTHROPIC_BASE_URL).
-        if self.copilot_api_port:
-            from boxagent.copilot_api import copilot_env_for_backend
-            settings_env = copilot_env_for_backend("claude-cli", self.copilot_api_port)
-            if settings_env:
-                args += [
-                    "--setting-sources", "",
-                    "--settings", json.dumps({"env": settings_env}),
-                ]
-
         if append_system_prompt:
             args += ["--append-system-prompt", append_system_prompt]
 

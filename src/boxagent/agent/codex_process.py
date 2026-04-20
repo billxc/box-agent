@@ -82,11 +82,6 @@ class CodexProcess(BaseCLIProcess):
         }
 
     def _build_args(self, message: str, model: str, chat_id: str, append_system_prompt: str = "") -> list[str]:
-        copilot_args = []
-        if self.copilot_api_port:
-            from boxagent.copilot_api import copilot_args_for_codex
-            copilot_args = copilot_args_for_codex(self.copilot_api_port)
-
         # Inject system-level context via Codex's developer_instructions config
         dev_instr_args: list[str] = []
         if append_system_prompt:
@@ -107,7 +102,6 @@ class CodexProcess(BaseCLIProcess):
             if self.yolo:
                 args.append("--dangerously-bypass-approvals-and-sandbox")
             args += self._mcp_args(chat_id)
-            args += copilot_args
             args += dev_instr_args
             if model:
                 args += ["--model", model]
@@ -124,7 +118,6 @@ class CodexProcess(BaseCLIProcess):
             if self.yolo:
                 args.append("--dangerously-bypass-approvals-and-sandbox")
             args += self._mcp_args(chat_id)
-            args += copilot_args
             args += dev_instr_args
             if model:
                 args += ["--model", model]

@@ -986,7 +986,6 @@ class TestBackendCommand:
         mock_cli.model = "opus"
         mock_cli.agent = ""
         mock_cli.bot_token = ""
-        mock_cli.copilot_api_port = 0
         mock_cli.yolo = False
         mock_cli.stop = AsyncMock()
 

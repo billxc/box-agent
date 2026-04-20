@@ -289,7 +289,6 @@ class Scheduler:
     telegram_bots: dict[str, str] = field(default_factory=dict)
     default_workspace: str = "."
     local_dir: str = ""
-    copilot_api_port: int = 0
     max_catchup: int = 5  # max minutes to look back for missed runs
     _running: bool = field(default=False, repr=False)
     _executing: set[str] = field(default_factory=set, repr=False)
@@ -455,7 +454,6 @@ class Scheduler:
             proc = ClaudeProcess(
                 workspace=workspace,
                 model=task.model,
-                copilot_api_port=self.copilot_api_port,
                 yolo=task.yolo,
             )
         elif backend == "codex-cli":
@@ -464,7 +462,6 @@ class Scheduler:
             proc = CodexProcess(
                 workspace=workspace,
                 model=task.model,
-                copilot_api_port=self.copilot_api_port,
                 yolo=task.yolo,
             )
         elif backend == "codex-acp":
@@ -473,7 +470,6 @@ class Scheduler:
             proc = ACPProcess(
                 workspace=workspace,
                 model=task.model,
-                copilot_api_port=self.copilot_api_port,
             )
         else:
             raise ValueError(f"Schedule '{task.id}': unsupported ai_backend '{backend}'")

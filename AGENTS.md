@@ -237,7 +237,6 @@ Telegram → TelegramChannel → Router → ClaudeProcess / CodexProcess / ACPPr
 | `src/boxagent/watchdog.py` | 自动重启 |
 | `src/boxagent/paths.py` | 路径解析 |
 | `src/boxagent/doctor.py` | doctor --fix 依赖检查 |
-| `src/boxagent/copilot_api.py` | Copilot API 代理管理 |
 | `src/boxagent/mcp_server.py` | Telegram 媒体 MCP 工具 |
 | `docs/codebase-guide.md` | **当前架构的真实描述** |
 | `docs/vision.md` | 远景（参考，不要当指令） |

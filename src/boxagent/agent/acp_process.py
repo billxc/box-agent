@@ -217,7 +217,6 @@ class ACPProcess:
     model: str = ""
     agent: str = ""
     bot_token: str = ""
-    copilot_api_port: int = 0
     acp_command: str = DEFAULT_ACP_COMMAND
     state: Literal["idle", "busy", "dead"] = "idle"
     supports_session_persistence: bool = field(
@@ -310,11 +309,6 @@ class ACPProcess:
                 "BOXAGENT_BOT_TOKEN": self.bot_token,
                 "BOXAGENT_CHAT_ID": chat_id,
             }
-
-        # Inject copilot-api args if enabled
-        if self.copilot_api_port:
-            from boxagent.copilot_api import copilot_args_for_codex
-            extra_args += copilot_args_for_codex(self.copilot_api_port)
 
         self._ctx_manager = spawn_agent_process(
             self._client,

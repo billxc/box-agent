@@ -3,7 +3,6 @@
 import asyncio
 import logging
 import os
-import signal
 import sys
 import time
 from dataclasses import dataclass, field
@@ -28,7 +27,7 @@ def _supports_persistent_session(ai_backend: str) -> bool:
     return ai_backend in ("claude-cli", "codex-cli", "codex-acp")
 
 
-def _create_backend(bot_cfg: BotConfig, session_id: str | None, copilot_api_port: int = 0) -> object:
+def _create_backend(bot_cfg: BotConfig, session_id: str | None) -> object:
     """Instantiate the AI backend based on config."""
     if bot_cfg.ai_backend == "codex-acp":
         from boxagent.agent.acp_process import ACPProcess
@@ -39,7 +38,6 @@ def _create_backend(bot_cfg: BotConfig, session_id: str | None, copilot_api_port
             model=bot_cfg.model,
             agent=bot_cfg.agent,
             bot_token=bot_cfg.telegram_token,
-            copilot_api_port=copilot_api_port,
         )
     if bot_cfg.ai_backend == "codex-cli":
         from boxagent.agent.codex_process import CodexProcess
@@ -50,7 +48,6 @@ def _create_backend(bot_cfg: BotConfig, session_id: str | None, copilot_api_port
             model=bot_cfg.model,
             agent=bot_cfg.agent,
             bot_token=bot_cfg.telegram_token,
-            copilot_api_port=copilot_api_port,
             yolo=bot_cfg.yolo,
         )
     return ClaudeProcess(
@@ -59,7 +56,6 @@ def _create_backend(bot_cfg: BotConfig, session_id: str | None, copilot_api_port
         model=bot_cfg.model,
         agent=bot_cfg.agent,
         bot_token=bot_cfg.telegram_token,
-        copilot_api_port=copilot_api_port,
         yolo=bot_cfg.yolo,
     )
 
@@ -145,10 +141,6 @@ class Gateway:
     _scheduler: Scheduler | None = field(default=None, repr=False)
     _scheduler_task: asyncio.Task | None = field(default=None, repr=False)
     _http_runner: web.AppRunner | None = field(default=None, repr=False)
-    _copilot_api_proc: object = field(default=None, repr=False)
-    _copilot_api_port: int = field(default=0, repr=False)
-    _copilot_api_task: asyncio.Task | None = field(default=None, repr=False)
-    _copilot_auth_proc: asyncio.subprocess.Process | None = field(default=None, repr=False)
     _start_time: float = 0.0
 
     async def start(self) -> None:
@@ -161,16 +153,6 @@ class Gateway:
         os.environ.setdefault("BOXAGENT_LOCAL_DIR", str(self.local_dir))
         if self.config.node_id:
             os.environ.setdefault("BOXAGENT_NODE_ID", self.config.node_id)
-
-        # Start copilot-api proxy if enabled (deprecated)
-        if self.config.copilot_api:
-            logger.warning(
-                "global.copilot_api is deprecated and will be removed in a future release. "
-                "It overrides Claude CLI settings (--setting-sources '') causing issues. "
-                "Instead, run xc-copilot-api as a standalone service: "
-                "easy-service install copilot-api -- npx xc-copilot-api@latest start"
-            )
-            await self._start_copilot_api()
 
         for name, bot_cfg in self.config.bots.items():
             if not node_matches(bot_cfg.enabled_on_nodes, self.config.node_id):
@@ -193,7 +175,7 @@ class Gateway:
         if _supports_persistent_session(bot_cfg.ai_backend):
             session_id = self._storage.load_session(name)
 
-        cli = _create_backend(bot_cfg, session_id, self._copilot_api_port)
+        cli = _create_backend(bot_cfg, session_id)
         cli.start()
         self._cli_processes[name] = cli
 
@@ -247,7 +229,6 @@ class Gateway:
             try:
                 import datetime
                 skill_count = len(linked)
-                copilot_status = "on" if self._copilot_api_port else "off"
                 info_lines = [
                     f"🟢 *{display_name}* is online",
                     f"node: `{self.config.node_id or '(any)'}`",
@@ -255,7 +236,6 @@ class Gateway:
                     f"backend: `{bot_cfg.ai_backend}`",
                     f"workspace: `{bot_cfg.workspace}`",
                     f"skills: {skill_count}",
-                    f"copilot-api: {copilot_status}",
                     f"session: `{session_id or 'new'}`",
                     f"time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}",
                 ]
@@ -303,7 +283,6 @@ class Gateway:
             telegram_bots=self.config.telegram_bots,
             default_workspace=str(default_workspace_dir(self.config_dir)),
             local_dir=str(self.local_dir),
-            copilot_api_port=self._copilot_api_port,
         )
         self._scheduler_task = asyncio.create_task(self._scheduler.run_forever())
         logger.info("Scheduler started (file=%s)", schedules_file)
@@ -320,7 +299,7 @@ class Gateway:
             except Exception:
                 pass
 
-        new_cli = _create_backend(bot_cfg, session_id, self._copilot_api_port)
+        new_cli = _create_backend(bot_cfg, session_id)
         new_cli.start()
         self._cli_processes[name] = new_cli
 
@@ -454,151 +433,11 @@ class Gateway:
         except Exception as e:
             logger.error("Async schedule/run '%s' failed: %s", task_id, e)
 
-    async def _start_copilot_api(self) -> None:
-        """Start copilot-api proxy.
-
-        Always allocates a port upfront so env injection works immediately.
-        If token is missing, runs auth in background — proxy starts once
-        auth completes.
-        """
-        from boxagent.copilot_api import start_copilot_api, find_token_path, get_free_port
-
-        # Always allocate port upfront so backends get env injected immediately
-        self._copilot_api_port = get_free_port()
-        logger.info("copilot-api port reserved: %d", self._copilot_api_port)
-
-        result = await start_copilot_api(port=self._copilot_api_port)
-        if result:
-            self._copilot_api_proc = result
-        elif find_token_path() is None:
-            # No token — run auth flow in background
-            self._copilot_api_task = asyncio.create_task(self._run_copilot_auth())
-
-    async def _run_copilot_auth(self) -> None:
-        """Background task: run auth, send device code to Telegram, then start proxy."""
-        import re
-        import shutil
-        from boxagent.copilot_api import (
-            find_token_path, start_copilot_api, get_auth_message,
-            _AUTH_TIMEOUT,
-        )
-
-        xca = shutil.which("xc-copilot-api") or shutil.which("xc-copilot-api.exe")
-        if not xca:
-            logger.warning("Cannot run copilot-api auth: xc-copilot-api not found")
-            return
-
-        logger.info("Starting copilot-api auth flow...")
-        proc = await asyncio.create_subprocess_exec(
-            xca, "auth",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,
-        )
-        self._copilot_auth_proc = proc
-
-        # Read output to find device code, send to Telegram
-        try:
-            while True:
-                try:
-                    line = await asyncio.wait_for(
-                        proc.stdout.readline(), timeout=_AUTH_TIMEOUT
-                    )
-                except asyncio.TimeoutError:
-                    logger.error("copilot-api auth timed out")
-                    self._kill_proc_tree(proc)
-                    return
-
-                if not line:
-                    break
-
-                text = line.decode("utf-8", errors="replace").strip()
-                if not text:
-                    continue
-
-                logger.debug("auth output: %s", text)
-
-                m = re.search(r'code\s+"([A-Z0-9-]+)"\s+in\s+(https://\S+)', text)
-                if m:
-                    code, url = m.group(1), m.group(2)
-                    msg = get_auth_message(code, url)
-                    logger.info("Device code: %s", code)
-                    # Send to all active channels
-                    for ch_name, channel in self._channels.items():
-                        bot_cfg = self.config.bots.get(ch_name)
-                        if bot_cfg and bot_cfg.allowed_users:
-                            chat_id = str(bot_cfg.allowed_users[0])
-                            try:
-                                await channel.send_text(chat_id, msg)
-                            except Exception as e:
-                                logger.warning("Failed to send auth code to %s: %s", ch_name, e)
-                            break  # send to first bot only
-
-            await proc.wait()
-
-            if proc.returncode == 0 and find_token_path():
-                logger.info("copilot-api auth completed, starting proxy...")
-                from boxagent.copilot_api import start_copilot_api
-                result = await start_copilot_api(port=self._copilot_api_port)
-                if result:
-                    self._copilot_api_proc = result
-            else:
-                logger.error("copilot-api auth failed (exit=%s)", proc.returncode)
-
-        except asyncio.CancelledError:
-            self._kill_proc_tree(proc)
-        except Exception as e:
-            logger.error("copilot-api auth error: %s", e)
-            try:
-                self._kill_proc_tree(proc)
-            except Exception:
-                pass
-
-    @staticmethod
-    def _kill_proc_tree(proc: asyncio.subprocess.Process) -> None:
-        """Kill a subprocess and its children via process group."""
-        if proc.returncode is not None:
-            return
-        pid = proc.pid
-        if sys.platform != "win32":
-            try:
-                os.killpg(os.getpgid(pid), signal.SIGKILL)
-                return
-            except (ProcessLookupError, PermissionError):
-                pass
-        proc.kill()
-
-    async def _stop_copilot_api(self) -> None:
-        """Stop copilot-api proxy if we started it."""
-        if self._copilot_api_task:
-            self._copilot_api_task.cancel()
-            try:
-                await self._copilot_api_task
-            except (asyncio.CancelledError, Exception):
-                pass
-            self._copilot_api_task = None
-        # Kill auth subprocess if still running
-        if self._copilot_auth_proc and self._copilot_auth_proc.returncode is None:
-            try:
-                self._kill_proc_tree(self._copilot_auth_proc)
-                await self._copilot_auth_proc.wait()
-            except Exception:
-                pass
-            self._copilot_auth_proc = None
-        if self._copilot_api_proc:
-            from boxagent.copilot_api import stop_copilot_api
-            await stop_copilot_api(self._copilot_api_proc)
-            self._copilot_api_proc = None
-            self._copilot_api_port = 0
-
     async def stop(self) -> None:
         logger.info("Gateway shutting down...")
 
         # Stop HTTP API
         await self._stop_http()
-
-        # Stop copilot-api
-        await self._stop_copilot_api()
 
         # Stop scheduler
         if self._scheduler:

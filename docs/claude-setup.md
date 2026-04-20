@@ -26,8 +26,6 @@ easy-service start copilot-api
 npx xc-copilot-api@latest start
 ```
 
-> **Note:** BoxAgent 的 `global.copilot_api: true` 配置项已废弃，会覆盖 Claude CLI 的用户配置导致问题。请按上面方式独立运行 xc-copilot-api，然后在下面配置 Claude CLI 直接连接。
-
 `~/.claude/settings.json`:
 
 ```json

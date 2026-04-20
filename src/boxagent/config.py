@@ -40,7 +40,6 @@ class AppConfig:
     node_id: str = ""
     log_level: str = "info"
     api_port: int = 0
-    copilot_api: bool = False  # Deprecated: use easy-service to run xc-copilot-api instead
     bots: dict[str, BotConfig] = field(default_factory=dict)
     telegram_bots: dict[str, str] = field(default_factory=dict)
 
@@ -90,8 +89,6 @@ def load_config(
     api_port = int(global_cfg.get("api_port", 0))
     api_port = int(os.environ.get("BOXAGENT_GLOBAL_API_PORT", api_port))
 
-    copilot_api = bool(global_cfg.get("copilot_api", False))
-
     telegram_bots = _load_telegram_bots(config_dir)
 
     bots: dict[str, BotConfig] = {}
@@ -108,7 +105,6 @@ def load_config(
         node_id=node_id,
         log_level=log_level,
         api_port=api_port,
-        copilot_api=copilot_api,
         bots=bots,
         telegram_bots=telegram_bots,
     )

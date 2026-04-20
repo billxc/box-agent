@@ -44,8 +44,6 @@ npx xc-copilot-api@latest start
 # → Listening on http://localhost:4141/
 ```
 
-> **Note:** The `global.copilot_api: true` option in BoxAgent config is **deprecated**. It overrides Claude CLI's settings in ways that cause issues. Instead, run `xc-copilot-api` as a standalone service (as shown above) and configure Claude/Codex directly below.
-
 Claude config (`~/.claude/settings.json`):
 
 ```json

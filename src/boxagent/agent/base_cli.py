@@ -33,7 +33,6 @@ class BaseCLIProcess:
     model: str = ""
     agent: str = ""
     bot_token: str = ""
-    copilot_api_port: int = 0
     yolo: bool = False
     state: Literal["idle", "busy", "dead"] = "idle"
     supports_session_persistence: bool = field(
@@ -250,13 +249,6 @@ class BaseCLIProcess:
 
         env = None
         extra = self._extra_env(chat_id)
-        if self.copilot_api_port:
-            from boxagent.copilot_api import copilot_env_for_backend
-            # Map display label to config backend key
-            _label_to_backend = {"Claude CLI": "claude-cli", "Codex CLI": "codex-cli"}
-            backend_key = _label_to_backend.get(self._backend_label, "claude-cli")
-            copilot_env = copilot_env_for_backend(backend_key, self.copilot_api_port)
-            extra = {**(extra or {}), **copilot_env}
         if extra:
             import os
             env = {**os.environ, **extra}
