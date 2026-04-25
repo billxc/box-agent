@@ -44,18 +44,25 @@ class SessionPool:
     def _get_ctx(self, chat_id: str) -> ChatContext:
         """Get or create context for a chat.
 
-        On first access, tries to restore session_id from storage.
+        On first access, tries to restore session state from storage.
         """
         ctx = self._chat_contexts.get(chat_id)
         if ctx is None:
-            saved_session_id = None
-            if self.storage and self.bot_name:
-                saved_session_id = self.storage.load_session(self.bot_name, chat_id=chat_id)
             ctx = ChatContext(
-                session_id=saved_session_id,
                 model=self.default_model,
                 workspace=self.default_workspace,
             )
+            if self.storage and self.bot_name:
+                saved = self.storage.load_session(self.bot_name, chat_id=chat_id)
+                if isinstance(saved, dict):
+                    ctx.session_id = saved.get("session_id")
+                    if saved.get("model"):
+                        ctx.model = saved["model"]
+                    if saved.get("workspace"):
+                        ctx.workspace = saved["workspace"]
+                elif isinstance(saved, str):
+                    # Legacy format: plain session_id string
+                    ctx.session_id = saved
             self._chat_contexts[chat_id] = ctx
         return ctx
 

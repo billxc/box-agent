@@ -29,7 +29,8 @@ class TestSessionTracking:
     def test_save_and_load_session(self, storage):
         """Save a session_id, then load it back."""
         storage.save_session("test-bot", "sess_abc")
-        assert storage.load_session("test-bot") == "sess_abc"
+        loaded = storage.load_session("test-bot")
+        assert loaded["session_id"] == "sess_abc"
 
     def test_load_missing_session(self, storage):
         """Loading nonexistent bot returns None."""
@@ -45,8 +46,8 @@ class TestSessionTracking:
         """Multiple bots can have independent sessions."""
         storage.save_session("bot-a", "sess_1")
         storage.save_session("bot-b", "sess_2")
-        assert storage.load_session("bot-a") == "sess_1"
-        assert storage.load_session("bot-b") == "sess_2"
+        assert storage.load_session("bot-a")["session_id"] == "sess_1"
+        assert storage.load_session("bot-b")["session_id"] == "sess_2"
 
     def test_save_session_tracks_history(self, storage):
         storage.save_session("test-bot", "sess_1")

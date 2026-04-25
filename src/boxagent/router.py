@@ -723,10 +723,17 @@ class Router:
         # Persist session after each turn
         if self.storage and sid:
             try:
+                save_model = ""
+                save_workspace = ""
+                if self.pool:
+                    save_model = self.pool.get_model(chat_id)
+                    save_workspace = self.pool.get_workspace(chat_id)
                 self.storage.save_session(
                     self.bot_name, sid,
                     preview=text, backend=self.ai_backend,
                     chat_id=chat_id,
+                    model=save_model,
+                    workspace=save_workspace,
                 )
             except Exception as e:
                 logger.warning("Failed to save session: %s", e)

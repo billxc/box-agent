@@ -180,7 +180,11 @@ class Gateway:
     async def _start_bot(self, name: str, bot_cfg: BotConfig) -> None:
         session_id = None
         if _supports_persistent_session(bot_cfg.ai_backend):
-            session_id = self._storage.load_session(name)
+            saved = self._storage.load_session(name)
+            if isinstance(saved, dict):
+                session_id = saved.get("session_id")
+            elif isinstance(saved, str):
+                session_id = saved
 
         cli = _create_backend(bot_cfg, session_id)
         cli.start()

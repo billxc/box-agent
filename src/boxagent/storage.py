@@ -59,13 +59,27 @@ class Storage:
             return f"{bot_id}:{chat_id}"
         return bot_id
 
-    def save_session(self, bot_id: str, session_id: str, *, preview: str = "", backend: str = "", chat_id: str = "") -> None:
+    def save_session(self, bot_id: str, session_id: str, *, preview: str = "", backend: str = "", chat_id: str = "", model: str = "", workspace: str = "") -> None:
         sessions = self._load_sessions()
-        sessions[self._session_key(bot_id, chat_id)] = session_id
+        key = self._session_key(bot_id, chat_id)
+        entry: dict[str, str] = {"session_id": session_id}
+        if workspace:
+            entry["workspace"] = workspace
+        if model:
+            entry["model"] = model
+        if backend:
+            entry["backend"] = backend
+        sessions[key] = entry
         self._save_sessions(sessions)
         self._remember_session(bot_id, session_id, preview=preview, backend=backend)
 
-    def load_session(self, bot_id: str, chat_id: str = "") -> str | None:
+    def load_session(self, bot_id: str, chat_id: str = "") -> dict | str | None:
+        """Load session data for a bot/chat.
+
+        Returns a dict with session_id/workspace/model/backend if saved
+        in the new format, a plain session_id string for legacy entries,
+        or None if not found.
+        """
         return self._load_sessions().get(self._session_key(bot_id, chat_id))
 
     def clear_session(self, bot_id: str, chat_id: str = "") -> None:

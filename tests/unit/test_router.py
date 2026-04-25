@@ -201,9 +201,9 @@ class TestDispatch:
             preview="hello",
             backend="claude-cli",
             chat_id="123456",
+            model="",
+            workspace="",
         )
-
-    async def test_stream_reply_does_not_use_display_name_prefix(self, mock_channel):
         backend = _StreamingBackend(stream_text="hello")
         handle = SimpleNamespace(message_id="m1", chat_id="123456")
         mock_channel.stream_start = AsyncMock(return_value=handle)
@@ -244,6 +244,8 @@ class TestDispatch:
             preview="hello",
             backend="claude-cli",
             chat_id="123456",
+            model="",
+            workspace="",
         )
 
     async def test_failed_turn_logs_error_into_transcript(
