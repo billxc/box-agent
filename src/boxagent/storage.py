@@ -71,7 +71,7 @@ class Storage:
             entry["backend"] = backend
         sessions[key] = entry
         self._save_sessions(sessions)
-        self._remember_session(bot_id, session_id, preview=preview, backend=backend)
+        self._remember_session(bot_id, session_id, preview=preview, backend=backend, model=model, workspace=workspace)
 
     def load_session(self, bot_id: str, chat_id: str = "") -> dict | str | None:
         """Load session data for a bot/chat.
@@ -104,10 +104,10 @@ class Storage:
         with open(path, "w") as f:
             yaml.safe_dump(data, f)
 
-    def _remember_session(self, bot_id: str, session_id: str, *, preview: str = "", backend: str = "") -> None:
+    def _remember_session(self, bot_id: str, session_id: str, *, preview: str = "", backend: str = "", model: str = "", workspace: str = "") -> None:
         history = self._load_session_history()
         entries = self._normalize_session_history_entries(
-            history.get(bot_id, [])
+            history.get("_global", [])
         )
         # Update existing entry or create new one
         existing = None
@@ -123,11 +123,20 @@ class Storage:
         new_entry: dict[str, object] = {
             "session_id": session_id,
             "saved_at": int(time.time()),
+            "bot": bot_id,
         }
         if backend:
             new_entry["backend"] = backend
         elif existing and existing.get("backend"):
             new_entry["backend"] = existing["backend"]
+        if model:
+            new_entry["model"] = model
+        elif existing and existing.get("model"):
+            new_entry["model"] = existing["model"]
+        if workspace:
+            new_entry["workspace"] = workspace
+        elif existing and existing.get("workspace"):
+            new_entry["workspace"] = existing["workspace"]
         # Keep existing preview if no new one provided
         if preview:
             compact = " ".join(preview.split())
@@ -135,19 +144,29 @@ class Storage:
         elif existing and existing.get("preview"):
             new_entry["preview"] = existing["preview"]
         entries.insert(0, new_entry)
-        history[bot_id] = entries[:50]
+        history["_global"] = entries[:50]
         self._save_session_history(history)
 
-    def list_session_history(self, bot_id: str) -> list[dict[str, object]]:
+    def list_session_history(self, bot_id: str = "") -> list[dict[str, object]]:
+        """List session history. Returns global history (all bots).
+
+        Falls back to legacy per-bot entries if no global list exists.
+        """
+        history = self._load_session_history()
         entries = self._normalize_session_history_entries(
-            self._load_session_history().get(bot_id, [])
+            history.get("_global", [])
         )
         if entries:
             return entries
 
-        current = self.load_session(bot_id)
-        if current:
-            return [{"session_id": current}]
+        # Fallback: try legacy per-bot format
+        if bot_id:
+            legacy = self._normalize_session_history_entries(
+                history.get(bot_id, [])
+            )
+            if legacy:
+                return legacy
+
         return []
 
     def _normalize_session_history_entries(
@@ -171,12 +190,10 @@ class Storage:
             saved_at = entry.get("saved_at")
             if isinstance(saved_at, int | float):
                 normalized_entry["saved_at"] = int(saved_at)
-            preview = entry.get("preview")
-            if isinstance(preview, str) and preview:
-                normalized_entry["preview"] = preview
-            backend = entry.get("backend")
-            if isinstance(backend, str) and backend:
-                normalized_entry["backend"] = backend
+            for key in ("preview", "backend", "model", "workspace", "bot"):
+                val = entry.get(key)
+                if isinstance(val, str) and val:
+                    normalized_entry[key] = val
             normalized.append(normalized_entry)
         return normalized
 

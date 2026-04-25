@@ -211,8 +211,8 @@ class Router:
 
         arg = msg.text.strip().partition(" ")[2].strip()
 
-        # Gather sessions from both sources
-        native_history = self.storage.list_session_history(self.bot_name)
+        # Gather sessions from both sources (global history, not per-bot)
+        native_history = self.storage.list_session_history()
         codex_history = self.storage.list_codex_session_history(
             self.workspace, limit=None if arg else 10,
         )
@@ -290,7 +290,9 @@ class Router:
                 if isinstance(preview, str) and preview:
                     preview_text = f" — {preview}"
                 short_id = session_id[:8]
-                lines.append(f"{idx}. `{short_id}` {time_str}{preview_text}")
+                ws = entry.get("workspace")
+                ws_label = f" `{Path(ws).name}`" if isinstance(ws, str) and ws else ""
+                lines.append(f"{idx}. `{short_id}` {time_str}{ws_label}{preview_text}")
                 btn_label = f"{idx}. {time_str}"
                 if isinstance(preview, str) and preview:
                     btn_label += f" {preview[:28]}"
@@ -337,18 +339,29 @@ class Router:
         ch = self._resolve_channel(msg)
         chat_id = msg.chat_id
         target_session_id = str(entry["session_id"])
+        restored_workspace = str(entry.get("workspace", "")) if entry.get("workspace") else ""
+        restored_model = str(entry.get("model", "")) if entry.get("model") else ""
+
         if self.pool:
             self.pool.set_session_id(chat_id, target_session_id)
+            if restored_workspace:
+                self.pool.set_workspace(chat_id, restored_workspace)
+            if restored_model:
+                self.pool.set_model(chat_id, restored_model)
         else:
             await self._reset_backend_session()
             self.cli_process.session_id = target_session_id
         self._compact_summaries.pop(chat_id, None)
         self._resume_contexts.pop(chat_id, None)
         self.storage.save_session(self.bot_name, target_session_id, chat_id=chat_id)
-        await ch.send_text(
-            chat_id,
-            f"Resume target set to `{target_session_id}`. Your next message will continue that session.",
-        )
+
+        # Build confirmation message
+        info_parts = [f"Resumed session `{target_session_id[:8]}`"]
+        if restored_workspace:
+            info_parts.append(f"workspace: `{restored_workspace}`")
+        if restored_model:
+            info_parts.append(f"model: `{restored_model}`")
+        await ch.send_text(chat_id, "\n".join(info_parts))
 
     async def _do_resume_codex(self, msg: IncomingMessage, entry: dict[str, object]):
         ch = self._resolve_channel(msg)
