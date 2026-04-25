@@ -99,6 +99,11 @@ def load_config(
 
     bots: dict[str, BotConfig] = {}
     for bot_name, bot_raw in effective_raw.get("bots", {}).items():
+        # Skip bots not enabled on this node (avoids validating placeholder bot_ids)
+        bot_nodes = bot_raw.get("enabled_on_nodes", "")
+        if node_id and bot_nodes and not node_matches(bot_nodes, node_id):
+            logger.debug("Bot '%s' skipped during config load (enabled_on_nodes=%s, current=%s)", bot_name, bot_nodes, node_id)
+            continue
         bots[bot_name] = _parse_bot(
             bot_name,
             bot_raw,
