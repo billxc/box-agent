@@ -519,12 +519,9 @@ class DiscordChannel:
 
     async def _handle_incoming(self, message: discord.Message) -> None:
         """Handle incoming Discord message — route by category."""
-        # Ignore messages from the bot itself (except on bus channel)
+        # Ignore messages from the bot itself
         is_self = message.author == self._client.user
-        category_id = getattr(message.channel, "category_id", None)
-        is_bus = self._bus_category and category_id == self._bus_category
-
-        if is_self and not is_bus:
+        if is_self:
             return
 
         # Ignore system messages (member joins, boosts, pins, etc.)
@@ -535,6 +532,8 @@ class DiscordChannel:
             return
 
         # Bus channel: route by @bot-name prefix (or to admin if no prefix)
+        category_id = getattr(message.channel, "category_id", None)
+        is_bus = self._bus_category and category_id == self._bus_category
         if is_bus:
             text = (message.content or "").strip()
             if text.startswith("@"):

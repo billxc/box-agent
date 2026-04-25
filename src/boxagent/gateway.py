@@ -399,9 +399,15 @@ class Gateway:
         dc_user_id = str(bot_cfg.discord_allowed_users[0]) if bot_cfg.discord_token and bot_cfg.discord_allowed_users else ""
         if dc_user_id and dc_channel is not None:
             async def _send_discord_notify(ch=dc_channel, uid=dc_user_id, text=notify_text, bot_name=name):
-                # Wait for Discord client to be ready
-                if ch._client:
-                    await ch._client.wait_until_ready()
+                # Wait for Discord client to be created (Phase 3) and connected
+                for _ in range(60):
+                    if ch._client is not None:
+                        break
+                    await asyncio.sleep(0.5)
+                else:
+                    logger.warning("Discord client never initialized for '%s', skipping startup notification", bot_name)
+                    return
+                await ch._client.wait_until_ready()
                 try:
                     await ch.send_dm(uid, text)
                 except Exception as e:
