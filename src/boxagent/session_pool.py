@@ -10,23 +10,45 @@ DEFAULT_POOL_SIZE = 3
 
 
 @dataclass
+class ChatContext:
+    """Per-chat state restored onto a borrowed process."""
+
+    session_id: str | None = None
+    model: str = ""
+    workspace: str = ""
+
+
+@dataclass
 class SessionPool:
     """Pool of cli_processes shared across chats.
 
-    Each chat gets its own session_id but borrows a process from the pool
-    for the duration of a turn.  Different chats can run concurrently up
-    to ``size`` simultaneous turns.
+    Each chat gets its own session_id, model, and workspace but borrows
+    a process from the pool for the duration of a turn.  Different chats
+    can run concurrently up to ``size`` simultaneous turns.
     """
 
     size: int = DEFAULT_POOL_SIZE
+    default_model: str = ""
+    default_workspace: str = ""
     _factory: object = None  # Callable[[], cli_process]
     _pool: asyncio.Queue = field(default=None, repr=False)
-    _chat_sessions: dict[str, str | None] = field(default_factory=dict, repr=False)
+    _chat_contexts: dict[str, ChatContext] = field(default_factory=dict, repr=False)
     _active: dict[str, object] = field(default_factory=dict, repr=False)
     _all: list[object] = field(default_factory=list, repr=False)
 
     def __post_init__(self):
         self._pool = asyncio.Queue(maxsize=self.size)
+
+    def _get_ctx(self, chat_id: str) -> ChatContext:
+        """Get or create context for a chat."""
+        ctx = self._chat_contexts.get(chat_id)
+        if ctx is None:
+            ctx = ChatContext(
+                model=self.default_model,
+                workspace=self.default_workspace,
+            )
+            self._chat_contexts[chat_id] = ctx
+        return ctx
 
     def start(self, factory) -> None:
         """Create pool members and start their queues.
@@ -43,15 +65,21 @@ class SessionPool:
         logger.info("SessionPool started with %d processes", self.size)
 
     async def acquire(self, chat_id: str) -> object:
-        """Borrow a process for *chat_id*, setting its session_id."""
+        """Borrow a process for *chat_id*, restoring its context."""
         proc = await self._pool.get()
-        proc.session_id = self._chat_sessions.get(chat_id)
+        ctx = self._get_ctx(chat_id)
+        proc.session_id = ctx.session_id
+        proc.model = ctx.model
+        proc.workspace = ctx.workspace
         self._active[chat_id] = proc
         return proc
 
     def release(self, chat_id: str, proc: object) -> None:
-        """Return a process to the pool, saving its session_id."""
-        self._chat_sessions[chat_id] = proc.session_id
+        """Return a process to the pool, saving its context."""
+        ctx = self._get_ctx(chat_id)
+        ctx.session_id = proc.session_id
+        ctx.model = proc.model
+        ctx.workspace = proc.workspace
         self._active.pop(chat_id, None)
         proc.session_id = None
         self._pool.put_nowait(proc)
@@ -65,25 +93,59 @@ class SessionPool:
         active = self._active.get(chat_id)
         if active:
             return active.session_id
-        return self._chat_sessions.get(chat_id)
+        ctx = self._chat_contexts.get(chat_id)
+        return ctx.session_id if ctx else None
 
     def set_session_id(self, chat_id: str, session_id: str | None) -> None:
         """Directly set the session_id for *chat_id*."""
         active = self._active.get(chat_id)
         if active:
             active.session_id = session_id
-        self._chat_sessions[chat_id] = session_id
+        self._get_ctx(chat_id).session_id = session_id
+
+    def get_model(self, chat_id: str) -> str:
+        """Return the model for *chat_id*."""
+        active = self._active.get(chat_id)
+        if active:
+            return active.model
+        ctx = self._chat_contexts.get(chat_id)
+        return ctx.model if ctx else self.default_model
+
+    def set_model(self, chat_id: str, model: str) -> None:
+        """Set the model for *chat_id*."""
+        active = self._active.get(chat_id)
+        if active:
+            active.model = model
+        self._get_ctx(chat_id).model = model
+
+    def get_workspace(self, chat_id: str) -> str:
+        """Return the workspace for *chat_id*."""
+        active = self._active.get(chat_id)
+        if active:
+            return active.workspace
+        ctx = self._chat_contexts.get(chat_id)
+        return ctx.workspace if ctx else self.default_workspace
+
+    def set_workspace(self, chat_id: str, workspace: str) -> None:
+        """Set the workspace for *chat_id*."""
+        active = self._active.get(chat_id)
+        if active:
+            active.workspace = workspace
+        self._get_ctx(chat_id).workspace = workspace
 
     def clear_session(self, chat_id: str) -> None:
-        """Drop session continuity for *chat_id*."""
-        self._chat_sessions.pop(chat_id, None)
+        """Drop session continuity for *chat_id* (keeps model/workspace)."""
+        ctx = self._chat_contexts.get(chat_id)
+        if ctx:
+            ctx.session_id = None
         active = self._active.get(chat_id)
         if active:
             active.session_id = None
 
     def has_session(self, chat_id: str) -> bool:
         """Whether *chat_id* has a stored session_id."""
-        return bool(self._chat_sessions.get(chat_id))
+        ctx = self._chat_contexts.get(chat_id)
+        return bool(ctx and ctx.session_id)
 
     @property
     def all_processes(self) -> list[object]:
@@ -121,8 +183,6 @@ class SessionPool:
                 new_proc = self._factory()
                 new_proc.start()
                 new_all.append(new_proc)
-                # If the dead process was in the pool queue, we need to swap it
-                # We'll rebuild the queue after
                 restarted += 1
                 logger.info("Replaced dead pool process")
             else:

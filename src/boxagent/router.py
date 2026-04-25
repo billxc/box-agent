@@ -381,54 +381,71 @@ class Router:
         )
 
     async def _cmd_model(self, msg: IncomingMessage):
-        """Show or switch the default model."""
+        """Show or switch the model for this chat."""
         ch = self._resolve_channel(msg)
+        chat_id = msg.chat_id
         parts = msg.text.strip().split(maxsplit=1)
-        current = getattr(self.cli_process, "model", "") or "default"
+
+        if self.pool:
+            current = self.pool.get_model(chat_id) or "default"
+        else:
+            current = getattr(self.cli_process, "model", "") or "default"
 
         if len(parts) < 2:
             await ch.send_text(
-                msg.chat_id, f"Current model: {current}"
+                chat_id, f"Current model: {current}"
             )
             return
 
         new_model = parts[1].strip()
-        self.cli_process.model = new_model
+        if self.pool:
+            self.pool.set_model(chat_id, new_model)
+        else:
+            self.cli_process.model = new_model
         await ch.send_text(
-            msg.chat_id, f"Model switched: {current} → {new_model}"
+            chat_id, f"Model switched: {current} → {new_model}"
         )
 
     async def _cmd_cd(self, msg: IncomingMessage):
-        """Show or switch the working directory."""
+        """Show or switch the working directory for this chat."""
         import os
 
         ch = self._resolve_channel(msg)
+        chat_id = msg.chat_id
         parts = msg.text.strip().split(maxsplit=1)
-        current = self.workspace or "(not set)"
+
+        if self.pool:
+            current = self.pool.get_workspace(chat_id) or "(not set)"
+        else:
+            current = self.workspace or "(not set)"
 
         if len(parts) < 2:
             await ch.send_text(
-                msg.chat_id, f"Current workspace: {current}"
+                chat_id, f"Current workspace: {current}"
             )
             return
 
         new_path = os.path.expanduser(parts[1].strip())
         if not os.path.isdir(new_path):
             await ch.send_text(
-                msg.chat_id, f"Directory not found: {new_path}"
+                chat_id, f"Directory not found: {new_path}"
             )
             return
 
         new_path = os.path.realpath(new_path)
-        self.cli_process.workspace = new_path
-        self.workspace = new_path
-        await self._reset_backend_session()
-        self._compact_summaries.pop(msg.chat_id, None)
-        self._resume_contexts.pop(msg.chat_id, None)
+        if self.pool:
+            self.pool.set_workspace(chat_id, new_path)
+            self.pool.clear_session(chat_id)
+        else:
+            self.cli_process.workspace = new_path
+            self.workspace = new_path
+            await self._reset_backend_session()
+        self._compact_summaries.pop(chat_id, None)
+        self._resume_contexts.pop(chat_id, None)
         if self.storage:
-            self.storage.clear_session(self.bot_name, chat_id=msg.chat_id)
+            self.storage.clear_session(self.bot_name, chat_id=chat_id)
         await ch.send_text(
-            msg.chat_id, f"Workspace switched: {current} → {new_path}"
+            chat_id, f"Workspace switched: {current} → {new_path}"
         )
 
     _VALID_BACKENDS = {"claude-cli", "codex-cli", "codex-acp"}
@@ -602,7 +619,7 @@ class Router:
         # Inject session context every turn via --append-system-prompt;
         # the flag is independent of the conversation so it won't be
         # compressed away by context window management.
-        context = self._build_session_context()
+        context = self._build_session_context(chat_id)
         if context:
             system_parts.append(context)
 
@@ -720,17 +737,22 @@ class Router:
         else:
             self.cli_process.session_id = None
 
-    def _build_session_context(self) -> str:
+    def _build_session_context(self, chat_id: str = "") -> str:
         """Build a one-time context block for the first message of a session."""
         from boxagent.context import build_session_context
 
-        model = getattr(self.cli_process, "model", "") or "default"
+        if self.pool and chat_id:
+            model = self.pool.get_model(chat_id) or "default"
+            workspace = self.pool.get_workspace(chat_id) or self.workspace
+        else:
+            model = getattr(self.cli_process, "model", "") or "default"
+            workspace = self.workspace
         return build_session_context(
             bot_name=self.bot_name,
             display_name=self.display_name,
             node_id=self.node_id,
             ai_backend=self.ai_backend,
             model=model,
-            workspace=self.workspace,
+            workspace=workspace,
             config_dir=self.config_dir,
         )

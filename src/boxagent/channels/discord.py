@@ -26,6 +26,7 @@ class DiscordChannel:
 
     token: str
     allowed_users: list[int]
+    allowed_categories: list[int] = field(default_factory=list)
     tool_calls_display: str = "summary"
     on_message: object = None
 
@@ -364,6 +365,12 @@ class DiscordChannel:
         # Ignore messages from the bot itself
         if message.author == self._client.user:
             return
+
+        # Filter by allowed categories (if configured)
+        if self.allowed_categories:
+            parent_id = getattr(message.channel, "category_id", None)
+            if parent_id not in self.allowed_categories:
+                return
 
         attachments = []
         for att in message.attachments:

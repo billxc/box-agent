@@ -29,6 +29,7 @@ class BotConfig:
     telegram_allowed_users: list[int] = field(default_factory=list)
     discord_token: str = ""
     discord_allowed_users: list[int] = field(default_factory=list)
+    discord_allowed_categories: list[int] = field(default_factory=list)
     model: str = ""
     agent: str = ""
     extra_skill_dirs: list[str] = field(default_factory=list)
@@ -295,6 +296,7 @@ def _parse_bot(
     discord = channels.get("discord", {})
     discord_token = ""
     discord_allowed_users: list[int] = []
+    discord_allowed_categories: list[int] = []
     if discord:
         discord_token = discord.get("token", "")
         if not discord_token:
@@ -312,6 +314,7 @@ def _parse_bot(
             else:
                 raise ConfigError(f"Bot '{name}': missing channels.discord.token or bot_id")
         discord_allowed_users = discord.get("allowed_users", [])
+        discord_allowed_categories = discord.get("allowed_categories", [])
 
     # At least one channel must be configured
     if not telegram_token and not discord_token:
@@ -356,6 +359,7 @@ def _parse_bot(
         telegram_allowed_users=telegram_allowed_users,
         discord_token=discord_token,
         discord_allowed_users=discord_allowed_users,
+        discord_allowed_categories=discord_allowed_categories,
         model=raw.get("model", ""),
         agent=raw.get("agent", ""),
         extra_skill_dirs=extra_skill_dirs,

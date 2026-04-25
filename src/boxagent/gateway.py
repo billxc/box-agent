@@ -190,7 +190,11 @@ class Gateway:
         def _factory():
             return _create_backend(bot_cfg, None)
 
-        pool = SessionPool(size=3)
+        pool = SessionPool(
+            size=3,
+            default_model=bot_cfg.model,
+            default_workspace=bot_cfg.workspace,
+        )
         pool.start(_factory)
         self._pools[name] = pool
 
@@ -230,6 +234,7 @@ class Gateway:
             dc_channel = DiscordChannel(
                 token=bot_cfg.discord_token,
                 allowed_users=bot_cfg.allowed_users,
+                allowed_categories=bot_cfg.discord_allowed_categories,
                 tool_calls_display=bot_cfg.display_tool_calls,
             )
             self._discord_channels[name] = dc_channel
