@@ -16,17 +16,24 @@ CLAUDE_DIR = Path.home() / ".claude"
 
 def build_sessions_parser(subparsers) -> None:
     """Register 'sessions' subcommand with sub-subparsers."""
-    sessions = subparsers.add_parser("sessions", help="List Claude CLI sessions")
+    sessions = subparsers.add_parser("sessions", help="Search and list sessions")
     sessions_sub = sessions.add_subparsers(dest="sessions_cmd")
 
     ls = sessions_sub.add_parser("list", help="List all sessions")
     ls.add_argument(
-        "--project", default="",
-        help="Filter by project path (substring match)",
+        "query", nargs="*", default=[],
+        help=(
+            "Search query tokens: keywords, --all, cwd:X, grep:X, "
+            "Nd (days), backend:X, bot:X, pN (page)"
+        ),
     )
     ls.add_argument(
         "--json", dest="output_json", action="store_true", default=False,
         help="Output as JSON",
+    )
+    ls.add_argument(
+        "--workspace", default="",
+        help="Project directory to scope results (default: show all)",
     )
     ls.set_defaults(func=sessions_list)
 
@@ -239,6 +246,8 @@ def _load_all_unified_sessions(
                 if cwd and not entry["projectPath"]:
                     entry["projectPath"] = cwd
                     entry["project"] = Path(cwd).name
+                if e.get("path") and not entry.get("_codex_path"):
+                    entry["_codex_path"] = str(e["path"])
             else:
                 saved_at = e.get("saved_at")
                 cwd = str(e.get("cwd", "")) if e.get("cwd") else ""
@@ -254,6 +263,7 @@ def _load_all_unified_sessions(
                     "backend": str(e.get("backend", "")),
                     "model": "",
                     "bot": "",
+                    "_codex_path": str(e.get("path", "")),
                 }
 
     # Sort by modified_ts desc
@@ -280,6 +290,8 @@ _RE_PAGE = re.compile(r"^p(\d+)$", re.IGNORECASE)
 _RE_DAYS = re.compile(r"^(\d+)d$", re.IGNORECASE)
 _RE_BACKEND = re.compile(r"^backend:(.+)$", re.IGNORECASE)
 _RE_BOT = re.compile(r"^bot:(.+)$", re.IGNORECASE)
+_RE_CWD = re.compile(r"^cwd:(.+)$", re.IGNORECASE)
+_RE_GREP = re.compile(r"^grep:(.+)$", re.IGNORECASE)
 _RE_HEX = re.compile(r"^[0-9a-f]{4,}$", re.IGNORECASE)
 
 
@@ -291,21 +303,31 @@ def parse_session_tokens(raw: str) -> dict:
         days: int | None (time filter in days)
         backend: str (empty if not filtered)
         bot: str (empty if not filtered)
+        cwd_search: str (empty if not filtered, substring match on projectPath)
+        grep: str (empty if not filtered, full-text search on session content)
         id_prefix: str (empty if not a hex prefix lookup)
         query: str (remaining search words joined)
+        all: bool (True to show all sessions, ignoring cwd filter)
     """
     tokens = raw.split()
     page = 1
     days: int | None = None
     backend = ""
     bot = ""
+    cwd_search = ""
+    grep = ""
     id_prefix = ""
+    all_flag = False
     query_parts: list[str] = []
 
     page_set = False
     days_set = False
 
     for token in tokens:
+        if token == "--all":
+            all_flag = True
+            continue
+
         m = _RE_PAGE.match(token)
         if m and not page_set:
             page = int(m.group(1))
@@ -328,6 +350,16 @@ def parse_session_tokens(raw: str) -> dict:
             bot = m.group(1)
             continue
 
+        m = _RE_CWD.match(token)
+        if m and not cwd_search:
+            cwd_search = m.group(1)
+            continue
+
+        m = _RE_GREP.match(token)
+        if m and not grep:
+            grep = m.group(1)
+            continue
+
         # Hex prefix is checked later against actual sessions
         # For now just collect as query part
         query_parts.append(token)
@@ -338,8 +370,11 @@ def parse_session_tokens(raw: str) -> dict:
         "days": days,
         "backend": backend,
         "bot": bot,
+        "cwd_search": cwd_search,
+        "grep": grep,
         "id_prefix": id_prefix,
         "query": query,
+        "all": all_flag,
     }
 
 
@@ -354,9 +389,28 @@ def _filter_sessions(
     days: int | None = None,
     backend: str = "",
     bot: str = "",
+    cwd: str = "",
+    cwd_search: str = "",
 ) -> list[dict]:
     """Apply filters to the unified session list."""
     result = entries
+
+    # CWD filter (exact/prefix): session projectPath must be under (or equal to) the given cwd
+    if cwd:
+        cwd_norm = cwd.rstrip("/") + "/"
+        result = [
+            e for e in result
+            if (e.get("projectPath") or "") == cwd.rstrip("/")
+            or (e.get("projectPath") or "").startswith(cwd_norm)
+        ]
+
+    # CWD search (substring): fuzzy match on projectPath
+    if cwd_search:
+        cl = cwd_search.lower()
+        result = [
+            e for e in result
+            if cl in (e.get("projectPath") or "").lower()
+        ]
 
     # Time filter
     if days is not None and days > 0:
@@ -388,6 +442,7 @@ def _matches_all_words(entry: dict, words: list[str]) -> bool:
         (entry.get("firstPrompt") or "").lower(),
         (entry.get("preview") or "").lower(),
         (entry.get("project") or "").lower(),
+        (entry.get("projectPath") or "").lower(),
         (entry.get("backend") or "").lower(),
         (entry.get("model") or "").lower(),
     ]
@@ -401,6 +456,40 @@ def _find_by_id_prefix(entries: list[dict], prefix: str) -> list[dict]:
     """Find sessions whose sessionId starts with the given hex prefix."""
     pl = prefix.lower()
     return [e for e in entries if e.get("sessionId", "").lower().startswith(pl)]
+
+
+def _resolve_session_path(sid: str) -> Path | None:
+    """Find the JSONL file for a Claude CLI session ID."""
+    projects_dir = CLAUDE_DIR / "projects"
+    if not projects_dir.is_dir():
+        return None
+    for jsonl_file in projects_dir.glob(f"*/{sid}.jsonl"):
+        return jsonl_file
+    return None
+
+
+def _grep_sessions(entries: list[dict], pattern: str) -> list[dict]:
+    """Full-text search: keep only sessions whose JSONL content contains *pattern*.
+
+    Searches Claude CLI sessions (~/.claude/projects/*/{sid}.jsonl) and
+    Codex sessions (path stored in entry['_codex_path']).
+    """
+    pl = pattern.lower()
+    result = []
+    for e in entries:
+        sid = e.get("sessionId", "")
+        # Try Codex path first (stored during loading)
+        path_str = e.get("_codex_path", "")
+        path = Path(path_str) if path_str else _resolve_session_path(sid)
+        if not path or not path.is_file():
+            continue
+        try:
+            content = path.read_text(encoding="utf-8", errors="replace")
+            if pl in content.lower():
+                result.append(e)
+        except OSError:
+            continue
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -459,6 +548,9 @@ def format_sessions_list(
             return _format_id_match(matches)
         # No match — treat as regular search
 
+    # Determine cwd filter: default to workspace unless --all or cwd_search
+    cwd_filter = "" if (parsed["all"] or parsed["cwd_search"]) else workspace
+
     # Apply filters
     filtered = _filter_sessions(
         entries,
@@ -466,7 +558,13 @@ def format_sessions_list(
         days=parsed["days"],
         backend=parsed["backend"],
         bot=parsed["bot"],
+        cwd=cwd_filter,
+        cwd_search=parsed["cwd_search"],
     )
+
+    # Full-text search (applied after metadata filters to limit I/O)
+    if parsed["grep"]:
+        filtered = _grep_sessions(filtered, parsed["grep"])
 
     total = len(filtered)
     if total == 0:
@@ -480,9 +578,16 @@ def format_sessions_list(
             parts.append(f"backend:{parsed['backend']}")
         if parsed["bot"]:
             parts.append(f"bot:{parsed['bot']}")
+        if parsed["cwd_search"]:
+            parts.append(f"cwd:{parsed['cwd_search']}")
+        if parsed["grep"]:
+            parts.append(f"grep:{parsed['grep']}")
+        if cwd_filter:
+            parts.append(f"in {Path(cwd_filter).name}")
         if parts:
-            return f"No sessions matching {' '.join(parts)}."
-        return "No sessions found."
+            hint = " (use `--all` for all projects)" if cwd_filter else ""
+            return f"No sessions matching {' '.join(parts)}.{hint}"
+        return "No sessions found. (use `--all` for all projects)" if cwd_filter else "No sessions found."
 
     total_pages = (total + page_size - 1) // page_size
     page = max(1, min(page, total_pages))
@@ -499,11 +604,22 @@ def format_sessions_list(
         header_parts.append(f"backend:{parsed['backend']}")
     if parsed["bot"]:
         header_parts.append(f"bot:{parsed['bot']}")
+    if parsed["cwd_search"]:
+        header_parts.append(f"cwd:{parsed['cwd_search']}")
+    if parsed["grep"]:
+        header_parts.append(f"grep:{parsed['grep']}")
 
-    if header_parts:
-        header = f"Sessions matching {' '.join(header_parts)} ({start + 1}-{start + len(page_entries)} / {total})"
+    if cwd_filter:
+        scope = f"in {Path(cwd_filter).name}"
+    elif parsed["cwd_search"]:
+        scope = f"cwd~{parsed['cwd_search']}"
     else:
-        header = f"Sessions ({start + 1}-{start + len(page_entries)} / {total})"
+        scope = "all projects"
+    range_str = f"{start + 1}-{start + len(page_entries)} / {total}"
+    if header_parts:
+        header = f"Sessions matching {' '.join(header_parts)} · {scope} ({range_str})"
+    else:
+        header = f"Sessions · {scope} ({range_str})"
 
     lines = [f"**{header}**\n"]
 
@@ -541,6 +657,8 @@ def format_sessions_list(
 
     # Navigation hint
     base_args = []
+    if parsed["all"]:
+        base_args.append("--all")
     if remaining_query:
         base_args.append(remaining_query)
     if parsed["days"]:
@@ -549,6 +667,10 @@ def format_sessions_list(
         base_args.append(f"backend:{parsed['backend']}")
     if parsed["bot"]:
         base_args.append(f"bot:{parsed['bot']}")
+    if parsed["cwd_search"]:
+        base_args.append(f"cwd:{parsed['cwd_search']}")
+    if parsed["grep"]:
+        base_args.append(f"grep:{parsed['grep']}")
     base = " ".join(base_args)
 
     hints = []
@@ -598,20 +720,6 @@ def _format_id_match(matches: list[dict]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Legacy: _load_all_sessions (used by CLI table output)
-# ---------------------------------------------------------------------------
-
-def _load_all_sessions() -> list[dict]:
-    """Collect sessions from index files and unindexed .jsonl files.
-
-    Legacy function kept for the CLI ``sessions list`` subcommand.
-    """
-    entries = _load_claude_sessions()
-    entries.sort(key=lambda e: e.get("modified", ""), reverse=True)
-    return entries
-
-
-# ---------------------------------------------------------------------------
 # CLI subcommand handler
 # ---------------------------------------------------------------------------
 
@@ -630,35 +738,32 @@ def sessions_list(args) -> None:
     except Exception:
         pass
 
-    entries = _load_all_unified_sessions(storage=storage)
-
-    project_filter = getattr(args, "project", "")
-    if project_filter:
-        entries = [
-            e for e in entries
-            if project_filter.lower() in (e.get("projectPath") or "").lower()
-            or project_filter.lower() in (e.get("project") or "").lower()
-        ]
-
-    if not entries:
-        print("No sessions found.")
-        return
+    query_str = " ".join(getattr(args, "query", []))
+    workspace = getattr(args, "workspace", "")
 
     if getattr(args, "output_json", False):
-        _safe_print(json.dumps(entries, indent=2, ensure_ascii=False))
+        entries = _load_all_unified_sessions(storage=storage, workspace=workspace)
+        parsed = parse_session_tokens(query_str)
+
+        cwd_filter = "" if (parsed["all"] or parsed["cwd_search"]) else workspace
+        filtered = _filter_sessions(
+            entries,
+            query=parsed["query"],
+            days=parsed["days"],
+            backend=parsed["backend"],
+            bot=parsed["bot"],
+            cwd=cwd_filter,
+            cwd_search=parsed["cwd_search"],
+        )
+        if parsed["grep"]:
+            filtered = _grep_sessions(filtered, parsed["grep"])
+
+        _safe_print(json.dumps(filtered, indent=2, ensure_ascii=False))
         return
 
-    # Table output
-    print(
-        f"{'SESSION_ID':<38} {'MSGS':>4}  {'MODIFIED':<20} {'PROJECT':<20} {'BACKEND':<12} {'SUMMARY'}"
+    text = format_sessions_list(
+        query=query_str,
+        storage=storage,
+        workspace=workspace,
     )
-    print("-" * 130)
-    for e in entries:
-        sid = e.get("sessionId", "?")[:36]
-        msgs = str(e.get("messageCount") or "")
-        ts = e.get("modified_ts") or 0
-        modified = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M") if ts else ""
-        project = _truncate(e.get("project") or e.get("projectPath", ""), 18)
-        backend = _truncate(e.get("backend", ""), 10)
-        summary = _truncate(e.get("summary") or e.get("firstPrompt") or e.get("preview", ""), 40)
-        print(f"{sid:<38} {msgs:>4}  {modified:<20} {project:<20} {backend:<12} {summary}")
+    _safe_print(text)

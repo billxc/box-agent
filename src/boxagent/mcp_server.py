@@ -215,17 +215,38 @@ def schedule_run_detail(task_id: str, run_index: int = 1) -> str:
 
 
 @mcp.tool()
-def sessions_list(project_filter: str = "") -> str:
-    """List unified sessions (Claude CLI + BoxAgent history + Codex).
+def sessions_list(query: str = "", workspace: str = "") -> str:
+    """Search and list sessions (Claude CLI + BoxAgent history + Codex).
+
+    By default, only sessions matching *workspace* are shown.
+    Use ``--all`` in the query to search across all projects.
+
+    Query syntax (all tokens are optional, order-independent):
+        --all           Show sessions from all projects (skip workspace filter)
+        <keywords>      Text search on summary/prompt/project/path (multi-word AND)
+        cwd:<substr>    Fuzzy match on session projectPath (bypasses workspace filter)
+        grep:<substr>   Full-text search inside session JSONL content (applied last)
+        <N>d            Only sessions modified in the last N days (e.g. 7d)
+        backend:<name>  Filter by backend (e.g. claude-cli, codex-cli)
+        bot:<name>      Filter by bot name
+        p<N>            Page number (e.g. p2)
+        <hex-prefix>    Lookup session by ID prefix (4+ hex chars)
+
+    Examples:
+        "7d"                        — current project, last 7 days
+        "--all discord"             — all projects, keyword "discord"
+        "cwd:chromium grep:WebView" — path contains "chromium", content contains "WebView"
+        "grep:TODO 7d"              — current project, last 7 days, content contains "TODO"
 
     Args:
-        project_filter: Search query — supports keywords, Nd (time), backend:X, bot:X, pN (page)
+        query: Search query string (see syntax above)
+        workspace: Project directory path to scope results (default: all projects)
     """
     from boxagent.sessions_cli import format_sessions_list
     from boxagent.storage import Storage
 
     storage = Storage(LOCAL_DIR) if LOCAL_DIR else None
-    return format_sessions_list(query=project_filter, storage=storage)
+    return format_sessions_list(query=query, storage=storage, workspace=workspace)
 
 
 if __name__ == "__main__":

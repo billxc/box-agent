@@ -16,6 +16,8 @@ from boxagent.sessions_cli import (
     _filter_sessions,
     _matches_all_words,
     _find_by_id_prefix,
+    _grep_sessions,
+    _resolve_session_path,
     format_sessions_list,
     parse_session_tokens,
     sessions_list,
@@ -152,7 +154,7 @@ class TestLoadClaudeSessions:
 class TestParseSessionTokens:
     def test_empty(self):
         r = parse_session_tokens("")
-        assert r == {"page": 1, "days": None, "backend": "", "bot": "", "id_prefix": "", "query": ""}
+        assert r == {"page": 1, "days": None, "backend": "", "bot": "", "cwd_search": "", "grep": "", "id_prefix": "", "query": "", "all": False}
 
     def test_page_only(self):
         r = parse_session_tokens("p3")
@@ -173,6 +175,39 @@ class TestParseSessionTokens:
         r = parse_session_tokens("bot:claw-mac")
         assert r["bot"] == "claw-mac"
         assert r["query"] == ""
+
+    def test_all_flag(self):
+        r = parse_session_tokens("--all")
+        assert r["all"] is True
+        assert r["query"] == ""
+
+    def test_all_with_query(self):
+        r = parse_session_tokens("--all discord 7d")
+        assert r["all"] is True
+        assert r["days"] == 7
+        assert r["query"] == "discord"
+
+    def test_cwd_search(self):
+        r = parse_session_tokens("cwd:chromium")
+        assert r["cwd_search"] == "chromium"
+        assert r["query"] == ""
+
+    def test_cwd_search_with_query(self):
+        r = parse_session_tokens("cwd:box-agent discord 7d")
+        assert r["cwd_search"] == "box-agent"
+        assert r["days"] == 7
+        assert r["query"] == "discord"
+
+    def test_grep(self):
+        r = parse_session_tokens("grep:pineapple")
+        assert r["grep"] == "pineapple"
+        assert r["query"] == ""
+
+    def test_grep_with_filters(self):
+        r = parse_session_tokens("grep:TODO 7d backend:claude-cli")
+        assert r["grep"] == "TODO"
+        assert r["days"] == 7
+        assert r["backend"] == "claude-cli"
 
     def test_combined(self):
         r = parse_session_tokens("chromium 3d backend:claude-cli p2")
@@ -222,8 +257,12 @@ class TestMatchesAllWords:
         assert _matches_all_words(entry, ["box-agent"])
 
     def test_matches_backend(self):
-        entry = {"summary": "", "firstPrompt": "", "preview": "", "project": "", "backend": "codex-cli", "model": ""}
+        entry = {"summary": "", "firstPrompt": "", "preview": "", "project": "", "projectPath": "", "backend": "codex-cli", "model": ""}
         assert _matches_all_words(entry, ["codex"])
+
+    def test_matches_project_path(self):
+        entry = {"summary": "", "firstPrompt": "", "preview": "", "project": "src", "projectPath": "/Users/test/chromium/src", "backend": "", "model": ""}
+        assert _matches_all_words(entry, ["chromium"])
 
 
 class TestFilterSessions:
@@ -231,13 +270,16 @@ class TestFilterSessions:
         now = int(time.time())
         return [
             {"sessionId": "s1", "summary": "Discord fix", "firstPrompt": "", "preview": "",
-             "project": "box-agent", "backend": "claude-cli", "model": "opus", "bot": "claw-mac",
+             "project": "box-agent", "projectPath": "/Users/test/box-agent",
+             "backend": "claude-cli", "model": "opus", "bot": "claw-mac",
              "modified_ts": now - 3600},
             {"sessionId": "s2", "summary": "WebView build", "firstPrompt": "", "preview": "",
-             "project": "chromium", "backend": "codex-cli", "model": "sonnet", "bot": "claw-wsl",
+             "project": "chromium", "projectPath": "/Users/test/chromium",
+             "backend": "codex-cli", "model": "sonnet", "bot": "claw-wsl",
              "modified_ts": now - 86400 * 3},
             {"sessionId": "s3", "summary": "Docker networking", "firstPrompt": "", "preview": "",
-             "project": "homelab", "backend": "claude-cli", "model": "opus", "bot": "claw-mac",
+             "project": "homelab", "projectPath": "/Users/test/homelab",
+             "backend": "claude-cli", "model": "opus", "bot": "claw-mac",
              "modified_ts": now - 86400 * 10},
         ]
 
@@ -280,6 +322,60 @@ class TestFilterSessions:
         assert len(result) == 1
         assert result[0]["sessionId"] == "s1"
 
+    def test_cwd_filter_exact(self):
+        entries = self._make_entries()
+        result = _filter_sessions(entries, cwd="/Users/test/box-agent")
+        assert len(result) == 1
+        assert result[0]["sessionId"] == "s1"
+
+    def test_cwd_filter_with_trailing_slash(self):
+        entries = self._make_entries()
+        result = _filter_sessions(entries, cwd="/Users/test/box-agent/")
+        assert len(result) == 1
+        assert result[0]["sessionId"] == "s1"
+
+    def test_cwd_filter_no_match(self):
+        entries = self._make_entries()
+        result = _filter_sessions(entries, cwd="/Users/test/nonexistent")
+        assert len(result) == 0
+
+    def test_cwd_filter_empty_shows_all(self):
+        entries = self._make_entries()
+        result = _filter_sessions(entries, cwd="")
+        assert len(result) == 3
+
+    def test_cwd_filter_subdirectory(self):
+        """Sessions in a subdirectory of cwd should also match."""
+        entries = self._make_entries()
+        # Add a session in a subdirectory
+        entries.append({
+            "sessionId": "s4", "summary": "Sub work", "firstPrompt": "", "preview": "",
+            "project": "sub", "projectPath": "/Users/test/box-agent/sub",
+            "backend": "claude-cli", "model": "opus", "bot": "",
+            "modified_ts": int(time.time()),
+        })
+        result = _filter_sessions(entries, cwd="/Users/test/box-agent")
+        assert len(result) == 2
+        assert {e["sessionId"] for e in result} == {"s1", "s4"}
+
+    def test_cwd_search_substring(self):
+        """cwd_search does case-insensitive substring match on projectPath."""
+        entries = self._make_entries()
+        result = _filter_sessions(entries, cwd_search="chromium")
+        assert len(result) == 1
+        assert result[0]["sessionId"] == "s2"
+
+    def test_cwd_search_case_insensitive(self):
+        entries = self._make_entries()
+        result = _filter_sessions(entries, cwd_search="BOX-AGENT")
+        assert len(result) == 1
+        assert result[0]["sessionId"] == "s1"
+
+    def test_cwd_search_partial(self):
+        entries = self._make_entries()
+        result = _filter_sessions(entries, cwd_search="test")
+        assert len(result) == 3  # all entries have /Users/test/ in path
+
 
 class TestFindByIdPrefix:
     def test_match(self):
@@ -289,6 +385,53 @@ class TestFindByIdPrefix:
     def test_no_match(self):
         entries = [{"sessionId": "abcdef1234"}]
         assert len(_find_by_id_prefix(entries, "9999")) == 0
+
+
+class TestGrepSessions:
+    def test_match_in_content(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        projects_dir = tmp_path / "projects"
+        _write_jsonl(projects_dir, "proj", "sess-1", [
+            _make_user_message("please fix the pineapple bug"),
+            _make_assistant_message("done"),
+        ])
+        entries = [{"sessionId": "sess-1", "project": "proj"}]
+        result = _grep_sessions(entries, "pineapple")
+        assert len(result) == 1
+
+    def test_no_match_in_content(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        projects_dir = tmp_path / "projects"
+        _write_jsonl(projects_dir, "proj", "sess-1", [
+            _make_user_message("hello world"),
+            _make_assistant_message("hi"),
+        ])
+        entries = [{"sessionId": "sess-1", "project": "proj"}]
+        result = _grep_sessions(entries, "pineapple")
+        assert len(result) == 0
+
+    def test_case_insensitive(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        projects_dir = tmp_path / "projects"
+        _write_jsonl(projects_dir, "proj", "sess-1", [
+            _make_user_message("Fix the Discord bot"),
+        ])
+        entries = [{"sessionId": "sess-1", "project": "proj"}]
+        assert len(_grep_sessions(entries, "discord")) == 1
+        assert len(_grep_sessions(entries, "DISCORD")) == 1
+
+    def test_codex_path(self, tmp_path):
+        """Sessions with _codex_path use that path instead of resolving."""
+        jsonl = tmp_path / "rollout.jsonl"
+        jsonl.write_text('{"type":"user","message":{"content":"codex magic"}}\n')
+        entries = [{"sessionId": "codex-1", "_codex_path": str(jsonl)}]
+        assert len(_grep_sessions(entries, "codex magic")) == 1
+        assert len(_grep_sessions(entries, "nonexistent")) == 0
+
+    def test_missing_file_skipped(self):
+        entries = [{"sessionId": "nonexistent-id", "project": "nope"}]
+        result = _grep_sessions(entries, "anything")
+        assert len(result) == 0
 
 
 class TestRelativeTime:
@@ -381,36 +524,144 @@ class TestFormatSessionsList:
         # The entry is from 2026-04-01 which is old, should be filtered
         assert "No sessions" in result or "id-1" in result  # depends on test run date
 
+    def test_cwd_filter_default(self, tmp_path, monkeypatch):
+        """With workspace set, only sessions matching that path are shown."""
+        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        projects_dir = tmp_path / "projects"
+        _make_index(projects_dir, "proj-a", [
+            _sample_entry("id-1", projectPath="/Users/test/proj-a"),
+        ], original_path="/Users/test/proj-a")
+        _make_index(projects_dir, "proj-b", [
+            _sample_entry("id-2", projectPath="/Users/test/proj-b",
+                          modified="2026-04-02T11:00:00.000Z"),
+        ], original_path="/Users/test/proj-b")
+        result = format_sessions_list(workspace="/Users/test/proj-a")
+        assert "/resume id-1" in result
+        assert "/resume id-2" not in result
+        assert "proj-a" in result
+
+    def test_cwd_all_flag(self, tmp_path, monkeypatch):
+        """--all bypasses cwd filter, showing sessions from all projects."""
+        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        projects_dir = tmp_path / "projects"
+        _make_index(projects_dir, "proj-a", [
+            _sample_entry("id-1", projectPath="/Users/test/proj-a"),
+        ], original_path="/Users/test/proj-a")
+        _make_index(projects_dir, "proj-b", [
+            _sample_entry("id-2", projectPath="/Users/test/proj-b",
+                          modified="2026-04-02T11:00:00.000Z"),
+        ], original_path="/Users/test/proj-b")
+        result = format_sessions_list(query="--all", workspace="/Users/test/proj-a")
+        assert "/resume id-1" in result
+        assert "/resume id-2" in result
+        assert "all projects" in result
+
+    def test_cwd_no_match_hint(self, tmp_path, monkeypatch):
+        """When cwd filter yields no results, hint about --all."""
+        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        projects_dir = tmp_path / "projects"
+        _make_index(projects_dir, "proj-a", [
+            _sample_entry("id-1", projectPath="/Users/test/proj-a"),
+        ], original_path="/Users/test/proj-a")
+        result = format_sessions_list(workspace="/Users/test/other")
+        assert "--all" in result
+
+    def test_cwd_search_filter(self, tmp_path, monkeypatch):
+        """cwd:xxx does substring search on projectPath, bypassing default cwd."""
+        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        projects_dir = tmp_path / "projects"
+        _make_index(projects_dir, "proj-a", [
+            _sample_entry("id-1", projectPath="/Users/test/proj-a"),
+        ], original_path="/Users/test/proj-a")
+        _make_index(projects_dir, "proj-b", [
+            _sample_entry("id-2", projectPath="/Users/test/proj-b",
+                          modified="2026-04-02T11:00:00.000Z"),
+        ], original_path="/Users/test/proj-b")
+        # cwd:proj-b should find proj-b even though workspace is proj-a
+        result = format_sessions_list(query="cwd:proj-b", workspace="/Users/test/proj-a")
+        assert "/resume id-2" in result
+        assert "/resume id-1" not in result
+
+    def test_grep_filter(self, tmp_path, monkeypatch):
+        """grep:xxx does full-text search on JSONL content."""
+        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        projects_dir = tmp_path / "projects"
+        # Create two sessions with different content
+        _make_index(projects_dir, "proj-a", [
+            _sample_entry("sess-1", projectPath="/Users/test/proj-a"),
+            _sample_entry("sess-2", projectPath="/Users/test/proj-a",
+                          modified="2026-04-02T11:00:00.000Z"),
+        ], original_path="/Users/test/proj-a")
+        _write_jsonl(projects_dir, "proj-a", "sess-1", [
+            _make_user_message("fix the pineapple bug"),
+            _make_assistant_message("done"),
+        ])
+        _write_jsonl(projects_dir, "proj-a", "sess-2", [
+            _make_user_message("update the readme"),
+            _make_assistant_message("ok"),
+        ])
+        result = format_sessions_list(query="grep:pineapple")
+        assert "/resume sess-1" in result
+        assert "/resume sess-2" not in result
+
+    def test_grep_no_match(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        projects_dir = tmp_path / "projects"
+        _make_index(projects_dir, "proj-a", [
+            _sample_entry("sess-1", projectPath="/Users/test/proj-a"),
+        ], original_path="/Users/test/proj-a")
+        _write_jsonl(projects_dir, "proj-a", "sess-1", [
+            _make_user_message("hello world"),
+        ])
+        result = format_sessions_list(query="grep:nonexistent")
+        assert "No sessions" in result
+
 
 class TestSessionsList:
     def test_no_sessions(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
-        args = Namespace(project="", output_json=False)
+        args = Namespace(query=[], output_json=False, workspace="")
         sessions_list(args)
         assert "No sessions found" in capsys.readouterr().out
 
-    def test_table_output(self, tmp_path, monkeypatch, capsys):
+    def test_formatted_output(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _make_index(projects_dir, "proj-a", [_sample_entry("id-1")])
-        args = Namespace(project="", output_json=False)
+        args = Namespace(query=[], output_json=False, workspace="")
         sessions_list(args)
         out = capsys.readouterr().out
         assert "id-1" in out
-        assert "SESSION_ID" in out
+        assert "Sessions" in out
 
     def test_json_output(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _make_index(projects_dir, "proj-a", [_sample_entry("id-1")])
-        args = Namespace(project="", output_json=True)
+        args = Namespace(query=[], output_json=True, workspace="")
         sessions_list(args)
         out = capsys.readouterr().out
         data = json.loads(out)
         assert len(data) == 1
         assert data[0]["sessionId"] == "id-1"
 
-    def test_project_filter(self, tmp_path, monkeypatch, capsys):
+    def test_query_filter(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        projects_dir = tmp_path / "projects"
+        _make_index(projects_dir, "proj-a", [
+            _sample_entry("id-1", projectPath="/Users/test/proj-a", summary="Discord fix"),
+        ], original_path="/Users/test/proj-a")
+        _make_index(projects_dir, "proj-b", [
+            _sample_entry("id-2", projectPath="/Users/test/proj-b",
+                          modified="2026-04-02T11:00:00.000Z"),
+        ], original_path="/Users/test/proj-b")
+        args = Namespace(query=["cwd:proj-a"], output_json=True, workspace="")
+        sessions_list(args)
+        data = json.loads(capsys.readouterr().out)
+        assert len(data) == 1
+        assert data[0]["sessionId"] == "id-1"
+
+    def test_workspace_filter(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _make_index(projects_dir, "proj-a", [
@@ -419,7 +670,7 @@ class TestSessionsList:
         _make_index(projects_dir, "proj-b", [
             _sample_entry("id-2", projectPath="/Users/test/proj-b"),
         ], original_path="/Users/test/proj-b")
-        args = Namespace(project="proj-a", output_json=True)
+        args = Namespace(query=[], output_json=True, workspace="/Users/test/proj-a")
         sessions_list(args)
         data = json.loads(capsys.readouterr().out)
         assert len(data) == 1
