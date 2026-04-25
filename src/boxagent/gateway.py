@@ -194,6 +194,8 @@ class Gateway:
             size=3,
             default_model=bot_cfg.model,
             default_workspace=bot_cfg.workspace,
+            storage=self._storage,
+            bot_name=name,
         )
         pool.start(_factory)
         self._pools[name] = pool
@@ -288,7 +290,6 @@ class Gateway:
             f"workspace: `{bot_cfg.workspace}`",
             f"channels: {', '.join(channels_active)}",
             f"skills: {skill_count}",
-            f"session: per-chat (pool size {pool.size})",
             f"time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}",
         ]
         if git_created:

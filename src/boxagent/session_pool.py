@@ -30,6 +30,8 @@ class SessionPool:
     size: int = DEFAULT_POOL_SIZE
     default_model: str = ""
     default_workspace: str = ""
+    storage: object = None  # Storage instance for lazy-loading saved sessions
+    bot_name: str = ""
     _factory: object = None  # Callable[[], cli_process]
     _pool: asyncio.Queue = field(default=None, repr=False)
     _chat_contexts: dict[str, ChatContext] = field(default_factory=dict, repr=False)
@@ -40,10 +42,17 @@ class SessionPool:
         self._pool = asyncio.Queue(maxsize=self.size)
 
     def _get_ctx(self, chat_id: str) -> ChatContext:
-        """Get or create context for a chat."""
+        """Get or create context for a chat.
+
+        On first access, tries to restore session_id from storage.
+        """
         ctx = self._chat_contexts.get(chat_id)
         if ctx is None:
+            saved_session_id = None
+            if self.storage and self.bot_name:
+                saved_session_id = self.storage.load_session(self.bot_name, chat_id=chat_id)
             ctx = ChatContext(
+                session_id=saved_session_id,
                 model=self.default_model,
                 workspace=self.default_workspace,
             )
