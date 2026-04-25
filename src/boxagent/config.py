@@ -31,6 +31,7 @@ class BotConfig:
     discord_bot_id: str = ""
     discord_allowed_users: list[int] = field(default_factory=list)
     discord_allowed_categories: list[int] = field(default_factory=list)
+    discord_bus_category: int = 0
     discord_dm: bool = False
     model: str = ""
     agent: str = ""
@@ -74,6 +75,15 @@ def _validate_discord_categories(bots: dict[str, BotConfig]) -> None:
                         f"'{seen[cat]}' and '{bot_name}'"
                     )
                 seen[cat] = bot_name
+
+        # bus_category must not collide with any bot's exclusive categories
+        for bot_name, cfg in members:
+            if cfg.discord_bus_category and cfg.discord_bus_category in seen:
+                raise ConfigError(
+                    f"Discord bus_category {cfg.discord_bus_category!r} in "
+                    f"'{bot_name}' collides with exclusive category of "
+                    f"'{seen[cfg.discord_bus_category]}'"
+                )
 
 
 def load_config(
@@ -333,6 +343,7 @@ def _parse_bot(
     discord_bot_id = ""
     discord_allowed_users: list[int] = []
     discord_allowed_categories: list[int] = []
+    discord_bus_category: int = 0
     discord_dm = False
     if discord:
         discord_token = discord.get("token", "")
@@ -353,6 +364,7 @@ def _parse_bot(
                 raise ConfigError(f"Bot '{name}': missing channels.discord.token or bot_id")
         discord_allowed_users = discord.get("allowed_users", [])
         discord_allowed_categories = discord.get("allowed_categories", [])
+        discord_bus_category = discord.get("bus_category", 0)
         discord_dm = discord.get("dm", False)
 
     # At least one channel must be configured
@@ -407,6 +419,7 @@ def _parse_bot(
         discord_bot_id=discord_bot_id,
         discord_allowed_users=discord_allowed_users,
         discord_allowed_categories=discord_allowed_categories,
+        discord_bus_category=discord_bus_category,
         discord_dm=discord_dm,
         model=raw.get("model", ""),
         agent=raw.get("agent", ""),

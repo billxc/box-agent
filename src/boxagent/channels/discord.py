@@ -60,6 +60,13 @@ class DiscordChannel:
         default_factory=dict, repr=False
     )
 
+    # Bus channel: shared category where multiple bots listen,
+    # routed by @bot-name prefix.
+    _bus_category: int = 0  # 0 = disabled
+    _bus_map: dict[str, Callable] = field(
+        default_factory=dict, repr=False
+    )  # bot_name (lowercase) → callback
+
     def register_route(
         self,
         on_message: Callable,
@@ -77,6 +84,33 @@ class DiscordChannel:
                     f"Discord category {cat!r} is already registered to another route"
                 )
             self._category_map[cat] = on_message
+
+    def register_bus_route(
+        self,
+        on_message: Callable,
+        bot_name: str,
+        bus_category: int,
+    ) -> None:
+        """Register a bot on the shared bus channel.
+
+        Args:
+            on_message: Async callback ``(IncomingMessage) -> None``.
+            bot_name: Bot name used as ``@bot_name`` prefix for routing.
+            bus_category: Discord guild category ID for the bus channel.
+        """
+        if self._bus_category and self._bus_category != bus_category:
+            raise ValueError(
+                f"Bus category mismatch: existing {self._bus_category}, "
+                f"new {bus_category} from '{bot_name}'"
+            )
+        self._bus_category = bus_category
+        key = bot_name.lower()
+        if key in self._bus_map:
+            raise ValueError(
+                f"Bus route for '{bot_name}' is already registered"
+            )
+        self._bus_map[key] = on_message
+        logger.info("Registered bus route: @%s (category %d)", key, bus_category)
 
     @staticmethod
     def _get_category_key(channel: object) -> CategoryKey | None:
@@ -451,24 +485,8 @@ class DiscordChannel:
             logger.warning("Failed to fetch message %d: %s", message_id, e)
             return None
 
-    async def _handle_incoming(self, message: discord.Message) -> None:
-        """Handle incoming Discord message — route by category."""
-        # Ignore messages from the bot itself
-        if message.author == self._client.user:
-            return
-
-        # Ignore system messages (member joins, boosts, pins, etc.)
-        if message.type not in (
-            discord.MessageType.default,
-            discord.MessageType.reply,
-        ):
-            return
-
-        # Route by category
-        callback = self._resolve_callback(message.channel)
-        if callback is None:
-            return
-
+    async def _collect_attachments(self, message: discord.Message) -> list:
+        """Download message attachments to temp files."""
         attachments = []
         for att in message.attachments:
             try:
@@ -484,7 +502,58 @@ class DiscordChannel:
                 ))
             except Exception as e:
                 logger.warning("Failed to download attachment: %s", e)
+        return attachments
 
+    async def _handle_incoming(self, message: discord.Message) -> None:
+        """Handle incoming Discord message — route by category."""
+        # Ignore messages from the bot itself (except on bus channel)
+        is_self = message.author == self._client.user
+        category_id = getattr(message.channel, "category_id", None)
+        is_bus = self._bus_category and category_id == self._bus_category
+
+        if is_self and not is_bus:
+            return
+
+        # Ignore system messages (member joins, boosts, pins, etc.)
+        if message.type not in (
+            discord.MessageType.default,
+            discord.MessageType.reply,
+        ):
+            return
+
+        # Bus channel: route by @bot-name prefix
+        if is_bus:
+            text = (message.content or "").strip()
+            if not text.startswith("@"):
+                return  # no prefix → ignore
+            first_space = text.find(" ")
+            if first_space < 0:
+                return  # just "@name" with no body
+            target = text[1:first_space].lower()
+            callback = self._bus_map.get(target)
+            if callback is None:
+                return  # unknown bot name
+            body = text[first_space + 1:].strip()
+            if not body:
+                return
+
+            attachments = await self._collect_attachments(message)
+            incoming = IncomingMessage(
+                channel="discord",
+                chat_id=str(message.channel.id),
+                user_id=str(message.author.id),
+                text=body,
+                attachments=attachments,
+            )
+            await callback(incoming)
+            return
+
+        # Normal routing by category
+        callback = self._resolve_callback(message.channel)
+        if callback is None:
+            return
+
+        attachments = await self._collect_attachments(message)
         incoming = IncomingMessage(
             channel="discord",
             chat_id=str(message.channel.id),

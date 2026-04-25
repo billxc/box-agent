@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from boxagent.agent.claude_process import ClaudeProcess
+from boxagent.channels.base import IncomingMessage
 from boxagent.channels.telegram import TelegramChannel
 from boxagent.config import AppConfig, BotConfig, node_matches
 from boxagent.paths import default_config_dir, default_local_dir, default_workspace_dir
@@ -164,6 +165,46 @@ class Gateway:
             return None
         return self._discord_channels.get(key)
 
+    async def send_to_bot(
+        self,
+        target_bot: str,
+        text: str,
+        from_bot: str = "",
+        chat_id: str = "",
+    ) -> bool:
+        """Route a message internally to another bot's Router.
+
+        Returns True if the message was delivered, False if target not found.
+        """
+        router = self._routers.get(target_bot)
+        if router is None:
+            logger.warning("send_to_bot: target '%s' not found", target_bot)
+            return False
+
+        # Use the target bot's first allowed user as fallback chat_id
+        if not chat_id:
+            target_cfg = self.config.bots.get(target_bot)
+            if target_cfg and target_cfg.allowed_users:
+                chat_id = str(target_cfg.allowed_users[0])
+
+        # Determine a bus channel_id for replies (find a text channel in
+        # the bus category so the target bot can reply there).
+        dc_channel = self._get_bot_discord_channel(target_bot)
+        reply_chat_id = chat_id
+
+        incoming = IncomingMessage(
+            channel="discord",
+            chat_id=reply_chat_id,
+            user_id=from_bot or "bus",
+            text=text,
+        )
+        logger.info(
+            "Bus internal route: %s → @%s: %s",
+            from_bot or "(unknown)", target_bot, text[:80],
+        )
+        await router.handle_message(incoming)
+        return True
+
     async def start(self) -> None:
         self._start_time = time.time()
         self._storage = Storage(local_dir=self.local_dir)
@@ -295,6 +336,7 @@ class Gateway:
             extra_skill_dirs=bot_cfg.extra_skill_dirs,
             ai_backend=bot_cfg.ai_backend,
             on_backend_switched=self._on_backend_switched,
+            on_bus_send=self._on_bus_send if bot_cfg.discord_bus_category else None,
         )
 
         # Wire Telegram channel to router
@@ -312,6 +354,12 @@ class Gateway:
                 categories.append(DM_CATEGORY)
             dc_channel.register_route(router.handle_message, categories)
             router._channels["discord"] = dc_channel
+
+            # Register on shared bus channel if configured
+            if bot_cfg.discord_bus_category:
+                dc_channel.register_bus_route(
+                    router.handle_message, name, bot_cfg.discord_bus_category
+                )
 
         self._routers[name] = router
 
@@ -454,6 +502,12 @@ class Gateway:
         if bot_name in self._watchdogs:
             self._watchdogs[bot_name].cli_process = new_cli
         logger.info("Bot '%s' backend switched to %s (refs synced)", bot_name, new_backend)
+
+    async def _on_bus_send(
+        self, from_bot: str, target_bot: str, text: str, chat_id: str
+    ) -> None:
+        """Called by Router when AI output contains @bot-name — forward internally."""
+        await self.send_to_bot(target_bot, text, from_bot=from_bot, chat_id=chat_id)
 
     @property
     def _sock_path(self) -> Path:
