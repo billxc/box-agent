@@ -39,6 +39,9 @@ class DiscordChannel:
     _stream_last_sent: dict[str, str] = field(
         default_factory=dict, repr=False
     )
+    _pending_interactions: dict[str, discord.Interaction] = field(
+        default_factory=dict, repr=False
+    )
 
     async def start(self) -> None:
         """Start Discord bot connection."""
@@ -71,11 +74,13 @@ class DiscordChannel:
         def _make_slash_callback(name: str):
             async def _slash(interaction: discord.Interaction, args: str = ""):
                 await interaction.response.defer()
+                chat_id = str(interaction.channel_id)
+                self._pending_interactions[chat_id] = interaction
                 if self.on_message:
                     text = f"/{name} {args}".strip() if args else f"/{name}"
                     incoming = IncomingMessage(
                         channel="discord",
-                        chat_id=str(interaction.channel_id),
+                        chat_id=chat_id,
                         user_id=str(interaction.user.id),
                         text=text,
                     )
@@ -136,15 +141,32 @@ class DiscordChannel:
             last_msg_id = str(result.id)
         return last_msg_id
 
+    async def _consume_interaction(self, chat_id: str) -> discord.Interaction | None:
+        """Pop and return a pending slash-command interaction for *chat_id*."""
+        return self._pending_interactions.pop(chat_id, None)
+
     async def send_text(
         self, chat_id: str, text: str, parse_mode: str = "Markdown"
     ) -> str:
-        """Send text message, splitting if too long."""
-        channel = await self._resolve_channel(chat_id)
+        """Send text message, splitting if too long.
 
+        If there is a pending slash-command interaction for this chat, the
+        first chunk is delivered via ``interaction.edit_original_response``
+        so that Discord's "thinking..." placeholder is replaced inline.
+        """
+        interaction = await self._consume_interaction(chat_id)
         chunks = split_message(text, DISCORD_LIMIT)
         last_msg_id = ""
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks):
+            if i == 0 and interaction:
+                try:
+                    msg = await interaction.edit_original_response(content=chunk)
+                    last_msg_id = str(msg.id)
+                    continue
+                except Exception as e:
+                    logger.warning("Failed to edit interaction response: %s", e)
+                    # Fall through to normal send
+            channel = await self._resolve_channel(chat_id)
             result = await channel.send(chunk)
             last_msg_id = str(result.id)
         return last_msg_id
@@ -169,10 +191,12 @@ class DiscordChannel:
 
             async def _callback(interaction: discord.Interaction, d=data):
                 await interaction.response.defer()
+                chat_id = str(interaction.channel_id)
+                self._pending_interactions[chat_id] = interaction
                 if self.on_message:
                     incoming = IncomingMessage(
                         channel="discord",
-                        chat_id=str(interaction.channel_id),
+                        chat_id=chat_id,
                         user_id=str(interaction.user.id),
                         text=d,
                     )
@@ -185,9 +209,25 @@ class DiscordChannel:
         return str(result.id)
 
     async def stream_start(self, chat_id: str) -> StreamHandle:
-        """Send initial placeholder message for streaming."""
-        channel = await self._resolve_channel(chat_id)
+        """Send initial placeholder message for streaming.
 
+        Reuses a pending slash-command interaction when available so the
+        "thinking..." indicator becomes the streaming message.
+        """
+        interaction = await self._consume_interaction(chat_id)
+        if interaction:
+            try:
+                msg = await interaction.edit_original_response(content="...")
+                handle = StreamHandle(
+                    message_id=str(msg.id), chat_id=chat_id
+                )
+                self._stream_buffers[handle.message_id] = ""
+                self._stream_last_sent[handle.message_id] = ""
+                return handle
+            except Exception as e:
+                logger.warning("Failed to edit interaction for stream: %s", e)
+
+        channel = await self._resolve_channel(chat_id)
         result = await channel.send("...")
         handle = StreamHandle(
             message_id=str(result.id), chat_id=chat_id
@@ -237,7 +277,10 @@ class DiscordChannel:
         return mid
 
     async def show_typing(self, chat_id: str) -> None:
-        """Send typing indicator."""
+        """Send typing indicator (skipped when a slash-command interaction
+        is pending, since Discord already shows 'thinking...')."""
+        if chat_id in self._pending_interactions:
+            return
         channel = await self._resolve_channel(chat_id)
         await channel.typing()
 
