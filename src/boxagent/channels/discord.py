@@ -409,6 +409,13 @@ class DiscordChannel:
         if message.author == self._client.user:
             return
 
+        # Ignore system messages (member joins, boosts, pins, etc.)
+        if message.type not in (
+            discord.MessageType.default,
+            discord.MessageType.reply,
+        ):
+            return
+
         # Filter by allowed categories (if configured)
         if self.allowed_categories:
             parent_id = getattr(message.channel, "category_id", None)
