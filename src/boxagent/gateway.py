@@ -288,7 +288,7 @@ class Gateway:
             f"workspace: `{bot_cfg.workspace}`",
             f"channels: {', '.join(channels_active)}",
             f"skills: {skill_count}",
-            f"session: `{session_id or 'new'}`",
+            f"session: per-chat (pool size {pool.size})",
             f"time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}",
         ]
         if git_created:

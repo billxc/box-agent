@@ -53,15 +53,23 @@ async def cmd_status(
     ai_backend: str = "",
     workspace: str = "",
     node_id: str = "",
+    pool: object = None,
+    chat_id: str = "",
 ) -> None:
     uptime = int(time.time() - start_time)
     hours, remainder = divmod(uptime, 3600)
     minutes, seconds = divmod(remainder, 60)
     uptime_str = f"{hours}h {minutes}m {seconds}s"
 
-    state = getattr(cli_process, "state", "unknown")
-    session = getattr(cli_process, "session_id", None) or "none"
-    model = getattr(cli_process, "model", "") or "default"
+    if pool and chat_id:
+        session = pool.get_session_id(chat_id) or "none"
+        model = pool.get_model(chat_id) or "default"
+        active = pool.get_active(chat_id)
+        state = getattr(active, "state", "idle") if active else "idle"
+    else:
+        state = getattr(cli_process, "state", "unknown")
+        session = getattr(cli_process, "session_id", None) or "none"
+        model = getattr(cli_process, "model", "") or "default"
     yolo = getattr(cli_process, "yolo", False)
     tool_display = getattr(channel, "tool_calls_display", "")
 

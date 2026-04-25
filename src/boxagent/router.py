@@ -97,11 +97,15 @@ class Router:
             await self._cmd_model(msg)
         # --- Auxiliary commands (delegated) ---
         elif command == "/status":
+            status_workspace = self.workspace
+            if self.pool:
+                status_workspace = self.pool.get_workspace(msg.chat_id) or self.workspace
             await cmd_status(
                 msg, channel=ch, bot_name=self.display_name or self.bot_name,
                 cli_process=self.cli_process, start_time=self.start_time,
                 display_name=self.display_name, ai_backend=self.ai_backend,
-                workspace=self.workspace, node_id=self.node_id,
+                workspace=status_workspace, node_id=self.node_id,
+                pool=self.pool, chat_id=msg.chat_id,
             )
         elif command == "/start":
             await cmd_start(msg, channel=ch, bot_name=self.display_name or self.bot_name)
