@@ -206,6 +206,41 @@ typing loop 每 4 秒发送一次 `ChatAction.TYPING`。这套生命周期在 `t
 - 输出是 JSONL，关键事件类型：`thread.started`、`item.started`（tool 开始）、`item.completed`（文本或 tool 完成）、`turn.completed`。
 - `session_id` 来自 `thread.started` 事件中的 `thread_id`。
 
+## `/sessions` 命令 — 统一会话浏览
+
+`/sessions` 合并三个数据源，提供统一的会话浏览和搜索：
+
+### 数据源
+
+1. **Claude CLI sessions** — `~/.claude/projects/*/sessions-index.json` + 未索引的 `*.jsonl`
+2. **BoxAgent session history** — `~/.boxagent/local/session_history.yaml`（含 backend、model、bot 等元数据）
+3. **Codex rollout sessions** — `~/.codex/sessions/` 下的 rollout JSONL 文件
+
+三者按 `sessionId` 去重合并，BoxAgent history 的元数据（backend/model/bot/preview）会覆盖到 Claude 条目上。
+
+### Token 解析
+
+`/sessions` 后的参数按优先级分类：
+
+| 优先级 | 模式 | 示例 | 含义 |
+|--------|------|------|------|
+| 1 | `pN` | `p2` | 翻页 |
+| 2 | `Nd` | `3d`, `30d` | 最近 N 天 |
+| 3 | `backend:X` | `backend:codex-cli` | 按 backend 过滤 |
+| 4 | `bot:X` | `bot:claw-mac` | 按 bot 过滤 |
+| 5 | 4+ 位 hex 且匹配 session ID 前缀 | `aa3f` | 直接定位 session |
+| 6 | 其余 | `chromium`, `discord fix` | 搜索关键词（多词 AND，多字段 OR） |
+
+### 三端入口
+
+- **Chat**（Telegram/Discord）：`router_commands.cmd_sessions()` → `format_sessions_list(storage=self.storage)`
+- **MCP**：`mcp_server.sessions_list()` → `format_sessions_list(storage=Storage(LOCAL_DIR))`
+- **CLI**：`sessions_cli.sessions_list(args)` → `_load_all_unified_sessions(storage=...)`
+
+### 与 `/resume` 的关系
+
+`/sessions` 输出中每条会话附带 `/resume <session_id>` 命令，用户复制粘贴即可恢复。`/resume` 保持独立，负责实际的会话恢复逻辑。
+
 ## `/resume` 命令与 Codex 软恢复
 
 `/resume` 命令有两条完全不同的分支：

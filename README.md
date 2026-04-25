@@ -182,6 +182,7 @@ The bot connects to Telegram and starts listening. Send it a message from your a
 | `/model` | Show or switch model (e.g. `/model sonnet`) |
 | `/cancel` | Cancel the current running task |
 | `/resume` | List and resume a previous session |
+| `/sessions` | Browse all sessions with search and filters (e.g. `/sessions chromium 7d backend:codex-cli p2`) |
 | `/exec` | Execute a shell command (e.g. `/exec ls -la`, `/exec -t 60 make build`) |
 | `/verbose` | Cycle tool call display (silent/summary/detailed) |
 | `/sync_skills` | Re-sync linked skill directories |
@@ -300,6 +301,7 @@ Interactive Telegram turns, and append-mode scheduled tasks that run through a T
 | `send_video` | Send a video (mp4, etc.) |
 | `send_audio` | Send an audio file (mp3, ogg, etc.) |
 | `send_animation` | Send a GIF animation |
+| `sessions_list` | Browse unified sessions with search and filters |
 
 These tools are injected automatically when a chat-backed turn is running. Isolate schedules do not currently receive Telegram media MCP injection.
 

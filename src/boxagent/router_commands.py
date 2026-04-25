@@ -140,7 +140,7 @@ async def cmd_help(
         "/sync\\_skills — Re-sync linked skill directories\n"
         "/trust\\_workspace — Trust current workspace in Claude\n"
         "/review\\_loop — Multi-agent adversarial review loop\n"
-        "/sessions — List Claude CLI sessions\n"
+        "/sessions — Browse sessions (e.g. /sessions chromium 7d backend:codex-cli)\n"
         "/schedule — Manage schedules (list/logs/show/run)\n"
         "/version — Show version and commit hash\n"
         "/help — Show this message\n\n"
@@ -429,12 +429,14 @@ async def cmd_sessions(
     msg: IncomingMessage,
     *,
     channel: object,
+    storage: object = None,
+    workspace: str = "",
 ) -> None:
-    """List Claude CLI sessions from ~/.claude/projects/."""
+    """List unified sessions (Claude CLI + BoxAgent history + Codex)."""
     from boxagent.sessions_cli import format_sessions_list
 
     arg = msg.text.strip().partition(" ")[2].strip()
-    text = format_sessions_list(project_filter=arg)
+    text = format_sessions_list(query=arg, storage=storage, workspace=workspace)
     await channel.send_text(msg.chat_id, text)
 
 

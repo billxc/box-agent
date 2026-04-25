@@ -131,7 +131,7 @@ class Router:
         elif command == "/backend":
             await self._cmd_backend(msg)
         elif command == "/sessions":
-            await cmd_sessions(msg, channel=ch)
+            await cmd_sessions(msg, channel=ch, storage=self.storage, workspace=self.workspace)
         elif command == "/schedule":
             await cmd_schedule(
                 msg, channel=ch, config_dir=self.config_dir,

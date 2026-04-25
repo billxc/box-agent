@@ -2,8 +2,10 @@
 
 import json
 import os
+import re
 import sys
-from datetime import datetime, timezone
+import time as _time
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from boxagent.utils import safe_print as _safe_print
@@ -29,8 +31,12 @@ def build_sessions_parser(subparsers) -> None:
     ls.set_defaults(func=sessions_list)
 
 
-def _load_all_sessions() -> list[dict]:
-    """Collect sessions from index files and unindexed .jsonl files."""
+# ---------------------------------------------------------------------------
+# Data loading — Claude CLI sessions
+# ---------------------------------------------------------------------------
+
+def _load_claude_sessions() -> list[dict]:
+    """Collect sessions from Claude CLI index files and unindexed .jsonl files."""
     projects_dir = CLAUDE_DIR / "projects"
     if not projects_dir.is_dir():
         return []
@@ -67,8 +73,6 @@ def _load_all_sessions() -> list[dict]:
         if entry:
             entries.append(entry)
 
-    # Sort by modified descending
-    entries.sort(key=lambda e: e.get("modified", ""), reverse=True)
     return entries
 
 
@@ -131,6 +135,278 @@ def _parse_jsonl_metadata(jsonl_file: Path) -> dict | None:
     }
 
 
+# ---------------------------------------------------------------------------
+# Unified session loading — merge all sources
+# ---------------------------------------------------------------------------
+
+def _load_all_unified_sessions(
+    storage: object | None = None,
+    workspace: str = "",
+) -> list[dict]:
+    """Merge Claude CLI sessions, BoxAgent session_history, and Codex sessions.
+
+    Returns a list of dicts with a common schema, sorted by modified desc.
+    """
+    # 1. Load Claude CLI sessions
+    claude_entries = _load_claude_sessions()
+
+    # Build unified entries keyed by session_id
+    unified: dict[str, dict] = {}
+
+    for e in claude_entries:
+        sid = e.get("sessionId", "")
+        if not sid:
+            continue
+        modified_ts = _parse_iso_to_ts(e.get("modified", ""))
+        unified[sid] = {
+            "sessionId": sid,
+            "project": Path(e.get("projectPath", "")).name if e.get("projectPath") else "",
+            "projectPath": e.get("projectPath", ""),
+            "summary": e.get("summary", ""),
+            "firstPrompt": e.get("firstPrompt", ""),
+            "preview": "",
+            "messageCount": e.get("messageCount", 0),
+            "modified_ts": modified_ts,
+            "backend": "",
+            "model": "",
+            "bot": "",
+        }
+
+    # 2. Overlay BoxAgent session_history (if storage available)
+    if storage is not None:
+        try:
+            box_entries = storage.list_session_history()
+        except Exception:
+            box_entries = []
+        for e in box_entries:
+            sid = str(e.get("session_id", ""))
+            if not sid:
+                continue
+            if sid in unified:
+                # Overlay metadata
+                entry = unified[sid]
+                if e.get("backend"):
+                    entry["backend"] = str(e["backend"])
+                if e.get("model"):
+                    entry["model"] = str(e["model"])
+                if e.get("bot"):
+                    entry["bot"] = str(e["bot"])
+                if e.get("preview"):
+                    entry["preview"] = str(e["preview"])
+                if e.get("workspace") and not entry["projectPath"]:
+                    ws = str(e["workspace"])
+                    entry["projectPath"] = ws
+                    entry["project"] = Path(ws).name
+                # Update modified_ts if saved_at is newer
+                saved_at = e.get("saved_at")
+                if isinstance(saved_at, int | float) and saved_at > (entry.get("modified_ts") or 0):
+                    entry["modified_ts"] = int(saved_at)
+            else:
+                # New entry from BoxAgent only
+                saved_at = e.get("saved_at")
+                ws = str(e.get("workspace", "")) if e.get("workspace") else ""
+                unified[sid] = {
+                    "sessionId": sid,
+                    "project": Path(ws).name if ws else "",
+                    "projectPath": ws,
+                    "summary": "",
+                    "firstPrompt": "",
+                    "preview": str(e.get("preview", "")),
+                    "messageCount": 0,
+                    "modified_ts": int(saved_at) if isinstance(saved_at, int | float) else 0,
+                    "backend": str(e.get("backend", "")),
+                    "model": str(e.get("model", "")),
+                    "bot": str(e.get("bot", "")),
+                }
+
+    # 3. Overlay Codex sessions (if storage available)
+    if storage is not None:
+        try:
+            codex_entries = storage.list_codex_session_history(workspace or "", limit=None)
+        except Exception:
+            codex_entries = []
+        for e in codex_entries:
+            sid = str(e.get("session_id", ""))
+            if not sid:
+                continue
+            if sid in unified:
+                entry = unified[sid]
+                if not entry["backend"] and e.get("backend"):
+                    entry["backend"] = str(e["backend"])
+                if not entry["preview"] and e.get("preview"):
+                    entry["preview"] = str(e["preview"])
+                cwd = str(e.get("cwd", "")) if e.get("cwd") else ""
+                if cwd and not entry["projectPath"]:
+                    entry["projectPath"] = cwd
+                    entry["project"] = Path(cwd).name
+            else:
+                saved_at = e.get("saved_at")
+                cwd = str(e.get("cwd", "")) if e.get("cwd") else ""
+                unified[sid] = {
+                    "sessionId": sid,
+                    "project": Path(cwd).name if cwd else "",
+                    "projectPath": cwd,
+                    "summary": "",
+                    "firstPrompt": "",
+                    "preview": str(e.get("preview", "")),
+                    "messageCount": 0,
+                    "modified_ts": int(saved_at) if isinstance(saved_at, int | float) else 0,
+                    "backend": str(e.get("backend", "")),
+                    "model": "",
+                    "bot": "",
+                }
+
+    # Sort by modified_ts desc
+    result = sorted(unified.values(), key=lambda e: e.get("modified_ts") or 0, reverse=True)
+    return result
+
+
+def _parse_iso_to_ts(iso_str: str) -> int:
+    """Parse an ISO 8601 string to a Unix timestamp. Returns 0 on failure."""
+    if not iso_str:
+        return 0
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        return int(dt.timestamp())
+    except (ValueError, TypeError):
+        return 0
+
+
+# ---------------------------------------------------------------------------
+# Token parsing
+# ---------------------------------------------------------------------------
+
+_RE_PAGE = re.compile(r"^p(\d+)$", re.IGNORECASE)
+_RE_DAYS = re.compile(r"^(\d+)d$", re.IGNORECASE)
+_RE_BACKEND = re.compile(r"^backend:(.+)$", re.IGNORECASE)
+_RE_BOT = re.compile(r"^bot:(.+)$", re.IGNORECASE)
+_RE_HEX = re.compile(r"^[0-9a-f]{4,}$", re.IGNORECASE)
+
+
+def parse_session_tokens(raw: str) -> dict:
+    """Parse the argument string after ``/sessions``.
+
+    Returns a dict with keys:
+        page: int (1-based)
+        days: int | None (time filter in days)
+        backend: str (empty if not filtered)
+        bot: str (empty if not filtered)
+        id_prefix: str (empty if not a hex prefix lookup)
+        query: str (remaining search words joined)
+    """
+    tokens = raw.split()
+    page = 1
+    days: int | None = None
+    backend = ""
+    bot = ""
+    id_prefix = ""
+    query_parts: list[str] = []
+
+    page_set = False
+    days_set = False
+
+    for token in tokens:
+        m = _RE_PAGE.match(token)
+        if m and not page_set:
+            page = int(m.group(1))
+            page_set = True
+            continue
+
+        m = _RE_DAYS.match(token)
+        if m and not days_set:
+            days = int(m.group(1))
+            days_set = True
+            continue
+
+        m = _RE_BACKEND.match(token)
+        if m and not backend:
+            backend = m.group(1)
+            continue
+
+        m = _RE_BOT.match(token)
+        if m and not bot:
+            bot = m.group(1)
+            continue
+
+        # Hex prefix is checked later against actual sessions
+        # For now just collect as query part
+        query_parts.append(token)
+
+    query = " ".join(query_parts)
+    return {
+        "page": page,
+        "days": days,
+        "backend": backend,
+        "bot": bot,
+        "id_prefix": id_prefix,
+        "query": query,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Filtering and search
+# ---------------------------------------------------------------------------
+
+def _filter_sessions(
+    entries: list[dict],
+    *,
+    query: str = "",
+    days: int | None = None,
+    backend: str = "",
+    bot: str = "",
+) -> list[dict]:
+    """Apply filters to the unified session list."""
+    result = entries
+
+    # Time filter
+    if days is not None and days > 0:
+        cutoff = _time.time() - days * 86400
+        result = [e for e in result if (e.get("modified_ts") or 0) >= cutoff]
+
+    # Backend filter
+    if backend:
+        bl = backend.lower()
+        result = [e for e in result if bl in (e.get("backend") or "").lower()]
+
+    # Bot filter
+    if bot:
+        bl = bot.lower()
+        result = [e for e in result if bl in (e.get("bot") or "").lower()]
+
+    # Text search: multi-word AND, multi-field OR
+    if query:
+        words = query.lower().split()
+        result = [e for e in result if _matches_all_words(e, words)]
+
+    return result
+
+
+def _matches_all_words(entry: dict, words: list[str]) -> bool:
+    """Return True if every word matches at least one searchable field."""
+    fields = [
+        (entry.get("summary") or "").lower(),
+        (entry.get("firstPrompt") or "").lower(),
+        (entry.get("preview") or "").lower(),
+        (entry.get("project") or "").lower(),
+        (entry.get("backend") or "").lower(),
+        (entry.get("model") or "").lower(),
+    ]
+    for word in words:
+        if not any(word in f for f in fields):
+            return False
+    return True
+
+
+def _find_by_id_prefix(entries: list[dict], prefix: str) -> list[dict]:
+    """Find sessions whose sessionId starts with the given hex prefix."""
+    pl = prefix.lower()
+    return [e for e in entries if e.get("sessionId", "").lower().startswith(pl)]
+
+
+# ---------------------------------------------------------------------------
+# Output formatting
+# ---------------------------------------------------------------------------
+
 def _truncate(text: str, limit: int) -> str:
     s = " ".join(str(text).split())
     if len(s) > limit:
@@ -138,52 +414,230 @@ def _truncate(text: str, limit: int) -> str:
     return s
 
 
-def format_sessions_list(project_filter: str = "", limit: int = 20) -> str:
-    """Return a formatted string listing Claude CLI sessions."""
-    entries = _load_all_sessions()
+def _relative_time(ts: int) -> str:
+    """Format a Unix timestamp as a relative time string."""
+    if not ts:
+        return ""
+    diff = int(_time.time()) - ts
+    if diff < 0:
+        diff = 0
+    if diff < 60:
+        return "just now"
+    if diff < 3600:
+        m = diff // 60
+        return f"{m}m ago"
+    if diff < 86400:
+        h = diff // 3600
+        return f"{h}h ago"
+    d = diff // 86400
+    return f"{d}d ago"
 
-    if project_filter:
-        entries = [
-            e for e in entries
-            if project_filter.lower() in e.get("projectPath", "").lower()
-        ]
 
-    if not entries:
+def format_sessions_list(
+    query: str = "",
+    page: int = 1,
+    page_size: int = 5,
+    storage: object | None = None,
+    workspace: str = "",
+) -> str:
+    """Return a formatted string listing unified sessions.
+
+    This is the main entry point for the ``/sessions`` bot command.
+    Parses *query* for special tokens (pN, Nd, backend:X, bot:X, hex prefix).
+    """
+    parsed = parse_session_tokens(query)
+    if parsed["page"] > 1:
+        page = parsed["page"]
+
+    entries = _load_all_unified_sessions(storage=storage, workspace=workspace)
+
+    # Check for hex prefix match first
+    remaining_query = parsed["query"]
+    if remaining_query and _RE_HEX.match(remaining_query) and " " not in remaining_query:
+        matches = _find_by_id_prefix(entries, remaining_query)
+        if matches:
+            return _format_id_match(matches)
+        # No match — treat as regular search
+
+    # Apply filters
+    filtered = _filter_sessions(
+        entries,
+        query=remaining_query,
+        days=parsed["days"],
+        backend=parsed["backend"],
+        bot=parsed["bot"],
+    )
+
+    total = len(filtered)
+    if total == 0:
+        # Build a descriptive "no results" message
+        parts = []
+        if remaining_query:
+            parts.append(f'"{remaining_query}"')
+        if parsed["days"]:
+            parts.append(f"in {parsed['days']}d")
+        if parsed["backend"]:
+            parts.append(f"backend:{parsed['backend']}")
+        if parsed["bot"]:
+            parts.append(f"bot:{parsed['bot']}")
+        if parts:
+            return f"No sessions matching {' '.join(parts)}."
         return "No sessions found."
 
-    lines = []
-    for idx, e in enumerate(entries[:limit], 1):
-        sid = e.get("sessionId", "?")[:8]
-        msgs = e.get("messageCount", "")
-        modified = e.get("modified", "")
-        time_str = ""
-        if modified:
-            try:
-                dt = datetime.fromisoformat(modified.replace("Z", "+00:00"))
-                time_str = dt.strftime("%m-%d %H:%M")
-            except (ValueError, TypeError):
-                time_str = modified[:10]
-        project_path = e.get("projectPath", "")
-        project = Path(project_path).name if project_path else ""
+    total_pages = (total + page_size - 1) // page_size
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * page_size
+    page_entries = filtered[start : start + page_size]
+
+    # Header
+    header_parts = []
+    if remaining_query:
+        header_parts.append(f'"{remaining_query}"')
+    if parsed["days"]:
+        header_parts.append(f"in {parsed['days']}d")
+    if parsed["backend"]:
+        header_parts.append(f"backend:{parsed['backend']}")
+    if parsed["bot"]:
+        header_parts.append(f"bot:{parsed['bot']}")
+
+    if header_parts:
+        header = f"Sessions matching {' '.join(header_parts)} ({start + 1}-{start + len(page_entries)} / {total})"
+    else:
+        header = f"Sessions ({start + 1}-{start + len(page_entries)} / {total})"
+
+    lines = [f"**{header}**\n"]
+
+    for idx, e in enumerate(page_entries, start + 1):
+        sid = e.get("sessionId", "?")
+        project = e.get("project", "")
+        modified_ts = e.get("modified_ts") or 0
+        msgs = e.get("messageCount") or 0
+        backend_str = e.get("backend") or ""
+        rel_time = _relative_time(modified_ts)
+
+        # Line 1: metadata
+        meta_parts = []
+        if project:
+            meta_parts.append(project)
+        if rel_time:
+            meta_parts.append(rel_time)
+        if msgs:
+            meta_parts.append(f"{msgs} msgs")
+        if backend_str:
+            meta_parts.append(backend_str)
+        lines.append(f"{idx}. {' · '.join(meta_parts)}")
+
+        # Line 2: summary/preview
         summary = _truncate(
-            e.get("summary", "") or e.get("firstPrompt", ""), 60,
+            e.get("summary", "") or e.get("firstPrompt", "") or e.get("preview", ""),
+            70,
         )
-        line = f"{idx}. `{sid}` {msgs}msg {time_str} **{project}**"
         if summary:
-            line += f"\n    {summary}"
-        lines.append(line)
+            lines.append(f"   {summary}")
+
+        # Line 3: resume command
+        lines.append(f"   `/resume {sid}`")
+        lines.append("")  # blank line
+
+    # Navigation hint
+    base_args = []
+    if remaining_query:
+        base_args.append(remaining_query)
+    if parsed["days"]:
+        base_args.append(f"{parsed['days']}d")
+    if parsed["backend"]:
+        base_args.append(f"backend:{parsed['backend']}")
+    if parsed["bot"]:
+        base_args.append(f"bot:{parsed['bot']}")
+    base = " ".join(base_args)
+
+    hints = []
+    if page > 1:
+        prev_cmd = f"/sessions {base} p{page - 1}".strip()
+        hints.append(f"`{prev_cmd}` <-")
+    if page < total_pages:
+        next_cmd = f"/sessions {base} p{page + 1}".strip()
+        hints.append(f"`{next_cmd}` ->")
+    if hints:
+        lines.append(" | ".join(hints))
+
     return "\n".join(lines)
 
 
+def _format_id_match(matches: list[dict]) -> str:
+    """Format output for session ID prefix matches."""
+    lines = []
+    for e in matches:
+        sid = e.get("sessionId", "?")
+        project = e.get("project", "")
+        modified_ts = e.get("modified_ts") or 0
+        msgs = e.get("messageCount") or 0
+        backend_str = e.get("backend") or ""
+        rel_time = _relative_time(modified_ts)
+
+        meta_parts = []
+        if project:
+            meta_parts.append(project)
+        if rel_time:
+            meta_parts.append(rel_time)
+        if msgs:
+            meta_parts.append(f"{msgs} msgs")
+        if backend_str:
+            meta_parts.append(backend_str)
+        lines.append(f"{' · '.join(meta_parts)}")
+
+        summary = _truncate(
+            e.get("summary", "") or e.get("firstPrompt", "") or e.get("preview", ""),
+            70,
+        )
+        if summary:
+            lines.append(f"{summary}")
+        lines.append(f"`/resume {sid}`")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Legacy: _load_all_sessions (used by CLI table output)
+# ---------------------------------------------------------------------------
+
+def _load_all_sessions() -> list[dict]:
+    """Collect sessions from index files and unindexed .jsonl files.
+
+    Legacy function kept for the CLI ``sessions list`` subcommand.
+    """
+    entries = _load_claude_sessions()
+    entries.sort(key=lambda e: e.get("modified", ""), reverse=True)
+    return entries
+
+
+# ---------------------------------------------------------------------------
+# CLI subcommand handler
+# ---------------------------------------------------------------------------
+
 def sessions_list(args) -> None:
-    """List all Claude CLI sessions."""
-    entries = _load_all_sessions()
+    """List all sessions (unified: Claude CLI + BoxAgent history + Codex)."""
+    from boxagent.config import load_config
+
+    # Try to construct Storage for unified loading
+    storage = None
+    try:
+        cfg = load_config()
+        local_dir = cfg.get("local_dir", "")
+        if local_dir:
+            from boxagent.storage import Storage
+            storage = Storage(local_dir)
+    except Exception:
+        pass
+
+    entries = _load_all_unified_sessions(storage=storage)
 
     project_filter = getattr(args, "project", "")
     if project_filter:
         entries = [
             e for e in entries
-            if project_filter in e.get("projectPath", "")
+            if project_filter.lower() in (e.get("projectPath") or "").lower()
+            or project_filter.lower() in (e.get("project") or "").lower()
         ]
 
     if not entries:
@@ -196,13 +650,15 @@ def sessions_list(args) -> None:
 
     # Table output
     print(
-        f"{'SESSION_ID':<38} {'MSGS':>4}  {'MODIFIED':<20} {'PROJECT':<30} {'SUMMARY'}"
+        f"{'SESSION_ID':<38} {'MSGS':>4}  {'MODIFIED':<20} {'PROJECT':<20} {'BACKEND':<12} {'SUMMARY'}"
     )
-    print("-" * 120)
+    print("-" * 130)
     for e in entries:
         sid = e.get("sessionId", "?")[:36]
-        msgs = str(e.get("messageCount", ""))
-        modified = e.get("modified", "")[:19]
-        project = _truncate(e.get("projectPath", ""), 28)
-        summary = _truncate(e.get("summary", e.get("firstPrompt", "")), 40)
-        print(f"{sid:<38} {msgs:>4}  {modified:<20} {project:<30} {summary}")
+        msgs = str(e.get("messageCount") or "")
+        ts = e.get("modified_ts") or 0
+        modified = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M") if ts else ""
+        project = _truncate(e.get("project") or e.get("projectPath", ""), 18)
+        backend = _truncate(e.get("backend", ""), 10)
+        summary = _truncate(e.get("summary") or e.get("firstPrompt") or e.get("preview", ""), 40)
+        print(f"{sid:<38} {msgs:>4}  {modified:<20} {project:<20} {backend:<12} {summary}")

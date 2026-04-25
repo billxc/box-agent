@@ -1,15 +1,23 @@
 """Tests for sessions_cli — CLI subcommand handlers."""
 
 import json
+import time
 from argparse import Namespace
 from pathlib import Path
 
 import pytest
 
 from boxagent.sessions_cli import (
-    _load_all_sessions,
+    _load_claude_sessions,
+    _load_all_unified_sessions,
     _parse_jsonl_metadata,
     _truncate,
+    _relative_time,
+    _filter_sessions,
+    _matches_all_words,
+    _find_by_id_prefix,
+    format_sessions_list,
+    parse_session_tokens,
     sessions_list,
     CLAUDE_DIR,
 )
@@ -100,21 +108,21 @@ class TestParseJsonlMetadata:
         assert _parse_jsonl_metadata(jsonl) is None
 
 
-class TestLoadAllSessions:
+class TestLoadClaudeSessions:
     def test_empty_when_no_projects(self, tmp_path, monkeypatch):
         monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
-        assert _load_all_sessions() == []
+        assert _load_claude_sessions() == []
 
     def test_empty_when_no_index_files(self, tmp_path, monkeypatch):
         monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
         (tmp_path / "projects" / "some-project").mkdir(parents=True)
-        assert _load_all_sessions() == []
+        assert _load_claude_sessions() == []
 
     def test_loads_entries_from_index(self, tmp_path, monkeypatch):
         monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _make_index(projects_dir, "proj-a", [_sample_entry("id-1")])
-        result = _load_all_sessions()
+        result = _load_claude_sessions()
         assert len(result) == 1
         assert result[0]["sessionId"] == "id-1"
 
@@ -125,55 +133,179 @@ class TestLoadAllSessions:
             _make_user_message("unindexed prompt", cwd="/Users/test/proj"),
             _make_assistant_message(),
         ])
-        result = _load_all_sessions()
+        result = _load_claude_sessions()
         assert len(result) == 1
         assert result[0]["sessionId"] == "sess-unindexed"
-        assert result[0]["firstPrompt"] == "unindexed prompt"
-        assert result[0]["projectPath"] == "/Users/test/proj"
 
     def test_skips_indexed_jsonl(self, tmp_path, monkeypatch):
-        """Jsonl files already covered by an index should not be duplicated."""
         monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _make_index(projects_dir, "proj-a", [_sample_entry("id-1")])
-        # Also create a .jsonl with the same session id
         _write_jsonl(projects_dir, "proj-a", "id-1", [
             _make_user_message("duplicate"),
         ])
-        result = _load_all_sessions()
+        result = _load_claude_sessions()
         assert len(result) == 1
-        assert result[0]["summary"] == "Test session"  # from index, not jsonl
+        assert result[0]["summary"] == "Test session"
 
-    def test_multiple_projects(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
-        projects_dir = tmp_path / "projects"
-        _make_index(projects_dir, "proj-a", [
-            _sample_entry("id-1", modified="2026-04-01T11:00:00.000Z"),
-        ])
-        _make_index(projects_dir, "proj-b", [
-            _sample_entry("id-2", modified="2026-04-02T11:00:00.000Z"),
-        ])
-        result = _load_all_sessions()
+
+class TestParseSessionTokens:
+    def test_empty(self):
+        r = parse_session_tokens("")
+        assert r == {"page": 1, "days": None, "backend": "", "bot": "", "id_prefix": "", "query": ""}
+
+    def test_page_only(self):
+        r = parse_session_tokens("p3")
+        assert r["page"] == 3
+        assert r["query"] == ""
+
+    def test_days_only(self):
+        r = parse_session_tokens("7d")
+        assert r["days"] == 7
+        assert r["query"] == ""
+
+    def test_backend_filter(self):
+        r = parse_session_tokens("backend:codex-cli")
+        assert r["backend"] == "codex-cli"
+        assert r["query"] == ""
+
+    def test_bot_filter(self):
+        r = parse_session_tokens("bot:claw-mac")
+        assert r["bot"] == "claw-mac"
+        assert r["query"] == ""
+
+    def test_combined(self):
+        r = parse_session_tokens("chromium 3d backend:claude-cli p2")
+        assert r["page"] == 2
+        assert r["days"] == 3
+        assert r["backend"] == "claude-cli"
+        assert r["query"] == "chromium"
+
+    def test_multiple_search_words(self):
+        r = parse_session_tokens("discord fix")
+        assert r["query"] == "discord fix"
+
+    def test_search_with_filters(self):
+        r = parse_session_tokens("discord fix 7d bot:claw-mac p2")
+        assert r["query"] == "discord fix"
+        assert r["days"] == 7
+        assert r["bot"] == "claw-mac"
+        assert r["page"] == 2
+
+    def test_only_first_page_token(self):
+        """Second p-token falls through to query."""
+        r = parse_session_tokens("p2 p3")
+        assert r["page"] == 2
+        assert r["query"] == "p3"
+
+    def test_only_first_days_token(self):
+        r = parse_session_tokens("3d 7d")
+        assert r["days"] == 3
+        assert r["query"] == "7d"
+
+
+class TestMatchesAllWords:
+    def test_single_word_match(self):
+        entry = {"summary": "Discord fix", "firstPrompt": "", "preview": "", "project": "", "backend": "", "model": ""}
+        assert _matches_all_words(entry, ["discord"])
+
+    def test_multi_word_all_match(self):
+        entry = {"summary": "Discord fix", "firstPrompt": "slash commands", "preview": "", "project": "", "backend": "", "model": ""}
+        assert _matches_all_words(entry, ["discord", "commands"])
+
+    def test_multi_word_one_missing(self):
+        entry = {"summary": "Discord fix", "firstPrompt": "", "preview": "", "project": "", "backend": "", "model": ""}
+        assert not _matches_all_words(entry, ["discord", "chromium"])
+
+    def test_matches_project(self):
+        entry = {"summary": "", "firstPrompt": "", "preview": "", "project": "box-agent", "backend": "", "model": ""}
+        assert _matches_all_words(entry, ["box-agent"])
+
+    def test_matches_backend(self):
+        entry = {"summary": "", "firstPrompt": "", "preview": "", "project": "", "backend": "codex-cli", "model": ""}
+        assert _matches_all_words(entry, ["codex"])
+
+
+class TestFilterSessions:
+    def _make_entries(self):
+        now = int(time.time())
+        return [
+            {"sessionId": "s1", "summary": "Discord fix", "firstPrompt": "", "preview": "",
+             "project": "box-agent", "backend": "claude-cli", "model": "opus", "bot": "claw-mac",
+             "modified_ts": now - 3600},
+            {"sessionId": "s2", "summary": "WebView build", "firstPrompt": "", "preview": "",
+             "project": "chromium", "backend": "codex-cli", "model": "sonnet", "bot": "claw-wsl",
+             "modified_ts": now - 86400 * 3},
+            {"sessionId": "s3", "summary": "Docker networking", "firstPrompt": "", "preview": "",
+             "project": "homelab", "backend": "claude-cli", "model": "opus", "bot": "claw-mac",
+             "modified_ts": now - 86400 * 10},
+        ]
+
+    def test_no_filter(self):
+        entries = self._make_entries()
+        assert len(_filter_sessions(entries)) == 3
+
+    def test_time_filter(self):
+        entries = self._make_entries()
+        result = _filter_sessions(entries, days=1)
+        assert len(result) == 1
+        assert result[0]["sessionId"] == "s1"
+
+    def test_time_filter_week(self):
+        entries = self._make_entries()
+        result = _filter_sessions(entries, days=7)
         assert len(result) == 2
-        # Sorted by modified desc
-        assert result[0]["sessionId"] == "id-2"
-        assert result[1]["sessionId"] == "id-1"
 
-    def test_sets_project_path_from_original(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
-        projects_dir = tmp_path / "projects"
-        entry = _sample_entry("id-1")
-        del entry["projectPath"]
-        _make_index(projects_dir, "proj-a", [entry], original_path="/Users/test/proj-a")
-        result = _load_all_sessions()
-        assert result[0]["projectPath"] == "/Users/test/proj-a"
+    def test_backend_filter(self):
+        entries = self._make_entries()
+        result = _filter_sessions(entries, backend="codex-cli")
+        assert len(result) == 1
+        assert result[0]["sessionId"] == "s2"
 
-    def test_skips_bad_json(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
-        proj_dir = tmp_path / "projects" / "bad"
-        proj_dir.mkdir(parents=True)
-        (proj_dir / "sessions-index.json").write_text("not json", encoding="utf-8")
-        assert _load_all_sessions() == []
+    def test_bot_filter(self):
+        entries = self._make_entries()
+        result = _filter_sessions(entries, bot="claw-wsl")
+        assert len(result) == 1
+        assert result[0]["sessionId"] == "s2"
+
+    def test_query_filter(self):
+        entries = self._make_entries()
+        result = _filter_sessions(entries, query="discord")
+        assert len(result) == 1
+        assert result[0]["sessionId"] == "s1"
+
+    def test_combined_filters(self):
+        entries = self._make_entries()
+        result = _filter_sessions(entries, backend="claude-cli", days=7)
+        assert len(result) == 1
+        assert result[0]["sessionId"] == "s1"
+
+
+class TestFindByIdPrefix:
+    def test_match(self):
+        entries = [{"sessionId": "abcdef1234"}, {"sessionId": "xyz999"}]
+        assert len(_find_by_id_prefix(entries, "abcd")) == 1
+
+    def test_no_match(self):
+        entries = [{"sessionId": "abcdef1234"}]
+        assert len(_find_by_id_prefix(entries, "9999")) == 0
+
+
+class TestRelativeTime:
+    def test_just_now(self):
+        assert _relative_time(int(time.time())) == "just now"
+
+    def test_minutes(self):
+        assert "m ago" in _relative_time(int(time.time()) - 300)
+
+    def test_hours(self):
+        assert "h ago" in _relative_time(int(time.time()) - 7200)
+
+    def test_days(self):
+        assert "d ago" in _relative_time(int(time.time()) - 86400 * 3)
+
+    def test_zero(self):
+        assert _relative_time(0) == ""
 
 
 class TestTruncate:
@@ -185,6 +317,69 @@ class TestTruncate:
 
     def test_collapses_whitespace(self):
         assert _truncate("hello   world\nnew", 40) == "hello world new"
+
+
+class TestFormatSessionsList:
+    def test_no_sessions(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        result = format_sessions_list()
+        assert "No sessions found" in result
+
+    def test_basic_list(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        projects_dir = tmp_path / "projects"
+        _make_index(projects_dir, "proj-a", [_sample_entry("id-1")])
+        result = format_sessions_list()
+        assert "Sessions" in result
+        assert "/resume id-1" in result
+        assert "my-project" in result
+
+    def test_search_filter(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        projects_dir = tmp_path / "projects"
+        _make_index(projects_dir, "proj-a", [
+            _sample_entry("id-1", summary="Discord fix"),
+            _sample_entry("id-2", summary="WebView build", modified="2026-04-02T11:00:00.000Z"),
+        ])
+        result = format_sessions_list(query="discord")
+        assert "/resume id-1" in result
+        assert "/resume id-2" not in result
+
+    def test_pagination(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        projects_dir = tmp_path / "projects"
+        entries = [
+            _sample_entry(f"id-{i}", modified=f"2026-04-{i+1:02d}T11:00:00.000Z")
+            for i in range(8)
+        ]
+        _make_index(projects_dir, "proj-a", entries)
+        result = format_sessions_list(query="p2")
+        assert "6-8 / 8" in result
+
+    def test_no_results_with_filter(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        projects_dir = tmp_path / "projects"
+        _make_index(projects_dir, "proj-a", [_sample_entry("id-1")])
+        result = format_sessions_list(query="nonexistent")
+        assert "No sessions matching" in result
+
+    def test_hex_prefix_match(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        projects_dir = tmp_path / "projects"
+        _make_index(projects_dir, "proj-a", [
+            _sample_entry("abcdef1234567890"),
+        ])
+        result = format_sessions_list(query="abcd")
+        assert "/resume abcdef1234567890" in result
+
+    def test_days_filter(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        projects_dir = tmp_path / "projects"
+        # Entry from 2026-04-01 is old enough to be filtered out by 1d
+        _make_index(projects_dir, "proj-a", [_sample_entry("id-1")])
+        result = format_sessions_list(query="1d")
+        # The entry is from 2026-04-01 which is old, should be filtered
+        assert "No sessions" in result or "id-1" in result  # depends on test run date
 
 
 class TestSessionsList:

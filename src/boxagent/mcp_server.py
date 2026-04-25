@@ -216,14 +216,16 @@ def schedule_run_detail(task_id: str, run_index: int = 1) -> str:
 
 @mcp.tool()
 def sessions_list(project_filter: str = "") -> str:
-    """List Claude CLI sessions from ~/.claude/projects/.
+    """List unified sessions (Claude CLI + BoxAgent history + Codex).
 
     Args:
-        project_filter: Optional substring to filter by project path
+        project_filter: Search query — supports keywords, Nd (time), backend:X, bot:X, pN (page)
     """
     from boxagent.sessions_cli import format_sessions_list
+    from boxagent.storage import Storage
 
-    return format_sessions_list(project_filter=project_filter)
+    storage = Storage(LOCAL_DIR) if LOCAL_DIR else None
+    return format_sessions_list(query=project_filter, storage=storage)
 
 
 if __name__ == "__main__":
