@@ -56,7 +56,7 @@ class TestLoadConfig:
                     allowed_users: [111]
         """)
         (tmp_path / "config.yaml").write_text(config)
-        with pytest.raises(ConfigError, match="token or bot_id"):
+        with pytest.raises(ConfigError, match="at least one channel"):
             load_config(tmp_path)
 
     def test_env_override_workspace(self, config_dir):
@@ -344,7 +344,7 @@ class TestTelegramBotsYaml:
                     allowed_users: [111]
         """)
         (tmp_path / "config.yaml").write_text(config)
-        with pytest.raises(ConfigError, match="token or bot_id"):
+        with pytest.raises(ConfigError, match="at least one channel"):
             load_config(tmp_path)
 
     def test_numeric_bot_id_also_works(self, tmp_path):

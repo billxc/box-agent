@@ -126,7 +126,10 @@ class Gateway:
     config: AppConfig
     config_dir: Path = field(default_factory=default_config_dir)
     local_dir: Path = field(default_factory=default_local_dir)
-    _channels: dict[str, TelegramChannel] = field(
+    _channels: dict[str, object] = field(
+        default_factory=dict, repr=False
+    )
+    _discord_channels: dict[str, object] = field(
         default_factory=dict, repr=False
     )
     _cli_processes: dict[str, object] = field(
@@ -193,17 +196,37 @@ class Gateway:
             )
             logger.info("Bot '%s' synced %d skill(s): %s", name, len(linked), linked)
 
-        channel = TelegramChannel(
-            token=bot_cfg.telegram_token,
-            allowed_users=bot_cfg.allowed_users,
-            tool_calls_display=bot_cfg.display_tool_calls,
-        )
-
         display_name = bot_cfg.display_name or name
+
+        # Primary channel for Router, notifications, watchdog
+        primary_channel = None
+
+        # --- Telegram channel ---
+        if bot_cfg.telegram_token:
+            channel = TelegramChannel(
+                token=bot_cfg.telegram_token,
+                allowed_users=bot_cfg.allowed_users,
+                tool_calls_display=bot_cfg.display_tool_calls,
+            )
+            primary_channel = channel
+            self._channels[name] = channel
+
+        # --- Discord channel ---
+        if bot_cfg.discord_token:
+            from boxagent.channels.discord import DiscordChannel
+
+            dc_channel = DiscordChannel(
+                token=bot_cfg.discord_token,
+                allowed_users=bot_cfg.allowed_users,
+                tool_calls_display=bot_cfg.display_tool_calls,
+            )
+            self._discord_channels[name] = dc_channel
+            if primary_channel is None:
+                primary_channel = dc_channel
 
         router = Router(
             cli_process=cli,
-            channel=channel,
+            channel=primary_channel,
             allowed_users=bot_cfg.allowed_users,
             storage=self._storage,
             bot_name=name,
@@ -217,31 +240,45 @@ class Gateway:
             ai_backend=bot_cfg.ai_backend,
             on_backend_switched=self._on_backend_switched,
         )
-        channel.on_message = router.handle_message
 
-        await channel.start()
-        self._channels[name] = channel
+        # Wire both channels to the same router
+        if name in self._channels:
+            router._channels["telegram"] = self._channels[name]
+            self._channels[name].on_message = router.handle_message
+            await self._channels[name].start()
+
+        if name in self._discord_channels:
+            router._channels["discord"] = self._discord_channels[name]
+            self._discord_channels[name].on_message = router.handle_message
+            await self._discord_channels[name].start()
+
         self._routers[name] = router
 
-        # Notify user that bot is online
+        # Notify user that bot is online (via primary channel)
         chat_id = str(bot_cfg.allowed_users[0]) if bot_cfg.allowed_users else ""
-        if chat_id:
+        if chat_id and primary_channel:
             try:
                 import datetime
                 skill_count = len(linked)
+                channels_active = []
+                if bot_cfg.telegram_token:
+                    channels_active.append("telegram")
+                if bot_cfg.discord_token:
+                    channels_active.append("discord")
                 info_lines = [
                     f"🟢 *{display_name}* is online",
                     f"node: `{self.config.node_id or '(any)'}`",
                     f"model: `{bot_cfg.model or 'default'}`",
                     f"backend: `{bot_cfg.ai_backend}`",
                     f"workspace: `{bot_cfg.workspace}`",
+                    f"channels: {', '.join(channels_active)}",
                     f"skills: {skill_count}",
                     f"session: `{session_id or 'new'}`",
                     f"time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}",
                 ]
                 if git_created:
                     info_lines.append("⚠️ workspace was not a git repo, created .git for skill discovery")
-                await channel.send_text(chat_id, "\n".join(info_lines))
+                await primary_channel.send_text(chat_id, "\n".join(info_lines))
             except Exception as e:
                 logger.warning("Failed to send startup notification for '%s': %s", name, e)
 
@@ -250,7 +287,7 @@ class Gateway:
 
         wd = Watchdog(
             cli_process=cli,
-            channel=channel,
+            channel=primary_channel,
             chat_id=chat_id,
             bot_name=name,
             on_restart=restart_bot,
@@ -265,12 +302,13 @@ class Gateway:
         """Create and start the Scheduler after all active bots are online."""
         schedules_file = self.config_dir / "schedules.yaml"
         bot_refs: dict[str, BotRef] = {}
-        for name in self._channels:
+        for name in set(list(self._channels) + list(self._discord_channels)):
             bot_cfg = self.config.bots[name]
             chat_id = str(bot_cfg.allowed_users[0]) if bot_cfg.allowed_users else ""
+            primary_channel = self._channels.get(name) or self._discord_channels.get(name)
             bot_refs[name] = BotRef(
                 cli_process=self._cli_processes[name],
-                channel=self._channels[name],
+                channel=primary_channel,
                 chat_id=chat_id,
                 ai_backend=bot_cfg.ai_backend,
                 telegram_token=bot_cfg.telegram_token,
@@ -463,6 +501,12 @@ class Gateway:
                 await ch.stop()
             except Exception as e:
                 logger.error("Error stopping channel %s: %s", name, e)
+
+        for name, ch in self._discord_channels.items():
+            try:
+                await ch.stop()
+            except Exception as e:
+                logger.error("Error stopping discord channel %s: %s", name, e)
 
         for name, cli in self._cli_processes.items():
             try:

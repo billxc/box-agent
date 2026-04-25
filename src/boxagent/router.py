@@ -44,6 +44,11 @@ class Router:
     on_backend_switched: object = None  # async callback(bot_name, new_cli, new_backend)
     _compact_summary: str = field(default="", repr=False)
     _resume_context: str = field(default="", repr=False)
+    _channels: dict[str, object] = field(default_factory=dict, repr=False)
+
+    def _resolve_channel(self, msg: IncomingMessage) -> object:
+        """Return the channel that should handle this message's replies."""
+        return self._channels.get(msg.channel, self.channel)
 
     async def handle_message(self, msg: IncomingMessage) -> None:
         try:
@@ -56,8 +61,10 @@ class Router:
             msg.user_id, uid, self.allowed_users,
         )
 
+        ch = self._resolve_channel(msg)
+
         if uid not in self.allowed_users:
-            await self.channel.send_text(
+            await ch.send_text(
                 msg.chat_id,
                 "Unauthorized: you are not allowed to use this bot.",
             )
@@ -75,6 +82,7 @@ class Router:
         await self._dispatch(msg)
 
     async def _handle_command(self, command: str, msg: IncomingMessage):
+        ch = self._resolve_channel(msg)
         # --- Core commands (touch session state) ---
         if command == "/new":
             await self._cmd_new(msg)
@@ -89,28 +97,28 @@ class Router:
         # --- Auxiliary commands (delegated) ---
         elif command == "/status":
             await cmd_status(
-                msg, channel=self.channel, bot_name=self.display_name or self.bot_name,
+                msg, channel=ch, bot_name=self.display_name or self.bot_name,
                 cli_process=self.cli_process, start_time=self.start_time,
                 display_name=self.display_name, ai_backend=self.ai_backend,
                 workspace=self.workspace, node_id=self.node_id,
             )
         elif command == "/start":
-            await cmd_start(msg, channel=self.channel, bot_name=self.display_name or self.bot_name)
+            await cmd_start(msg, channel=ch, bot_name=self.display_name or self.bot_name)
         elif command == "/help":
-            await cmd_help(msg, channel=self.channel)
+            await cmd_help(msg, channel=ch)
         elif command == "/verbose":
-            await cmd_verbose(msg, channel=self.channel)
+            await cmd_verbose(msg, channel=ch)
         elif command == "/sync_skills":
             await cmd_sync_skills(
-                msg, channel=self.channel, workspace=self.workspace,
+                msg, channel=ch, workspace=self.workspace,
                 extra_skill_dirs=self.extra_skill_dirs, ai_backend=self.ai_backend,
             )
         elif command == "/exec":
-            await cmd_exec(msg, channel=self.channel, workspace=self.workspace)
+            await cmd_exec(msg, channel=ch, workspace=self.workspace)
         elif command == "/version":
-            await cmd_version(msg, channel=self.channel)
+            await cmd_version(msg, channel=ch)
         elif command == "/trust_workspace":
-            await cmd_trust_workspace(msg, channel=self.channel, workspace=self.workspace)
+            await cmd_trust_workspace(msg, channel=ch, workspace=self.workspace)
         elif command == "/review_loop":
             await self._cmd_review_loop(msg)
         elif command == "/cd":
@@ -118,10 +126,10 @@ class Router:
         elif command == "/backend":
             await self._cmd_backend(msg)
         elif command == "/sessions":
-            await cmd_sessions(msg, channel=self.channel)
+            await cmd_sessions(msg, channel=ch)
         elif command == "/schedule":
             await cmd_schedule(
-                msg, channel=self.channel, config_dir=self.config_dir,
+                msg, channel=ch, config_dir=self.config_dir,
                 local_dir=self.local_dir, node_id=self.node_id,
             )
 
@@ -129,10 +137,11 @@ class Router:
 
     async def _cmd_review_loop(self, msg: IncomingMessage):
         """Start a multi-agent review loop."""
+        ch = self._resolve_channel(msg)
         parts = msg.text.split(maxsplit=1)
         topic = parts[1] if len(parts) > 1 else ""
         if not topic:
-            await self.channel.send_text(
+            await ch.send_text(
                 msg.chat_id,
                 "Usage: /review_loop <topic>\n"
                 "Example: /review_loop write a thread-safe LRU cache",
@@ -140,7 +149,7 @@ class Router:
             return
 
         if self.ai_backend != "claude-cli":
-            await self.channel.send_text(
+            await ch.send_text(
                 msg.chat_id,
                 f"Review loop requires claude-cli backend (current: {self.ai_backend}). "
                 "Fork session is not supported by other backends yet.",
@@ -151,7 +160,7 @@ class Router:
 
         runner = ReviewLoopRunner(
             cli_process=self.cli_process,
-            channel=self.channel,
+            channel=ch,
             chat_id=msg.chat_id,
             workspace=self.workspace,
             model=getattr(self.cli_process, "model", ""),
@@ -159,24 +168,27 @@ class Router:
         await runner.run(topic)
 
     async def _cmd_new(self, msg: IncomingMessage):
+        ch = self._resolve_channel(msg)
         await self._reset_backend_session()
         self._compact_summary = ""
         self._resume_context = ""
         if self.storage:
             self.storage.clear_session(self.bot_name)
-        await self.channel.send_text(
+        await ch.send_text(
             msg.chat_id, "Started a fresh conversation."
         )
 
     async def _cmd_cancel(self, msg: IncomingMessage):
+        ch = self._resolve_channel(msg)
         await self.cli_process.cancel()
-        await self.channel.send_text(
+        await ch.send_text(
             msg.chat_id, "Cancelled current task."
         )
 
     async def _cmd_resume(self, msg: IncomingMessage):
+        ch = self._resolve_channel(msg)
         if not self.storage:
-            await self.channel.send_text(
+            await ch.send_text(
                 msg.chat_id, "Resume history is unavailable (storage is disabled)."
             )
             return
@@ -235,8 +247,9 @@ class Router:
         display_ordered: list[dict[str, object]],
         backend_order: list[str],
     ):
+        ch = self._resolve_channel(msg)
         if not display_ordered:
-            await self.channel.send_text(
+            await ch.send_text(
                 msg.chat_id, "No saved sessions found.",
             )
             return
@@ -267,18 +280,19 @@ class Router:
                     btn_label += f" {preview[:28]}"
                 buttons.append((btn_label, f"/resume {session_id}"))
         text = "\n".join(lines)
-        send_with_buttons = getattr(self.channel, "send_text_with_inline_keyboard", None)
+        send_with_buttons = getattr(ch, "send_text_with_inline_keyboard", None)
         if callable(send_with_buttons):
             await send_with_buttons(msg.chat_id, text, buttons)
         else:
-            await self.channel.send_text(msg.chat_id, text)
+            await ch.send_text(msg.chat_id, text)
 
     async def _resume_select(self, msg: IncomingMessage, arg: str, merged: list[dict[str, object]]):
+        ch = self._resolve_channel(msg)
         target_entry: dict[str, object] | None = None
         if arg.isdigit():
             index = int(arg)
             if index <= 0 or index > len(merged):
-                await self.channel.send_text(
+                await ch.send_text(
                     msg.chat_id,
                     f"Resume index out of range: {index}. Send `/resume` to list saved sessions.",
                 )
@@ -291,7 +305,7 @@ class Router:
                     break
 
         if target_entry is None:
-            await self.channel.send_text(
+            await ch.send_text(
                 msg.chat_id,
                 f"Resume target not found: `{arg}`. Send `/resume` to list available sessions.",
             )
@@ -304,21 +318,23 @@ class Router:
             await self._do_resume_native(msg, target_entry)
 
     async def _do_resume_native(self, msg: IncomingMessage, entry: dict[str, object]):
+        ch = self._resolve_channel(msg)
         target_session_id = str(entry["session_id"])
         await self._reset_backend_session()
         self._compact_summary = ""
         self._resume_context = ""
         self.cli_process.session_id = target_session_id
         self.storage.save_session(self.bot_name, target_session_id)
-        await self.channel.send_text(
+        await ch.send_text(
             msg.chat_id,
             f"Resume target set to `{target_session_id}`. Your next message will continue that session.",
         )
 
     async def _do_resume_codex(self, msg: IncomingMessage, entry: dict[str, object]):
+        ch = self._resolve_channel(msg)
         target_path = entry.get("path")
         if not isinstance(target_path, str) or not target_path:
-            await self.channel.send_text(
+            await ch.send_text(
                 msg.chat_id,
                 "Selected Codex session is missing a local rollout path.",
             )
@@ -326,7 +342,7 @@ class Router:
 
         resume_context = self.storage.build_codex_resume_context(target_path)
         if not resume_context:
-            await self.channel.send_text(
+            await ch.send_text(
                 msg.chat_id,
                 "Failed to recover context from the selected Codex session.",
             )
@@ -338,7 +354,7 @@ class Router:
         self.storage.clear_session(self.bot_name)
 
         session_id = str(entry["session_id"])
-        await self.channel.send_text(
+        await ch.send_text(
             msg.chat_id,
             f"Prepared soft resume from Codex session `{session_id}`. "
             "Your next message will start a new session with recovered context from local logs.",
@@ -346,18 +362,19 @@ class Router:
 
     async def _cmd_model(self, msg: IncomingMessage):
         """Show or switch the default model."""
+        ch = self._resolve_channel(msg)
         parts = msg.text.strip().split(maxsplit=1)
         current = getattr(self.cli_process, "model", "") or "default"
 
         if len(parts) < 2:
-            await self.channel.send_text(
+            await ch.send_text(
                 msg.chat_id, f"Current model: {current}"
             )
             return
 
         new_model = parts[1].strip()
         self.cli_process.model = new_model
-        await self.channel.send_text(
+        await ch.send_text(
             msg.chat_id, f"Model switched: {current} → {new_model}"
         )
 
@@ -365,18 +382,19 @@ class Router:
         """Show or switch the working directory."""
         import os
 
+        ch = self._resolve_channel(msg)
         parts = msg.text.strip().split(maxsplit=1)
         current = self.workspace or "(not set)"
 
         if len(parts) < 2:
-            await self.channel.send_text(
+            await ch.send_text(
                 msg.chat_id, f"Current workspace: {current}"
             )
             return
 
         new_path = os.path.expanduser(parts[1].strip())
         if not os.path.isdir(new_path):
-            await self.channel.send_text(
+            await ch.send_text(
                 msg.chat_id, f"Directory not found: {new_path}"
             )
             return
@@ -389,7 +407,7 @@ class Router:
         self._resume_context = ""
         if self.storage:
             self.storage.clear_session(self.bot_name)
-        await self.channel.send_text(
+        await ch.send_text(
             msg.chat_id, f"Workspace switched: {current} → {new_path}"
         )
 
@@ -397,10 +415,11 @@ class Router:
 
     async def _cmd_backend(self, msg: IncomingMessage):
         """Show or switch the AI backend."""
+        ch = self._resolve_channel(msg)
         parts = msg.text.strip().split(maxsplit=1)
 
         if len(parts) < 2:
-            await self.channel.send_text(
+            await ch.send_text(
                 msg.chat_id,
                 f"Current backend: {self.ai_backend}\n"
                 f"Available: {', '.join(sorted(self._VALID_BACKENDS))}",
@@ -409,7 +428,7 @@ class Router:
 
         new_backend = parts[1].strip()
         if new_backend not in self._VALID_BACKENDS:
-            await self.channel.send_text(
+            await ch.send_text(
                 msg.chat_id,
                 f"Unknown backend: {new_backend}\n"
                 f"Available: {', '.join(sorted(self._VALID_BACKENDS))}",
@@ -417,7 +436,7 @@ class Router:
             return
 
         if new_backend == self.ai_backend:
-            await self.channel.send_text(
+            await ch.send_text(
                 msg.chat_id, f"Already using {new_backend}."
             )
             return
@@ -474,19 +493,20 @@ class Router:
         # Notify Gateway so watchdog/scheduler refs are updated too.
         if self.on_backend_switched:
             await self.on_backend_switched(self.bot_name, new_proc, new_backend)
-        await self.channel.send_text(
+        await ch.send_text(
             msg.chat_id, f"Backend switched: {old_backend} → {new_backend}"
         )
 
     async def _cmd_compact(self, msg: IncomingMessage):
         """Summarize current conversation, reset session, carry summary forward."""
+        ch = self._resolve_channel(msg)
         if not self.cli_process.session_id:
-            await self.channel.send_text(
+            await ch.send_text(
                 msg.chat_id, "No active session to compact."
             )
             return
 
-        await self.channel.send_text(msg.chat_id, "Compacting conversation...")
+        await ch.send_text(msg.chat_id, "Compacting conversation...")
 
         # Extract user instructions after /compact
         user_hint = msg.text.strip().partition(" ")[2].strip()
@@ -500,18 +520,18 @@ class Router:
         if user_hint:
             summary_prompt += f"\n\nAdditional instructions: {user_hint}"
         collector = TextCollector()
-        await self.channel.show_typing(msg.chat_id)
+        await ch.show_typing(msg.chat_id)
         try:
             await self.cli_process.send(summary_prompt, collector)
         except Exception as e:
-            await self.channel.send_text(
+            await ch.send_text(
                 msg.chat_id, f"Failed to generate summary: {e}"
             )
             return
 
         summary = collector.text.strip()
         if not summary:
-            await self.channel.send_text(
+            await ch.send_text(
                 msg.chat_id, "Failed to generate summary (empty response)."
             )
             return
@@ -524,7 +544,7 @@ class Router:
         self._resume_context = ""
         self._compact_summary = summary
 
-        await self.channel.send_text(
+        await ch.send_text(
             msg.chat_id,
             f"Session compacted. Summary:\n\n{summary}\n\n"
             "Next message will start a new session with this context.",
@@ -576,7 +596,7 @@ class Router:
         prompt = "\n".join(user_parts)
 
         callback = ChannelCallback(
-            channel=self.channel,
+            channel=self._resolve_channel(msg),
             chat_id=msg.chat_id,
         )
 

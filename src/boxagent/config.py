@@ -24,8 +24,10 @@ class BotConfig:
     name: str
     ai_backend: str
     workspace: str
-    telegram_token: str
-    allowed_users: list[int]
+    telegram_token: str = ""
+    allowed_users: list[int] = field(default_factory=list)
+    discord_token: str = ""
+    discord_allowed_users: list[int] = field(default_factory=list)
     model: str = ""
     agent: str = ""
     extra_skill_dirs: list[str] = field(default_factory=list)
@@ -42,6 +44,7 @@ class AppConfig:
     api_port: int = 0
     bots: dict[str, BotConfig] = field(default_factory=dict)
     telegram_bots: dict[str, str] = field(default_factory=dict)
+    discord_bots: dict[str, str] = field(default_factory=dict)
 
 
 def load_config(
@@ -90,6 +93,7 @@ def load_config(
     api_port = int(os.environ.get("BOXAGENT_GLOBAL_API_PORT", api_port))
 
     telegram_bots = _load_telegram_bots(config_dir)
+    discord_bots = _load_discord_bots(config_dir)
 
     bots: dict[str, BotConfig] = {}
     for bot_name, bot_raw in effective_raw.get("bots", {}).items():
@@ -99,6 +103,7 @@ def load_config(
             box_agent_dir=box_agent_dir,
             config_dir=config_dir,
             telegram_bots=telegram_bots,
+            discord_bots=discord_bots,
         )
 
     return AppConfig(
@@ -107,6 +112,7 @@ def load_config(
         api_port=api_port,
         bots=bots,
         telegram_bots=telegram_bots,
+        discord_bots=discord_bots,
     )
 
 
@@ -187,6 +193,43 @@ def _load_telegram_bots(config_dir: Path) -> dict[str, str]:
     return {}
 
 
+def _load_discord_bots(config_dir: Path) -> dict[str, str]:
+    """Load bot name → token mapping from discord_bots.yaml.
+
+    Format:
+      bots:
+        - id: "my-bot"
+          token: "token_string"
+
+    Returns empty dict if file doesn't exist.
+    """
+    bots_file = config_dir / "discord_bots.yaml"
+    if not bots_file.is_file():
+        return {}
+
+    with open(bots_file, encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+
+    if not raw or not isinstance(raw, dict):
+        return {}
+
+    entries = raw.get("bots")
+    if not isinstance(entries, list):
+        return {}
+
+    result = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        token = str(entry.get("token", "")).strip()
+        if not token:
+            continue
+        name = entry.get("id") or entry.get("name")
+        if name:
+            result[str(name)] = token
+    return result
+
+
 def _load_local_config(local_dir: Path) -> dict:
     """Load local.yaml from the local runtime directory.
 
@@ -223,33 +266,60 @@ def _parse_bot(
     box_agent_dir: Path | str | None = None,
     config_dir: Path | str | None = None,
     telegram_bots: dict[str, str] | None = None,
+    discord_bots: dict[str, str] | None = None,
 ) -> BotConfig:
     channels = raw.get("channels", {})
+
+    # --- Telegram channel (optional) ---
     telegram = channels.get("telegram", {})
-
-    token = telegram.get("token")
-    if not token:
-        bot_id = telegram.get("bot_id")
-        if bot_id and telegram_bots:
-            token = telegram_bots.get(str(bot_id))
-            if not token:
+    telegram_token = ""
+    telegram_allowed_users: list[int] = []
+    if telegram:
+        telegram_token = telegram.get("token")
+        if not telegram_token:
+            bot_id = telegram.get("bot_id")
+            if bot_id and telegram_bots:
+                telegram_token = telegram_bots.get(str(bot_id))
+                if not telegram_token:
+                    raise ConfigError(
+                        f"Bot '{name}': bot_id '{bot_id}' not found in telegram_bots.yaml"
+                    )
+            elif bot_id:
                 raise ConfigError(
-                    f"Bot '{name}': bot_id '{bot_id}' not found in telegram_bots.yaml"
+                    f"Bot '{name}': bot_id '{bot_id}' specified but telegram_bots.yaml not found"
                 )
-        elif bot_id:
-            raise ConfigError(
-                f"Bot '{name}': bot_id '{bot_id}' specified but telegram_bots.yaml not found"
-            )
-        else:
-            raise ConfigError(
-                f"Bot '{name}': missing channels.telegram.token or bot_id"
-            )
+        telegram_allowed_users = telegram.get("allowed_users", [])
 
-    allowed_users = telegram.get("allowed_users", [])
-    if not allowed_users:
+    # --- Discord channel (optional) ---
+    discord = channels.get("discord", {})
+    discord_token = ""
+    discord_allowed_users: list[int] = []
+    if discord:
+        discord_token = discord.get("token", "")
+        if not discord_token:
+            bot_id = discord.get("bot_id")
+            if bot_id and discord_bots:
+                discord_token = discord_bots.get(str(bot_id))
+                if not discord_token:
+                    raise ConfigError(
+                        f"Bot '{name}': bot_id '{bot_id}' not found in discord_bots.yaml"
+                    )
+            elif bot_id:
+                raise ConfigError(
+                    f"Bot '{name}': bot_id '{bot_id}' specified but discord_bots.yaml not found"
+                )
+            else:
+                raise ConfigError(f"Bot '{name}': missing channels.discord.token or bot_id")
+        discord_allowed_users = discord.get("allowed_users", [])
+
+    # At least one channel must be configured
+    if not telegram_token and not discord_token:
         raise ConfigError(
-            f"Bot '{name}': missing channels.telegram.allowed_users"
+            f"Bot '{name}': at least one channel (telegram or discord) must be configured"
         )
+
+    # Union of all allowed users for Router auth
+    allowed_users = list(set(telegram_allowed_users + discord_allowed_users))
 
     default_workspace = str(default_workspace_dir(box_agent_dir))
     workspace = raw.get("workspace") or default_workspace
@@ -280,8 +350,10 @@ def _parse_bot(
         name=name,
         ai_backend=ai_backend,
         workspace=workspace,
-        telegram_token=token,
+        telegram_token=telegram_token,
         allowed_users=allowed_users,
+        discord_token=discord_token,
+        discord_allowed_users=discord_allowed_users,
         model=raw.get("model", ""),
         agent=raw.get("agent", ""),
         extra_skill_dirs=extra_skill_dirs,
