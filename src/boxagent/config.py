@@ -10,7 +10,7 @@ import yaml
 
 from boxagent.utils import deep_merge_dicts
 
-from boxagent.paths import default_workspace_dir
+from boxagent.paths import default_workspace_dir, resolve_boxagent_dir
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +28,10 @@ class BotConfig:
     allowed_users: list[int] = field(default_factory=list)
     telegram_allowed_users: list[int] = field(default_factory=list)
     discord_token: str = ""
+    discord_bot_id: str = ""
     discord_allowed_users: list[int] = field(default_factory=list)
     discord_allowed_categories: list[int] = field(default_factory=list)
+    discord_dm: bool = False
     model: str = ""
     agent: str = ""
     extra_skill_dirs: list[str] = field(default_factory=list)
@@ -47,6 +49,31 @@ class AppConfig:
     bots: dict[str, BotConfig] = field(default_factory=dict)
     telegram_bots: dict[str, str] = field(default_factory=dict)
     discord_bots: dict[str, str] = field(default_factory=dict)
+
+
+def _validate_discord_categories(bots: dict[str, BotConfig]) -> None:
+    """Ensure no two bots sharing a Discord bot_id claim the same category or DM."""
+    # Group bots by their discord identity (bot_id or raw token).
+    groups: dict[str, list[tuple[str, BotConfig]]] = {}
+    for name, cfg in bots.items():
+        if not cfg.discord_token:
+            continue
+        key = cfg.discord_bot_id or cfg.discord_token
+        groups.setdefault(key, []).append((name, cfg))
+
+    for _key, members in groups.items():
+        seen: dict[object, str] = {}  # category_key → bot_name
+        for bot_name, cfg in members:
+            keys: list[object] = list(cfg.discord_allowed_categories)
+            if cfg.discord_dm:
+                keys.append("DM")
+            for cat in keys:
+                if cat in seen:
+                    raise ConfigError(
+                        f"Discord category {cat!r} claimed by both "
+                        f"'{seen[cat]}' and '{bot_name}'"
+                    )
+                seen[cat] = bot_name
 
 
 def load_config(
@@ -112,6 +139,9 @@ def load_config(
             telegram_bots=telegram_bots,
             discord_bots=discord_bots,
         )
+
+    # Validate Discord category uniqueness across bots sharing the same bot_id
+    _validate_discord_categories(bots)
 
     return AppConfig(
         node_id=node_id,
@@ -300,14 +330,17 @@ def _parse_bot(
     # --- Discord channel (optional) ---
     discord = channels.get("discord", {})
     discord_token = ""
+    discord_bot_id = ""
     discord_allowed_users: list[int] = []
     discord_allowed_categories: list[int] = []
+    discord_dm = False
     if discord:
         discord_token = discord.get("token", "")
         if not discord_token:
             bot_id = discord.get("bot_id")
             if bot_id and discord_bots:
-                discord_token = discord_bots.get(str(bot_id))
+                discord_bot_id = str(bot_id)
+                discord_token = discord_bots.get(discord_bot_id)
                 if not discord_token:
                     raise ConfigError(
                         f"Bot '{name}': bot_id '{bot_id}' not found in discord_bots.yaml"
@@ -320,6 +353,7 @@ def _parse_bot(
                 raise ConfigError(f"Bot '{name}': missing channels.discord.token or bot_id")
         discord_allowed_users = discord.get("allowed_users", [])
         discord_allowed_categories = discord.get("allowed_categories", [])
+        discord_dm = discord.get("dm", False)
 
     # At least one channel must be configured
     if not telegram_token and not discord_token:
@@ -330,14 +364,21 @@ def _parse_bot(
     # Union of all allowed users for Router auth
     allowed_users = list(set(telegram_allowed_users + discord_allowed_users))
 
+    ba_dir = resolve_boxagent_dir(box_agent_dir)
     default_workspace = str(default_workspace_dir(box_agent_dir))
     workspace = raw.get("workspace") or default_workspace
-    workspace = str(Path(workspace).expanduser())
+    ws_path = Path(workspace).expanduser()
+    if not ws_path.is_absolute():
+        ws_path = ba_dir / ws_path
+    workspace = str(ws_path)
     display = raw.get("display", {})
 
     env_prefix = f"BOXAGENT_{name.upper().replace('-', '_')}_"
     workspace = os.environ.get(f"{env_prefix}workspace", workspace) or default_workspace
-    workspace = str(Path(workspace).expanduser())
+    ws_path = Path(workspace).expanduser()
+    if not ws_path.is_absolute():
+        ws_path = ba_dir / ws_path
+    workspace = str(ws_path)
 
     ai_backend = raw.get("ai_backend", "claude-cli")
     if ai_backend == "codex-mcp":
@@ -363,8 +404,10 @@ def _parse_bot(
         allowed_users=allowed_users,
         telegram_allowed_users=telegram_allowed_users,
         discord_token=discord_token,
+        discord_bot_id=discord_bot_id,
         discord_allowed_users=discord_allowed_users,
         discord_allowed_categories=discord_allowed_categories,
+        discord_dm=discord_dm,
         model=raw.get("model", ""),
         agent=raw.get("agent", ""),
         extra_skill_dirs=extra_skill_dirs,

@@ -694,3 +694,127 @@ class TestNodeOverrides:
 
         with pytest.raises(ConfigError, match="node_overrides must be a mapping"):
             load_config(tmp_path)
+
+
+class TestDiscordCategoryConflict:
+    """Tests for Discord category overlap validation."""
+
+    def test_no_conflict_different_categories(self, tmp_path):
+        """Two bots sharing a Discord bot_id with different categories is fine."""
+        (tmp_path / "discord_bots.yaml").write_text(
+            'bots:\n  - id: shared\n    token: "FAKE_TOKEN"\n'
+        )
+        config = dedent("""\
+            global: {}
+            bots:
+              bot-a:
+                ai_backend: claude-cli
+                workspace: /tmp/a
+                channels:
+                  discord:
+                    bot_id: shared
+                    allowed_users: [111]
+                    allowed_categories: [100]
+              bot-b:
+                ai_backend: claude-cli
+                workspace: /tmp/b
+                channels:
+                  discord:
+                    bot_id: shared
+                    allowed_users: [222]
+                    allowed_categories: [200]
+        """)
+        (tmp_path / "config.yaml").write_text(config)
+        cfg = load_config(tmp_path)
+        assert "bot-a" in cfg.bots
+        assert "bot-b" in cfg.bots
+
+    def test_conflict_same_category_raises(self, tmp_path):
+        """Two bots sharing a Discord bot_id claiming same category raises."""
+        (tmp_path / "discord_bots.yaml").write_text(
+            'bots:\n  - id: shared\n    token: "FAKE_TOKEN"\n'
+        )
+        config = dedent("""\
+            global: {}
+            bots:
+              bot-a:
+                ai_backend: claude-cli
+                workspace: /tmp/a
+                channels:
+                  discord:
+                    bot_id: shared
+                    allowed_users: [111]
+                    allowed_categories: [100]
+              bot-b:
+                ai_backend: claude-cli
+                workspace: /tmp/b
+                channels:
+                  discord:
+                    bot_id: shared
+                    allowed_users: [222]
+                    allowed_categories: [100]
+        """)
+        (tmp_path / "config.yaml").write_text(config)
+        with pytest.raises(ConfigError, match="category 100.*claimed by both"):
+            load_config(tmp_path)
+
+    def test_conflict_dm_overlap_raises(self, tmp_path):
+        """Two bots both claiming DM on the same Discord bot raises."""
+        (tmp_path / "discord_bots.yaml").write_text(
+            'bots:\n  - id: shared\n    token: "FAKE_TOKEN"\n'
+        )
+        config = dedent("""\
+            global: {}
+            bots:
+              bot-a:
+                ai_backend: claude-cli
+                workspace: /tmp/a
+                channels:
+                  discord:
+                    bot_id: shared
+                    allowed_users: [111]
+                    allowed_categories: [100]
+                    dm: true
+              bot-b:
+                ai_backend: claude-cli
+                workspace: /tmp/b
+                channels:
+                  discord:
+                    bot_id: shared
+                    allowed_users: [222]
+                    allowed_categories: [200]
+                    dm: true
+        """)
+        (tmp_path / "config.yaml").write_text(config)
+        with pytest.raises(ConfigError, match="DM.*claimed by both"):
+            load_config(tmp_path)
+
+    def test_different_bot_ids_no_conflict(self, tmp_path):
+        """Same category on different Discord bot_ids is fine."""
+        (tmp_path / "discord_bots.yaml").write_text(
+            'bots:\n  - id: bot1\n    token: "TOKEN_1"\n  - id: bot2\n    token: "TOKEN_2"\n'
+        )
+        config = dedent("""\
+            global: {}
+            bots:
+              bot-a:
+                ai_backend: claude-cli
+                workspace: /tmp/a
+                channels:
+                  discord:
+                    bot_id: bot1
+                    allowed_users: [111]
+                    allowed_categories: [100]
+              bot-b:
+                ai_backend: claude-cli
+                workspace: /tmp/b
+                channels:
+                  discord:
+                    bot_id: bot2
+                    allowed_users: [222]
+                    allowed_categories: [100]
+        """)
+        (tmp_path / "config.yaml").write_text(config)
+        cfg = load_config(tmp_path)
+        assert "bot-a" in cfg.bots
+        assert "bot-b" in cfg.bots

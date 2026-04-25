@@ -4,8 +4,10 @@ import asyncio
 import json
 import logging
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Union
 
 import discord
 
@@ -20,16 +22,30 @@ THROTTLE_MS = 300
 FLUSH_CHAR_THRESHOLD = 200
 STREAM_SPLIT_THRESHOLD = 1800  # Leave ~200 char margin for Discord limit
 
+# Sentinel key for DM messages in the category routing map.
+DM_CATEGORY: str = "DM"
+
+# Category key type: int for guild category IDs, str for DM_CATEGORY sentinel.
+CategoryKey = Union[int, str]
+
 
 @dataclass
 class DiscordChannel:
-    """Discord bot channel using discord.py."""
+    """Discord bot channel using discord.py.
+
+    Supports multiple BA bots sharing a single Discord client connection.
+    Each bot registers its own message handler for specific channel categories
+    via ``register_route()``.
+    """
 
     token: str
-    allowed_users: list[int]
-    allowed_categories: list[int] = field(default_factory=list)
     tool_calls_display: str = "summary"
-    on_message: object = None
+
+    # Category → message callback routing map.
+    # Populated via register_route(); keyed by category_id (int) or DM_CATEGORY.
+    _category_map: dict[CategoryKey, Callable] = field(
+        default_factory=dict, repr=False
+    )
 
     _client: discord.Client | None = field(default=None, repr=False)
     _connect_task: asyncio.Task | None = field(default=None, repr=False)
@@ -43,6 +59,36 @@ class DiscordChannel:
     _pending_interactions: dict[str, discord.Interaction] = field(
         default_factory=dict, repr=False
     )
+
+    def register_route(
+        self,
+        on_message: Callable,
+        categories: list[CategoryKey],
+    ) -> None:
+        """Register a message handler for the given channel categories.
+
+        Args:
+            on_message: Async callback ``(IncomingMessage) -> None``.
+            categories: List of guild category IDs (int) or ``DM_CATEGORY``.
+        """
+        for cat in categories:
+            if cat in self._category_map:
+                raise ValueError(
+                    f"Discord category {cat!r} is already registered to another route"
+                )
+            self._category_map[cat] = on_message
+
+    @staticmethod
+    def _get_category_key(channel: object) -> CategoryKey | None:
+        """Derive the routing key from a Discord channel object."""
+        if isinstance(channel, discord.DMChannel):
+            return DM_CATEGORY
+        return getattr(channel, "category_id", None)
+
+    def _resolve_callback(self, channel: object) -> Callable | None:
+        """Find the registered callback for the given Discord channel."""
+        key = self._get_category_key(channel)
+        return self._category_map.get(key)
 
     async def start(self) -> None:
         """Start Discord bot connection."""
@@ -77,7 +123,8 @@ class DiscordChannel:
                 await interaction.response.defer()
                 chat_id = str(interaction.channel_id)
                 self._pending_interactions[chat_id] = interaction
-                if self.on_message:
+                callback = self._resolve_callback(interaction.channel)
+                if callback:
                     text = f"/{name} {args}".strip() if args else f"/{name}"
                     incoming = IncomingMessage(
                         channel="discord",
@@ -85,7 +132,7 @@ class DiscordChannel:
                         user_id=str(interaction.user.id),
                         text=text,
                     )
-                    await self.on_message(incoming)
+                    await callback(incoming)
             return _slash
 
         for cmd_name, cmd_desc in _COMMANDS:
@@ -195,14 +242,15 @@ class DiscordChannel:
                 await interaction.response.defer()
                 chat_id = str(interaction.channel_id)
                 self._pending_interactions[chat_id] = interaction
-                if self.on_message:
+                callback = self._resolve_callback(interaction.channel)
+                if callback:
                     incoming = IncomingMessage(
                         channel="discord",
                         chat_id=chat_id,
                         user_id=str(interaction.user.id),
                         text=d,
                     )
-                    await self.on_message(incoming)
+                    await callback(incoming)
 
             btn.callback = _callback
             view.add_item(btn)
@@ -404,10 +452,7 @@ class DiscordChannel:
             return None
 
     async def _handle_incoming(self, message: discord.Message) -> None:
-        """Handle incoming Discord message."""
-        if not self.on_message:
-            return
-
+        """Handle incoming Discord message — route by category."""
         # Ignore messages from the bot itself
         if message.author == self._client.user:
             return
@@ -419,14 +464,10 @@ class DiscordChannel:
         ):
             return
 
-        # Filter by allowed categories (if configured)
-        # DMs (no category_id) always pass through
-        if self.allowed_categories:
-            is_dm = isinstance(message.channel, discord.DMChannel)
-            if not is_dm:
-                parent_id = getattr(message.channel, "category_id", None)
-                if parent_id not in self.allowed_categories:
-                    return
+        # Route by category
+        callback = self._resolve_callback(message.channel)
+        if callback is None:
+            return
 
         attachments = []
         for att in message.attachments:
@@ -451,4 +492,4 @@ class DiscordChannel:
             text=message.content or "",
             attachments=attachments,
         )
-        await self.on_message(incoming)
+        await callback(incoming)

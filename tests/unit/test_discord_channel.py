@@ -3,6 +3,7 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import discord as _discord
 import pytest
 
 from boxagent.channels.base import IncomingMessage, StreamHandle
@@ -50,15 +51,15 @@ def make_channel(mock_client):
     """Factory for DiscordChannel with mocked client."""
     from boxagent.channels.discord import DiscordChannel
 
-    def _make(on_message=None, tool_calls_display="summary"):
+    def _make(on_message=None, tool_calls_display="summary", categories=None):
         channel = DiscordChannel(
             token="fake.token",
-            allowed_users=[123456],
             tool_calls_display=tool_calls_display,
         )
         channel._client = mock_client
         if on_message:
-            channel.on_message = on_message
+            cats = categories if categories is not None else [42]
+            channel.register_route(on_message, cats)
         return channel
 
     return _make
@@ -202,16 +203,18 @@ class TestIncomingMessage:
         # Simulate a message from the bot itself
         msg = MagicMock()
         msg.author = mock_client.user
+        msg.type = _discord.MessageType.default
         msg.content = "my own message"
         msg.channel = MagicMock()
         msg.channel.id = 123
+        msg.channel.category_id = 42
         msg.attachments = []
 
         await channel._handle_incoming(msg)
         assert len(received) == 0
 
     async def test_handles_user_message(self, make_channel, mock_client):
-        """User messages are forwarded to on_message callback."""
+        """User messages are forwarded to the registered route callback."""
         received = []
 
         async def on_msg(m):
@@ -222,9 +225,11 @@ class TestIncomingMessage:
         msg = MagicMock()
         msg.author = MagicMock()
         msg.author.id = 456
+        msg.type = _discord.MessageType.default
         msg.content = "hello"
         msg.channel = MagicMock()
         msg.channel.id = 789
+        msg.channel.category_id = 42  # matches registered route
         msg.attachments = []
 
         await channel._handle_incoming(msg)
@@ -233,3 +238,49 @@ class TestIncomingMessage:
         assert received[0].chat_id == "789"
         assert received[0].user_id == "456"
         assert received[0].channel == "discord"
+
+    async def test_ignores_unregistered_category(self, make_channel, mock_client):
+        """Messages from unregistered categories are silently ignored."""
+        received = []
+
+        async def on_msg(m):
+            received.append(m)
+
+        channel = make_channel(on_message=on_msg, categories=[42])
+
+        msg = MagicMock()
+        msg.author = MagicMock()
+        msg.author.id = 456
+        msg.type = _discord.MessageType.default
+        msg.content = "hello"
+        msg.channel = MagicMock()
+        msg.channel.id = 789
+        msg.channel.category_id = 99  # not registered
+        msg.attachments = []
+
+        await channel._handle_incoming(msg)
+        assert len(received) == 0
+
+    async def test_dm_routed_when_registered(self, make_channel, mock_client):
+        """DM messages route to callback registered with DM_CATEGORY."""
+        from boxagent.channels.discord import DM_CATEGORY
+
+        received = []
+
+        async def on_msg(m):
+            received.append(m)
+
+        channel = make_channel(on_message=on_msg, categories=[DM_CATEGORY])
+
+        msg = MagicMock()
+        msg.author = MagicMock()
+        msg.author.id = 456
+        msg.type = _discord.MessageType.default
+        msg.content = "dm message"
+        msg.channel = MagicMock(spec=_discord.DMChannel)
+        msg.channel.id = 789
+        msg.attachments = []
+
+        await channel._handle_incoming(msg)
+        assert len(received) == 1
+        assert received[0].text == "dm message"

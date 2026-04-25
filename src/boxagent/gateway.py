@@ -71,10 +71,12 @@ def _ensure_git_repo(workspace: Path) -> bool:
 
     Return *True* if a new ``.git`` was created.
     """
+    workspace = workspace.resolve()
+    workspace.mkdir(parents=True, exist_ok=True)
     git_dir = workspace / ".git"
     if git_dir.exists():
         return False
-    git_dir.mkdir(parents=True, exist_ok=True)
+    git_dir.mkdir(exist_ok=True)
     (git_dir / "HEAD").write_text("ref: refs/heads/main\n")
     (git_dir / "objects").mkdir(exist_ok=True)
     (git_dir / "refs").mkdir(exist_ok=True)
@@ -130,7 +132,12 @@ class Gateway:
     _channels: dict[str, object] = field(
         default_factory=dict, repr=False
     )
+    # Shared Discord channels keyed by identity (bot_id or token).
     _discord_channels: dict[str, object] = field(
+        default_factory=dict, repr=False
+    )
+    # Maps bot_name → Discord identity key for shared channel lookup.
+    _bot_discord_key: dict[str, str] = field(
         default_factory=dict, repr=False
     )
     _cli_processes: dict[str, object] = field(
@@ -150,6 +157,13 @@ class Gateway:
     _http_runner: web.AppRunner | None = field(default=None, repr=False)
     _start_time: float = 0.0
 
+    def _get_bot_discord_channel(self, bot_name: str) -> object | None:
+        """Return the shared Discord channel for a bot, or None."""
+        key = self._bot_discord_key.get(bot_name)
+        if key is None:
+            return None
+        return self._discord_channels.get(key)
+
     async def start(self) -> None:
         self._start_time = time.time()
         self._storage = Storage(local_dir=self.local_dir)
@@ -161,11 +175,20 @@ class Gateway:
         if self.config.node_id:
             os.environ.setdefault("BOXAGENT_NODE_ID", self.config.node_id)
 
+        # Phase 1: Create shared Discord channel instances (one per unique bot identity)
+        self._create_shared_discord_channels()
+
+        # Phase 2: Start each bot (registers routes on shared Discord channels)
         for name, bot_cfg in self.config.bots.items():
             if not node_matches(bot_cfg.enabled_on_nodes, self.config.node_id):
                 logger.info("Bot '%s' skipped (enabled_on_nodes=%s, current=%s)", name, bot_cfg.enabled_on_nodes, self.config.node_id)
                 continue
             await self._start_bot(name, bot_cfg)
+
+        # Phase 3: Start all shared Discord channels (one start() per unique client)
+        for dc_key, dc_ch in self._discord_channels.items():
+            await dc_ch.start()
+            logger.info("Shared Discord channel '%s' started", dc_key)
 
         # Start scheduler
         self._start_scheduler()
@@ -176,6 +199,23 @@ class Gateway:
         logger.info(
             "Gateway ready: %d bot(s) active", len(self.config.bots)
         )
+
+    def _create_shared_discord_channels(self) -> None:
+        """Pre-create one DiscordChannel per unique Discord bot identity."""
+        from boxagent.channels.discord import DiscordChannel
+
+        for name, bot_cfg in self.config.bots.items():
+            if not node_matches(bot_cfg.enabled_on_nodes, self.config.node_id):
+                continue
+            if not bot_cfg.discord_token:
+                continue
+            key = bot_cfg.discord_bot_id or bot_cfg.discord_token
+            if key not in self._discord_channels:
+                self._discord_channels[key] = DiscordChannel(
+                    token=bot_cfg.discord_token,
+                    tool_calls_display=bot_cfg.display_tool_calls,
+                )
+            self._bot_discord_key[name] = key
 
     async def _start_bot(self, name: str, bot_cfg: BotConfig) -> None:
         session_id = None
@@ -233,17 +273,9 @@ class Gateway:
             primary_channel = channel
             self._channels[name] = channel
 
-        # --- Discord channel ---
-        if bot_cfg.discord_token:
-            from boxagent.channels.discord import DiscordChannel
-
-            dc_channel = DiscordChannel(
-                token=bot_cfg.discord_token,
-                allowed_users=bot_cfg.allowed_users,
-                allowed_categories=bot_cfg.discord_allowed_categories,
-                tool_calls_display=bot_cfg.display_tool_calls,
-            )
-            self._discord_channels[name] = dc_channel
+        # --- Discord channel (shared instance) ---
+        dc_channel = self._get_bot_discord_channel(name)
+        if dc_channel is not None:
             if primary_channel is None:
                 primary_channel = dc_channel
 
@@ -265,16 +297,21 @@ class Gateway:
             on_backend_switched=self._on_backend_switched,
         )
 
-        # Wire both channels to the same router
+        # Wire Telegram channel to router
         if name in self._channels:
             router._channels["telegram"] = self._channels[name]
             self._channels[name].on_message = router.handle_message
             await self._channels[name].start()
 
-        if name in self._discord_channels:
-            router._channels["discord"] = self._discord_channels[name]
-            self._discord_channels[name].on_message = router.handle_message
-            await self._discord_channels[name].start()
+        # Register route on shared Discord channel (start() happens later in Gateway.start)
+        if dc_channel is not None:
+            from boxagent.channels.discord import DM_CATEGORY
+
+            categories: list = list(bot_cfg.discord_allowed_categories)
+            if bot_cfg.discord_dm:
+                categories.append(DM_CATEGORY)
+            dc_channel.register_route(router.handle_message, categories)
+            router._channels["discord"] = dc_channel
 
         self._routers[name] = router
 
@@ -284,10 +321,10 @@ class Gateway:
         channels_active = []
         if bot_cfg.telegram_token:
             channels_active.append("telegram")
-        if bot_cfg.discord_token:
+        if dc_channel is not None:
             channels_active.append("discord")
         info_lines = [
-            f"🟢 *{display_name}* is online",
+            f"\U0001f7e2 *{display_name}* is online",
             f"node: `{self.config.node_id or '(any)'}`",
             f"model: `{bot_cfg.model or 'default'}`",
             f"backend: `{bot_cfg.ai_backend}`",
@@ -297,7 +334,7 @@ class Gateway:
             f"time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}",
         ]
         if git_created:
-            info_lines.append("⚠️ workspace was not a git repo, created .git for skill discovery")
+            info_lines.append("\u26a0\ufe0f workspace was not a git repo, created .git for skill discovery")
         notify_text = "\n".join(info_lines)
 
         # Telegram: send immediately (user ID = chat ID for private chats)
@@ -310,10 +347,8 @@ class Gateway:
 
         # Discord: send DM after bot is ready (on_ready fires async)
         dc_user_id = str(bot_cfg.discord_allowed_users[0]) if bot_cfg.discord_token and bot_cfg.discord_allowed_users else ""
-        if dc_user_id and name in self._discord_channels:
-            dc_ch = self._discord_channels[name]
-
-            async def _send_discord_notify(ch=dc_ch, uid=dc_user_id, text=notify_text, bot_name=name):
+        if dc_user_id and dc_channel is not None:
+            async def _send_discord_notify(ch=dc_channel, uid=dc_user_id, text=notify_text, bot_name=name):
                 # Wait for Discord client to be ready
                 if ch._client:
                     await ch._client.wait_until_ready()
@@ -348,10 +383,10 @@ class Gateway:
         """Create and start the Scheduler after all active bots are online."""
         schedules_file = self.config_dir / "schedules.yaml"
         bot_refs: dict[str, BotRef] = {}
-        for name in set(list(self._channels) + list(self._discord_channels)):
+        for name in self._routers:
             bot_cfg = self.config.bots[name]
             chat_id = str(bot_cfg.allowed_users[0]) if bot_cfg.allowed_users else ""
-            primary_channel = self._channels.get(name) or self._discord_channels.get(name)
+            primary_channel = self._channels.get(name) or self._get_bot_discord_channel(name)
             bot_refs[name] = BotRef(
                 cli_process=self._cli_processes[name],
                 channel=primary_channel,
