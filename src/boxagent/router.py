@@ -211,87 +211,70 @@ class Router:
 
         arg = msg.text.strip().partition(" ")[2].strip()
 
-        # Gather sessions from both sources (global history, not per-bot)
-        native_history = self.storage.list_session_history()
-        codex_history = self.storage.list_codex_session_history(
-            self.workspace, limit=None if arg else 10,
+        # Use unified 3-source loader (Claude CLI + BoxAgent + Codex)
+        from boxagent.sessions_cli import _load_all_unified_sessions
+
+        all_sessions = _load_all_unified_sessions(
+            storage=self.storage, workspace=self.workspace,
         )
 
-        # Tag each entry with its source
-        for entry in native_history:
-            entry["_source"] = "native"
-        for entry in codex_history:
-            entry["_source"] = "codex"
-
-        # Merge, dedup by session_id (prefer native), sort by saved_at desc
-        seen: set[str] = set()
-        merged: list[dict[str, object]] = []
-        for entry in native_history:
-            sid = str(entry["session_id"])
-            if sid not in seen:
-                seen.add(sid)
-                merged.append(entry)
-        for entry in codex_history:
-            sid = str(entry["session_id"])
-            if sid not in seen:
-                seen.add(sid)
-                merged.append(entry)
-
-        # Group by backend, sort each group by saved_at desc, keep up to 10 per group
-        groups: dict[str, list[dict[str, object]]] = {}
-        for entry in merged:
-            backend = str(entry.get("backend", "")) or "other"
-            groups.setdefault(backend, []).append(entry)
-
-        display_ordered: list[dict[str, object]] = []
-        for backend in sorted(groups):
-            group = sorted(
-                groups[backend],
-                key=lambda e: int(e.get("saved_at", 0)) if isinstance(e.get("saved_at"), (int, float)) else 0,
-                reverse=True,
-            )
-            display_ordered.extend(group[:10])
-
         if not arg:
-            await self._resume_list(msg, display_ordered, sorted(groups))
-        else:
-            await self._resume_select(msg, arg, display_ordered)
+            await self._resume_list(msg, all_sessions)
+            return
+
+        # Look up by session ID
+        target = None
+        for entry in all_sessions:
+            if str(entry.get("sessionId", "")) == arg:
+                target = entry
+                break
+
+        if target is None:
+            await ch.send_text(
+                msg.chat_id,
+                f"Resume target not found: `{arg}`. Send `/resume` to list available sessions.",
+            )
+            return
+
+        await self._do_resume_native(msg, target)
 
     async def _resume_list(
         self,
         msg: IncomingMessage,
-        display_ordered: list[dict[str, object]],
-        backend_order: list[str],
+        sessions: list[dict[str, object]],
     ):
         ch = self._resolve_channel(msg)
-        if not display_ordered:
+        if not sessions:
             await ch.send_text(
                 msg.chat_id, "No saved sessions found.",
             )
             return
 
+        # Group by backend, keep up to 10 per group
+        groups: dict[str, list[dict[str, object]]] = {}
+        for entry in sessions:
+            backend = str(entry.get("backend", "")) or "other"
+            groups.setdefault(backend, []).append(entry)
+
         lines = ["**Resume Sessions**"]
         buttons = []
         idx = 0
-        for backend in backend_order:
+        for backend in sorted(groups):
             lines.append(f"\n**{backend}**")
-            for entry in display_ordered:
-                entry_backend = str(entry.get("backend", "")) or "other"
-                if entry_backend != backend:
-                    continue
+            for entry in groups[backend][:10]:
                 idx += 1
-                session_id = str(entry["session_id"])
-                saved_at = entry.get("saved_at")
+                session_id = str(entry.get("sessionId", ""))
+                modified_ts = entry.get("modified_ts")
                 time_str = ""
-                if isinstance(saved_at, int | float):
-                    time_str = time.strftime("%m-%d %H:%M", time.localtime(saved_at))
-                preview = entry.get("preview")
+                if isinstance(modified_ts, int | float) and modified_ts:
+                    time_str = time.strftime("%m-%d %H:%M", time.localtime(modified_ts))
+                preview = entry.get("summary") or entry.get("firstPrompt") or entry.get("preview") or ""
                 preview_text = ""
                 if isinstance(preview, str) and preview:
-                    preview_text = f" — {preview}"
+                    preview_text = f" — {preview[:60]}"
                 short_id = session_id[:8]
-                ws = entry.get("workspace")
-                ws_label = f" `{Path(ws).name}`" if isinstance(ws, str) and ws else ""
+                project = entry.get("project", "")
+                ws_label = f" `{project}`" if project else ""
                 lines.append(f"{idx}. `{short_id}` {time_str}{ws_label}{preview_text}")
                 btn_label = f"{idx}. {time_str}"
                 if isinstance(preview, str) and preview:
@@ -304,42 +287,11 @@ class Router:
         else:
             await ch.send_text(msg.chat_id, text)
 
-    async def _resume_select(self, msg: IncomingMessage, arg: str, merged: list[dict[str, object]]):
-        ch = self._resolve_channel(msg)
-        target_entry: dict[str, object] | None = None
-        if arg.isdigit():
-            index = int(arg)
-            if index <= 0 or index > len(merged):
-                await ch.send_text(
-                    msg.chat_id,
-                    f"Resume index out of range: {index}. Send `/resume` to list saved sessions.",
-                )
-                return
-            target_entry = merged[index - 1]
-        else:
-            for entry in merged:
-                if str(entry.get("session_id")) == arg:
-                    target_entry = entry
-                    break
-
-        if target_entry is None:
-            await ch.send_text(
-                msg.chat_id,
-                f"Resume target not found: `{arg}`. Send `/resume` to list available sessions.",
-            )
-            return
-
-        source = target_entry.get("_source", "")
-        if source == "codex":
-            await self._do_resume_codex(msg, target_entry)
-        else:
-            await self._do_resume_native(msg, target_entry)
-
     async def _do_resume_native(self, msg: IncomingMessage, entry: dict[str, object]):
         ch = self._resolve_channel(msg)
         chat_id = msg.chat_id
-        target_session_id = str(entry["session_id"])
-        restored_workspace = str(entry.get("workspace", "")) if entry.get("workspace") else ""
+        target_session_id = str(entry["sessionId"])
+        restored_workspace = str(entry.get("projectPath", "")) if entry.get("projectPath") else ""
         restored_model = str(entry.get("model", "")) if entry.get("model") else ""
 
         if self.pool:
@@ -362,40 +314,6 @@ class Router:
         if restored_model:
             info_parts.append(f"model: `{restored_model}`")
         await ch.send_text(chat_id, "\n".join(info_parts))
-
-    async def _do_resume_codex(self, msg: IncomingMessage, entry: dict[str, object]):
-        ch = self._resolve_channel(msg)
-        chat_id = msg.chat_id
-        target_path = entry.get("path")
-        if not isinstance(target_path, str) or not target_path:
-            await ch.send_text(
-                chat_id,
-                "Selected Codex session is missing a local rollout path.",
-            )
-            return
-
-        resume_context = self.storage.build_codex_resume_context(target_path)
-        if not resume_context:
-            await ch.send_text(
-                chat_id,
-                "Failed to recover context from the selected Codex session.",
-            )
-            return
-
-        if self.pool:
-            self.pool.clear_session(chat_id)
-        else:
-            await self._reset_backend_session()
-        self._compact_summaries.pop(chat_id, None)
-        self._resume_contexts[chat_id] = resume_context
-        self.storage.clear_session(self.bot_name, chat_id=chat_id)
-
-        session_id = str(entry["session_id"])
-        await ch.send_text(
-            chat_id,
-            f"Prepared soft resume from Codex session `{session_id}`. "
-            "Your next message will start a new session with recovered context from local logs.",
-        )
 
     async def _cmd_model(self, msg: IncomingMessage):
         """Show or switch the model for this chat."""
