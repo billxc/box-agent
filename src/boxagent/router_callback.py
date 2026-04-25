@@ -52,6 +52,8 @@ class ChannelCallback:
     """Routes agent streaming output to a Telegram channel."""
     channel: object
     chat_id: str
+    reply_prefix: str = ""  # prepended to first stream chunk (e.g. "bot-name: ")
+    _prefix_sent: bool = False
     _handle: object = None
     _typing_task: object = None
     _closed: bool = False
@@ -121,6 +123,10 @@ class ChannelCallback:
             if self._needs_paragraph_break_after_tool and text.strip():
                 prefix = "\n\n"
                 self._needs_paragraph_break_after_tool = False
+            # Prepend bot identity on first chunk in bus channel
+            if self.reply_prefix and not self._prefix_sent:
+                prefix = self.reply_prefix + prefix
+                self._prefix_sent = True
             self.collected_text += prefix + text
             self._stop_typing()
             if self._handle is None:

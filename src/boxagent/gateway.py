@@ -197,6 +197,7 @@ class Gateway:
             chat_id=reply_chat_id,
             user_id=from_bot or "bus",
             text=text,
+            via_bus=True,
         )
         logger.info(
             "Bus internal route: %s → @%s: %s",
@@ -358,7 +359,8 @@ class Gateway:
             # Register on shared bus channel if configured
             if bot_cfg.discord_bus_category:
                 dc_channel.register_bus_route(
-                    router.handle_message, name, bot_cfg.discord_bus_category
+                    router.handle_message, name, bot_cfg.discord_bus_category,
+                    is_admin=bot_cfg.discord_bus_admin,
                 )
 
         self._routers[name] = router

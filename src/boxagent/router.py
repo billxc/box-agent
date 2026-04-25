@@ -593,6 +593,7 @@ class Router:
         callback = ChannelCallback(
             channel=self._resolve_channel(msg),
             chat_id=chat_id,
+            reply_prefix=f"{self.bot_name}: " if msg.via_bus else "",
         )
 
         # Acquire a process from the pool (or use the single cli_process)

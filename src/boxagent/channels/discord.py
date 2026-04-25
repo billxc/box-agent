@@ -66,6 +66,7 @@ class DiscordChannel:
     _bus_map: dict[str, Callable] = field(
         default_factory=dict, repr=False
     )  # bot_name (lowercase) → callback
+    _bus_admin: str = ""  # bot_name that receives no-prefix bus messages
 
     def register_route(
         self,
@@ -90,6 +91,7 @@ class DiscordChannel:
         on_message: Callable,
         bot_name: str,
         bus_category: int,
+        is_admin: bool = False,
     ) -> None:
         """Register a bot on the shared bus channel.
 
@@ -97,6 +99,7 @@ class DiscordChannel:
             on_message: Async callback ``(IncomingMessage) -> None``.
             bot_name: Bot name used as ``@bot_name`` prefix for routing.
             bus_category: Discord guild category ID for the bus channel.
+            is_admin: If True, this bot receives messages without @prefix.
         """
         if self._bus_category and self._bus_category != bus_category:
             raise ValueError(
@@ -110,7 +113,17 @@ class DiscordChannel:
                 f"Bus route for '{bot_name}' is already registered"
             )
         self._bus_map[key] = on_message
-        logger.info("Registered bus route: @%s (category %d)", key, bus_category)
+        if is_admin:
+            if self._bus_admin:
+                raise ValueError(
+                    f"Bus admin already set to '{self._bus_admin}', "
+                    f"cannot also set '{bot_name}'"
+                )
+            self._bus_admin = key
+        logger.info(
+            "Registered bus route: @%s (category %d%s)",
+            key, bus_category, ", admin" if is_admin else "",
+        )
 
     @staticmethod
     def _get_category_key(channel: object) -> CategoryKey | None:
@@ -521,21 +534,28 @@ class DiscordChannel:
         ):
             return
 
-        # Bus channel: route by @bot-name prefix
+        # Bus channel: route by @bot-name prefix (or to admin if no prefix)
         if is_bus:
             text = (message.content or "").strip()
-            if not text.startswith("@"):
-                return  # no prefix → ignore
-            first_space = text.find(" ")
-            if first_space < 0:
-                return  # just "@name" with no body
-            target = text[1:first_space].lower()
-            callback = self._bus_map.get(target)
-            if callback is None:
-                return  # unknown bot name
-            body = text[first_space + 1:].strip()
-            if not body:
-                return
+            if text.startswith("@"):
+                first_space = text.find(" ")
+                if first_space < 0:
+                    return  # just "@name" with no body
+                target = text[1:first_space].lower()
+                callback = self._bus_map.get(target)
+                if callback is None:
+                    return  # unknown bot name
+                body = text[first_space + 1:].strip()
+                if not body:
+                    return
+            elif self._bus_admin:
+                # No prefix → route to admin bot
+                callback = self._bus_map.get(self._bus_admin)
+                if callback is None:
+                    return
+                body = text
+            else:
+                return  # no prefix and no admin → ignore
 
             attachments = await self._collect_attachments(message)
             incoming = IncomingMessage(
@@ -544,6 +564,7 @@ class DiscordChannel:
                 user_id=str(message.author.id),
                 text=body,
                 attachments=attachments,
+                via_bus=True,
             )
             await callback(incoming)
             return

@@ -32,6 +32,7 @@ class BotConfig:
     discord_allowed_users: list[int] = field(default_factory=list)
     discord_allowed_categories: list[int] = field(default_factory=list)
     discord_bus_category: int = 0
+    discord_bus_admin: bool = False
     discord_dm: bool = False
     model: str = ""
     agent: str = ""
@@ -344,6 +345,7 @@ def _parse_bot(
     discord_allowed_users: list[int] = []
     discord_allowed_categories: list[int] = []
     discord_bus_category: int = 0
+    discord_bus_admin: bool = False
     discord_dm = False
     if discord:
         discord_token = discord.get("token", "")
@@ -365,6 +367,7 @@ def _parse_bot(
         discord_allowed_users = discord.get("allowed_users", [])
         discord_allowed_categories = discord.get("allowed_categories", [])
         discord_bus_category = discord.get("bus_category", 0)
+        discord_bus_admin = discord.get("bus_admin", False)
         discord_dm = discord.get("dm", False)
 
     # At least one channel must be configured
@@ -420,6 +423,7 @@ def _parse_bot(
         discord_allowed_users=discord_allowed_users,
         discord_allowed_categories=discord_allowed_categories,
         discord_bus_category=discord_bus_category,
+        discord_bus_admin=discord_bus_admin,
         discord_dm=discord_dm,
         model=raw.get("model", ""),
         agent=raw.get("agent", ""),

@@ -26,6 +26,7 @@ class IncomingMessage:
     text: str
     attachments: list[Attachment] = field(default_factory=list)
     reply_to: str | None = None
+    via_bus: bool = False  # True when routed through the bus channel
     timestamp: datetime = field(default_factory=datetime.now)
 
 
