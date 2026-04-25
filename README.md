@@ -323,7 +323,7 @@ Storage / Watchdog / Scheduler / HTTP API
 - **ClaudeProcess**: Spawns `claude --output-format stream-json -p <msg>` per turn. Parses NDJSON output and maintains session continuity via `--resume`. Inherits from `BaseCLIProcess`.
 - **CodexProcess**: Spawns `codex exec --json <msg>` per turn. Parses JSONL output (thread.started, item.completed, etc.) and maintains session continuity via `codex exec resume <thread_id>`. Inherits from `BaseCLIProcess`.
 - **ACPProcess**: Maintains an ACP connection to `codex-acp`, maps `session_update` events to `on_stream()` / `on_tool_update()`, and uses `session/cancel` for in-flight turn cancellation.
-- **TelegramChannel**: Sends/receives via aiogram 3. Streams responses by editing messages, throttled at 300ms / 200 chars. Uses MarkdownV2 formatting with a single-pass tokenizer (`mdv2.py`).
+- **TelegramChannel**: Sends/receives via aiogram 3. Streams responses by editing messages, throttled at 300ms / 200 chars. Uses MarkdownV2 formatting with a single-pass tokenizer (`md_format.py`).
 - **Router**: Auth check → command dispatch → agent dispatch. Adapts AgentCallback to channel output.
 - **Gateway**: Orchestrates all components. Starts/stops bots, wires Storage + Watchdog.
 - **Storage**: Persists session IDs to `~/.boxagent/local/sessions.yaml`. Restart resume is native for `claude-cli`, and `codex-acp` now also attempts native recovery via `load_session(session_id, cwd)`.
@@ -389,7 +389,7 @@ src/boxagent/
 │   └── acp_process.py       # ACP session bridge for codex-acp
 └── channels/
     ├── base.py          # Channel protocol + data types
-    ├── mdv2.py          # Markdown → Telegram MarkdownV2 converter
+    ├── md_format.py     # Markdown format converter (Telegram MarkdownV2 + Discord)
     ├── splitter.py      # Message splitting (4096 char limit)
     └── telegram.py      # Telegram bot via aiogram 3
 ```
@@ -413,7 +413,7 @@ tests/
 │   ├── test_storage.py            # Session persistence helpers
 │   ├── test_watchdog.py           # Dead process detection
 │   ├── test_splitter.py           # Message splitting logic
-│   ├── test_mdv2.py               # MarkdownV2 conversion
+│   ├── test_md_format.py           # Markdown format conversion (Telegram + Discord)
 │   ├── test_telegram_channel.py   # TelegramChannel send/stream/throttle
 │   ├── test_typing_indicator.py   # Typing indicator lifecycle management
 │   ├── test_display.py            # Tool call formatting modes

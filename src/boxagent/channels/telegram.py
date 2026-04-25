@@ -11,7 +11,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import Message as AiogramMessage
 
 from boxagent.channels.base import Attachment, IncomingMessage, StreamHandle
-from boxagent.channels.mdv2 import md_to_mdv2 as _md_to_mdv2
+from boxagent.channels.md_format import md_to_telegram
 from boxagent.channels.splitter import split_message, _find_split_point
 
 logger = logging.getLogger(__name__)
@@ -98,7 +98,7 @@ class TelegramChannel:
         chunks = split_message(text, TELEGRAM_LIMIT)
         last_msg_id = ""
         for chunk in chunks:
-            send_text = _md_to_mdv2(chunk) if parse_mode == "MarkdownV2" else chunk
+            send_text = md_to_telegram(chunk) if parse_mode == "MarkdownV2" else chunk
             try:
                 result = await self._bot.send_message(
                     chat_id=chat_id, text=send_text, parse_mode=parse_mode
@@ -135,7 +135,7 @@ class TelegramChannel:
                 for label, data in buttons
             ]
         )
-        send_text = _md_to_mdv2(text) if parse_mode == "MarkdownV2" else text
+        send_text = md_to_telegram(text) if parse_mode == "MarkdownV2" else text
         try:
             result = await self._bot.send_message(
                 chat_id=chat_id, text=send_text, parse_mode=parse_mode,
@@ -276,7 +276,7 @@ class TelegramChannel:
         last = self._stream_last_sent.get(mid, "")
         if text and (text != last or final):
             try:
-                send_text = _md_to_mdv2(text) if final else text
+                send_text = md_to_telegram(text) if final else text
                 if final:
                     logger.debug("Final flush mid=%s, mdv2 len=%d", mid, len(send_text))
                 await self._bot.edit_message_text(
@@ -317,7 +317,7 @@ class TelegramChannel:
             await self._bot.edit_message_text(
                 chat_id=handle.chat_id,
                 message_id=int(old_mid),
-                text=_md_to_mdv2(keep),
+                text=md_to_telegram(keep),
                 parse_mode="MarkdownV2",
             )
         except Exception:

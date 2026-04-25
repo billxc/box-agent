@@ -229,7 +229,7 @@ Telegram → TelegramChannel → Router → ClaudeProcess / CodexProcess / ACPPr
 | `src/boxagent/agent/acp_process.py` | Codex ACP backend |
 | `src/boxagent/channels/telegram.py` | Telegram 输入输出、流式编辑 |
 | `src/boxagent/channels/splitter.py` | 长消息拆分 |
-| `src/boxagent/channels/mdv2.py` | Markdown → Telegram MarkdownV2 转换 |
+| `src/boxagent/channels/md_format.py` | Markdown 格式转换（Telegram MarkdownV2 + Discord） |
 | `src/boxagent/scheduler.py` | 定时任务 |
 | `src/boxagent/schedule_cli.py` | schedule 子命令（add/list/show 等） |
 | `src/boxagent/config.py` | 配置解析 |

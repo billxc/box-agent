@@ -10,6 +10,7 @@ from pathlib import Path
 import discord
 
 from boxagent.channels.base import Attachment, IncomingMessage, StreamHandle
+from boxagent.channels.md_format import md_to_discord
 from boxagent.channels.splitter import split_message, _find_split_point
 
 logger = logging.getLogger(__name__)
@@ -155,6 +156,7 @@ class DiscordChannel:
         so that Discord's "thinking..." placeholder is replaced inline.
         """
         interaction = await self._consume_interaction(chat_id)
+        text = md_to_discord(text)
         chunks = split_message(text, DISCORD_LIMIT)
         last_msg_id = ""
         for i, chunk in enumerate(chunks):
@@ -205,7 +207,7 @@ class DiscordChannel:
             btn.callback = _callback
             view.add_item(btn)
 
-        result = await channel.send(text, view=view)
+        result = await channel.send(md_to_discord(text), view=view)
         return str(result.id)
 
     async def stream_start(self, chat_id: str) -> StreamHandle:
@@ -348,9 +350,10 @@ class DiscordChannel:
         last = self._stream_last_sent.get(mid, "")
         if text and (text != last or final):
             try:
+                send_text = md_to_discord(text) if final else text
                 msg = await self._fetch_message(handle.chat_id, int(mid))
                 if msg:
-                    await msg.edit(content=text)
+                    await msg.edit(content=send_text)
                     self._stream_last_sent[mid] = text
             except Exception as e:
                 logger.warning("Failed to edit stream message: %s", e)
@@ -366,11 +369,11 @@ class DiscordChannel:
         keep = full_text[:split_at].rstrip()
         carry = full_text[split_at:].lstrip("\n")
 
-        # Edit old message with the 'keep' portion
+        # Edit old message with the 'keep' portion (converted for Discord)
         try:
             msg = await self._fetch_message(handle.chat_id, int(old_mid))
             if msg:
-                await msg.edit(content=keep)
+                await msg.edit(content=md_to_discord(keep))
         except Exception as e:
             logger.warning("Failed to edit stream message on split: %s", e)
 

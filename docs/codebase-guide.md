@@ -47,7 +47,7 @@
 | `src/boxagent/` | 运行时代码 |
 | `src/boxagent/paths.py` | 路径解析集中入口（`resolve_boxagent_dir`、`default_config_dir`、`default_local_dir`、`default_workspace_dir`） |
 | `src/boxagent/agent/` | 三种 AI backend 适配层 |
-| `src/boxagent/channels/` | Channel 抽象与 Telegram 实现（含 `mdv2.py` MarkdownV2 转换器） |
+| `src/boxagent/channels/` | Channel 抽象与 Telegram/Discord 实现（含 `md_format.py` 格式转换器） |
 | `tests/unit/` | 单测，覆盖绝大多数行为语义 |
 | `tests/integration/` | 真实 CLI / E2E 冒烟 |
 | `docs/` | 设计文档、使用文档、问题分析 |
@@ -393,7 +393,7 @@ Codex ACP 这边要区分两层语义：
 
 它现在做了这些事情：
 
-- 使用 MarkdownV2 格式发送消息，由 [`src/boxagent/channels/mdv2.py`](../src/boxagent/channels/mdv2.py) 的单 pass tokenizer 转换（正则一趟扫描 code fence、table、inline code、bold、italic、strikethrough、link，三套转义上下文）。
+- 使用 MarkdownV2 格式发送消息，由 [`src/boxagent/channels/md_format.py`](../src/boxagent/channels/md_format.py) 的单 pass tokenizer 转换（正则一趟扫描 code fence、table、inline code、bold、italic、strikethrough、link，三套转义上下文）。
 - 长消息按 4096 字符限制拆分。
 - 尽量在段落和换行处拆，避免拆进代码块。
 - 流式输出通过编辑同一条消息完成。
@@ -487,7 +487,7 @@ Codex ACP 这边要区分两层语义：
 | `tests/unit/test_storage.py` | session 辅助逻辑 |
 | `tests/unit/test_watchdog.py` | dead process 检测与通知 |
 | `tests/unit/test_splitter.py` | 长消息拆分与 code fence 保护 |
-| `tests/unit/test_mdv2.py` | MarkdownV2 单 pass 转换器 |
+| `tests/unit/test_md_format.py` | Markdown 格式转换器（Telegram MarkdownV2 + Discord） |
 | `tests/unit/test_telegram_channel.py` | Telegram 发送、流式编辑、tool display |
 | `tests/unit/test_typing_indicator.py` | typing loop 的完整生命周期 |
 | `tests/unit/test_display.py` | `/verbose` 与 `format_tool_call()` |
@@ -547,7 +547,7 @@ agent/base_cli.py
 
 channels/telegram.py
   ├── channels/base.py      (Attachment, IncomingMessage, StreamHandle, Channel)
-  ├── channels/mdv2.py      (md_to_mdv2 — MarkdownV2 conversion)
+  ├── channels/md_format.py  (md_to_telegram, md_to_discord — format conversion)
   ├── channels/splitter.py  (split_message)
   └── aiogram 3
 ```
