@@ -53,18 +53,24 @@ class Storage:
         with open(path, "w") as f:
             yaml.safe_dump(data, f)
 
-    def save_session(self, bot_id: str, session_id: str, *, preview: str = "", backend: str = "") -> None:
+    def _session_key(self, bot_id: str, chat_id: str = "") -> str:
+        """Build the sessions.yaml key, optionally scoped by chat_id."""
+        if chat_id:
+            return f"{bot_id}:{chat_id}"
+        return bot_id
+
+    def save_session(self, bot_id: str, session_id: str, *, preview: str = "", backend: str = "", chat_id: str = "") -> None:
         sessions = self._load_sessions()
-        sessions[bot_id] = session_id
+        sessions[self._session_key(bot_id, chat_id)] = session_id
         self._save_sessions(sessions)
         self._remember_session(bot_id, session_id, preview=preview, backend=backend)
 
-    def load_session(self, bot_id: str) -> str | None:
-        return self._load_sessions().get(bot_id)
+    def load_session(self, bot_id: str, chat_id: str = "") -> str | None:
+        return self._load_sessions().get(self._session_key(bot_id, chat_id))
 
-    def clear_session(self, bot_id: str) -> None:
+    def clear_session(self, bot_id: str, chat_id: str = "") -> None:
         sessions = self._load_sessions()
-        sessions.pop(bot_id, None)
+        sessions.pop(self._session_key(bot_id, chat_id), None)
         self._save_sessions(sessions)
 
     def _session_history_path(self) -> Path:

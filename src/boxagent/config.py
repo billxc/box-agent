@@ -26,6 +26,7 @@ class BotConfig:
     workspace: str
     telegram_token: str = ""
     allowed_users: list[int] = field(default_factory=list)
+    telegram_allowed_users: list[int] = field(default_factory=list)
     discord_token: str = ""
     discord_allowed_users: list[int] = field(default_factory=list)
     model: str = ""
@@ -352,6 +353,7 @@ def _parse_bot(
         workspace=workspace,
         telegram_token=telegram_token,
         allowed_users=allowed_users,
+        telegram_allowed_users=telegram_allowed_users,
         discord_token=discord_token,
         discord_allowed_users=discord_allowed_users,
         model=raw.get("model", ""),

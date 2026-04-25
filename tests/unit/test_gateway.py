@@ -127,7 +127,10 @@ class TestGateway:
 
         bot_cfg = MagicMock()
         bot_cfg.telegram_token = "123:ABC"
+        bot_cfg.discord_token = ""
         bot_cfg.allowed_users = [111]
+        bot_cfg.telegram_allowed_users = [111]
+        bot_cfg.discord_allowed_users = []
         bot_cfg.workspace = str(tmp_path)
         bot_cfg.display_tool_calls = "summary"
         bot_cfg.model = ""
@@ -232,7 +235,8 @@ class TestGateway:
 
             await gw._start_bot("my-bot", bot_cfg)
 
-        assert MockACP.call_args.kwargs["session_id"] == "saved-acp-session"
+        # First call is the primary backend (with saved session_id)
+        assert MockACP.call_args_list[0].kwargs["session_id"] == "saved-acp-session"
 
     async def test_stop_persists_codex_session_reference(self, tmp_path):
         from boxagent.gateway import Gateway

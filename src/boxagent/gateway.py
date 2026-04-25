@@ -13,6 +13,7 @@ from boxagent.channels.telegram import TelegramChannel
 from boxagent.config import AppConfig, BotConfig, node_matches
 from boxagent.paths import default_config_dir, default_local_dir, default_workspace_dir
 from boxagent.router import Router
+from boxagent.session_pool import SessionPool
 from boxagent.scheduler import BotRef, Scheduler, load_schedules
 from boxagent.storage import Storage
 from boxagent.watchdog import Watchdog
@@ -135,6 +136,9 @@ class Gateway:
     _cli_processes: dict[str, object] = field(
         default_factory=dict, repr=False
     )
+    _pools: dict[str, SessionPool] = field(
+        default_factory=dict, repr=False
+    )
     _routers: dict[str, Router] = field(default_factory=dict, repr=False)
     _storage: Storage | None = field(default=None, repr=False)
     _watchdogs: dict[str, Watchdog] = field(default_factory=dict, repr=False)
@@ -181,6 +185,14 @@ class Gateway:
         cli = _create_backend(bot_cfg, session_id)
         cli.start()
         self._cli_processes[name] = cli
+
+        # Create session pool
+        def _factory():
+            return _create_backend(bot_cfg, None)
+
+        pool = SessionPool(size=3)
+        pool.start(_factory)
+        self._pools[name] = pool
 
         # Ensure workspace is a git repo (Claude Code uses git root to find skills)
         ws_path = Path(bot_cfg.workspace)
@@ -229,6 +241,7 @@ class Gateway:
             channel=primary_channel,
             allowed_users=bot_cfg.allowed_users,
             storage=self._storage,
+            pool=pool,
             bot_name=name,
             display_name=display_name,
             config_dir=str(self.config_dir),
@@ -254,43 +267,66 @@ class Gateway:
 
         self._routers[name] = router
 
-        # Notify user that bot is online (via primary channel)
-        chat_id = str(bot_cfg.allowed_users[0]) if bot_cfg.allowed_users else ""
-        if chat_id and primary_channel:
+        # Notify user that bot is online
+        import datetime
+        skill_count = len(linked)
+        channels_active = []
+        if bot_cfg.telegram_token:
+            channels_active.append("telegram")
+        if bot_cfg.discord_token:
+            channels_active.append("discord")
+        info_lines = [
+            f"🟢 *{display_name}* is online",
+            f"node: `{self.config.node_id or '(any)'}`",
+            f"model: `{bot_cfg.model or 'default'}`",
+            f"backend: `{bot_cfg.ai_backend}`",
+            f"workspace: `{bot_cfg.workspace}`",
+            f"channels: {', '.join(channels_active)}",
+            f"skills: {skill_count}",
+            f"session: `{session_id or 'new'}`",
+            f"time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        ]
+        if git_created:
+            info_lines.append("⚠️ workspace was not a git repo, created .git for skill discovery")
+        notify_text = "\n".join(info_lines)
+
+        # Telegram: send immediately (user ID = chat ID for private chats)
+        tg_chat_id = str(bot_cfg.telegram_allowed_users[0]) if bot_cfg.telegram_token and bot_cfg.telegram_allowed_users else ""
+        if tg_chat_id and name in self._channels:
             try:
-                import datetime
-                skill_count = len(linked)
-                channels_active = []
-                if bot_cfg.telegram_token:
-                    channels_active.append("telegram")
-                if bot_cfg.discord_token:
-                    channels_active.append("discord")
-                info_lines = [
-                    f"🟢 *{display_name}* is online",
-                    f"node: `{self.config.node_id or '(any)'}`",
-                    f"model: `{bot_cfg.model or 'default'}`",
-                    f"backend: `{bot_cfg.ai_backend}`",
-                    f"workspace: `{bot_cfg.workspace}`",
-                    f"channels: {', '.join(channels_active)}",
-                    f"skills: {skill_count}",
-                    f"session: `{session_id or 'new'}`",
-                    f"time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                ]
-                if git_created:
-                    info_lines.append("⚠️ workspace was not a git repo, created .git for skill discovery")
-                await primary_channel.send_text(chat_id, "\n".join(info_lines))
+                await self._channels[name].send_text(tg_chat_id, notify_text)
             except Exception as e:
-                logger.warning("Failed to send startup notification for '%s': %s", name, e)
+                logger.warning("Failed to send Telegram startup notification for '%s': %s", name, e)
+
+        # Discord: send DM after bot is ready (on_ready fires async)
+        dc_user_id = str(bot_cfg.discord_allowed_users[0]) if bot_cfg.discord_token and bot_cfg.discord_allowed_users else ""
+        if dc_user_id and name in self._discord_channels:
+            dc_ch = self._discord_channels[name]
+
+            async def _send_discord_notify(ch=dc_ch, uid=dc_user_id, text=notify_text, bot_name=name):
+                # Wait for Discord client to be ready
+                if ch._client:
+                    await ch._client.wait_until_ready()
+                try:
+                    await ch.send_dm(uid, text)
+                except Exception as e:
+                    logger.warning("Failed to send Discord startup notification for '%s': %s", bot_name, e)
+
+            asyncio.create_task(_send_discord_notify())
 
         async def restart_bot(n=name, bc=bot_cfg):
             await self._restart_bot(n, bc)
 
+        # Watchdog chat_id for error notifications
+        wd_chat_id = tg_chat_id or dc_user_id
+
         wd = Watchdog(
             cli_process=cli,
             channel=primary_channel,
-            chat_id=chat_id,
+            chat_id=wd_chat_id,
             bot_name=name,
             on_restart=restart_bot,
+            pool=pool,
         )
         task = asyncio.create_task(wd.run_forever())
         self._watchdogs[name] = wd
@@ -516,5 +552,11 @@ class Gateway:
                 await cli.stop()
             except Exception as e:
                 logger.error("Error stopping CLI %s: %s", name, e)
+
+        for name, pool in self._pools.items():
+            try:
+                await pool.stop()
+            except Exception as e:
+                logger.error("Error stopping pool %s: %s", name, e)
 
         logger.info("Gateway stopped")

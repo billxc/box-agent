@@ -222,7 +222,7 @@ class TestRouterPromptSplit:
             channel=mock_channel,
             allowed_users=[123456],
         )
-        router._resume_context = "[Recovered previous session]\nUser: hi\n[End recovered session]"
+        router._resume_contexts["123456"] = "[Recovered previous session]\nUser: hi\n[End recovered session]"
 
         await router.handle_message(make_msg("continue"))
 
@@ -237,7 +237,7 @@ class TestRouterPromptSplit:
             channel=mock_channel,
             allowed_users=[123456],
         )
-        router._compact_summary = "- discussed topic A\n- decided on B"
+        router._compact_summaries["123456"] = "- discussed topic A\n- decided on B"
 
         await router.handle_message(make_msg("what's next"))
 

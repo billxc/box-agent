@@ -116,13 +116,30 @@ class DiscordChannel:
                 pass
         logger.info("Discord channel stopped")
 
+    async def _resolve_channel(self, chat_id: str):
+        """Resolve a chat_id to a messageable channel."""
+        cid = int(chat_id)
+        channel = self._client.get_channel(cid)
+        if channel is not None:
+            return channel
+        return await self._client.fetch_channel(cid)
+
+    async def send_dm(self, user_id: str, text: str) -> str:
+        """Send a direct message to a user by ID."""
+        user = await self._client.fetch_user(int(user_id))
+        dm = await user.create_dm()
+        chunks = split_message(text, DISCORD_LIMIT)
+        last_msg_id = ""
+        for chunk in chunks:
+            result = await dm.send(chunk)
+            last_msg_id = str(result.id)
+        return last_msg_id
+
     async def send_text(
         self, chat_id: str, text: str, parse_mode: str = "Markdown"
     ) -> str:
         """Send text message, splitting if too long."""
-        channel = self._client.get_channel(int(chat_id))
-        if channel is None:
-            channel = await self._client.fetch_channel(int(chat_id))
+        channel = await self._resolve_channel(chat_id)
 
         chunks = split_message(text, DISCORD_LIMIT)
         last_msg_id = ""
@@ -143,9 +160,7 @@ class DiscordChannel:
         Each button is (label, callback_data). Pressing a button sends
         callback_data as a synthetic message.
         """
-        channel = self._client.get_channel(int(chat_id))
-        if channel is None:
-            channel = await self._client.fetch_channel(int(chat_id))
+        channel = await self._resolve_channel(chat_id)
 
         view = discord.ui.View(timeout=None)
         for label, data in buttons:
@@ -170,9 +185,7 @@ class DiscordChannel:
 
     async def stream_start(self, chat_id: str) -> StreamHandle:
         """Send initial placeholder message for streaming."""
-        channel = self._client.get_channel(int(chat_id))
-        if channel is None:
-            channel = await self._client.fetch_channel(int(chat_id))
+        channel = await self._resolve_channel(chat_id)
 
         result = await channel.send("...")
         handle = StreamHandle(
@@ -224,9 +237,7 @@ class DiscordChannel:
 
     async def show_typing(self, chat_id: str) -> None:
         """Send typing indicator."""
-        channel = self._client.get_channel(int(chat_id))
-        if channel is None:
-            channel = await self._client.fetch_channel(int(chat_id))
+        channel = await self._resolve_channel(chat_id)
         await channel.typing()
 
     def _truncate_tool_payload(self, value: object, limit: int = 200) -> str:
@@ -325,9 +336,7 @@ class DiscordChannel:
         self._cancel_stream_timer(old_mid)
 
         # Send new message and update handle in-place
-        channel = self._client.get_channel(int(handle.chat_id))
-        if channel is None:
-            channel = await self._client.fetch_channel(int(handle.chat_id))
+        channel = await self._resolve_channel(handle.chat_id)
         result = await channel.send(carry or "...")
         new_mid = str(result.id)
         handle.message_id = new_mid
@@ -341,9 +350,7 @@ class DiscordChannel:
     ) -> discord.Message | None:
         """Fetch a message object for editing."""
         try:
-            channel = self._client.get_channel(int(chat_id))
-            if channel is None:
-                channel = await self._client.fetch_channel(int(chat_id))
+            channel = await self._resolve_channel(chat_id)
             return await channel.fetch_message(message_id)
         except Exception as e:
             logger.warning("Failed to fetch message %d: %s", message_id, e)

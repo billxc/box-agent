@@ -200,6 +200,7 @@ class TestDispatch:
             "sess_123",
             preview="hello",
             backend="claude-cli",
+            chat_id="123456",
         )
 
     async def test_stream_reply_does_not_use_display_name_prefix(self, mock_channel):
@@ -242,6 +243,7 @@ class TestDispatch:
             "sess_123",
             preview="hello",
             backend="claude-cli",
+            chat_id="123456",
         )
 
     async def test_failed_turn_logs_error_into_transcript(

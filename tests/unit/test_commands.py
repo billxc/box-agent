@@ -79,16 +79,20 @@ class TestStatusCommand:
 class TestNewCommand:
     async def test_clears_session(self, router, mock_cli, mock_storage):
         await router.handle_message(msg("/new"))
-        mock_cli.reset_session.assert_called_once()
-        assert mock_cli.session_id is None
-        mock_storage.clear_session.assert_called_once_with("test-bot")
+        # With pool, /new clears pool session; without pool, resets backend
+        if router.pool:
+            pass  # pool.clear_session tested via pool tests
+        else:
+            mock_cli.reset_session.assert_called_once()
+            assert mock_cli.session_id is None
+        mock_storage.clear_session.assert_called_once_with("test-bot", chat_id="123")
 
     async def test_clears_pending_compact_summary(self, router):
-        router._compact_summary = "stale summary"
+        router._compact_summaries["123"] = "stale summary"
 
         await router.handle_message(msg("/new"))
 
-        assert router._compact_summary == ""
+        assert router._compact_summaries.get("123", "") == ""
 
     async def test_sends_confirmation(self, router, mock_channel):
         await router.handle_message(msg("/new"))
@@ -136,7 +140,7 @@ class TestResumeCommand:
         mock_cli.reset_session.assert_awaited_once()
         assert mock_cli.session_id == "sess_old"
         mock_storage.save_session.assert_called_once_with(
-            "test-bot", "sess_old"
+            "test-bot", "sess_old", chat_id="123"
         )
 
     async def test_lists_codex_local_history(
@@ -178,7 +182,7 @@ class TestResumeCommand:
         mock_storage.build_codex_resume_context.return_value = (
             "[Recovered previous Codex session]\nRecovered transcript"
         )
-        router._compact_summary = "stale compact summary"
+        router._compact_summaries["123"] = "stale compact summary"
 
         await router.handle_message(msg("/resume 1"))
 
@@ -186,10 +190,10 @@ class TestResumeCommand:
         mock_storage.build_codex_resume_context.assert_called_once_with(
             "/tmp/rollout.jsonl"
         )
-        mock_storage.clear_session.assert_called_once_with("test-bot")
+        mock_storage.clear_session.assert_called_once_with("test-bot", chat_id="123")
         mock_storage.save_session.assert_not_called()
-        assert router._compact_summary == ""
-        assert "Recovered transcript" in router._resume_context
+        assert router._compact_summaries.get("123", "") == ""
+        assert "Recovered transcript" in router._resume_contexts.get("123", "")
         text = mock_channel.send_text.call_args[0][1]
         assert "soft resume" in text.lower()
 
@@ -249,7 +253,7 @@ class TestResumeCommand:
         assert len(prompts) == 1
         assert "Recovered transcript" in append_system_prompts[0]
         assert "继续修 /cancel" in prompts[0]
-        assert r._resume_context == ""
+        assert r._resume_contexts.get("123", "") == ""
 
         prompts.clear()
         append_system_prompts.clear()
@@ -418,9 +422,7 @@ class TestCompactCommand:
         # Session should be cleared
         cli.reset_session.assert_awaited_once()
         assert cli.session_id is None
-        mock_storage.clear_session.assert_called_once_with("test-bot")
-
-        # Summary should be in the response
+        mock_storage.clear_session.assert_called_once_with("test-bot", chat_id="123")
         calls = mock_channel.send_text.call_args_list
         final_text = calls[-1][0][1]
         assert "topic A" in final_text
@@ -956,9 +958,7 @@ class TestCdCommand:
             assert mock_cli.workspace == router.workspace
             assert router.workspace == str(Path(tmpdir).resolve())
             mock_cli.reset_session.assert_called()
-            mock_storage.clear_session.assert_called_with("test-bot")
-
-    async def test_expands_tilde(self, router, mock_cli, mock_channel):
+            mock_storage.clear_session.assert_called_with("test-bot", chat_id="123")
         import os
         home = os.path.expanduser("~")
         await router.handle_message(msg("/cd ~"))
@@ -997,4 +997,4 @@ class TestBackendCommand:
         assert "codex-cli" in text
         assert router.ai_backend == "codex-cli"
         assert router.cli_process is not mock_cli
-        mock_storage.clear_session.assert_called_with("test-bot")
+        mock_storage.clear_session.assert_called_with("test-bot", chat_id="123")

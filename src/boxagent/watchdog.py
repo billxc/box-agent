@@ -17,11 +17,13 @@ class Watchdog:
     chat_id: str
     bot_name: str
     on_restart: Callable[[], Awaitable[None]]
+    pool: object = None  # SessionPool — if set, monitor pool health too
     check_interval: float = 30.0
     restart_delay: float = RESTART_DELAY
 
     async def run_once(self) -> None:
         """Single watchdog check cycle."""
+        # Check primary cli_process
         state = getattr(self.cli_process, "state", "unknown")
         if state == "dead":
             logger.warning(
@@ -40,6 +42,14 @@ class Watchdog:
             await asyncio.sleep(self.restart_delay)
             await self.on_restart()
             logger.info("Bot '%s' restarted", self.bot_name)
+
+        # Check pool processes
+        if self.pool:
+            restart_dead = getattr(self.pool, "restart_dead", None)
+            if callable(restart_dead):
+                count = await restart_dead()
+                if count:
+                    logger.info("Bot '%s' pool: replaced %d dead process(es)", self.bot_name, count)
 
     async def run_forever(self) -> None:
         """Run watchdog check loop."""

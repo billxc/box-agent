@@ -32,6 +32,7 @@ class Router:
     channel: object
     allowed_users: list[int]
     storage: object = None
+    pool: object = None  # SessionPool — if set, used for per-chat dispatch
     bot_name: str = ""
     display_name: str = ""
     config_dir: str = ""
@@ -42,8 +43,8 @@ class Router:
     extra_skill_dirs: list[str] = field(default_factory=list)
     ai_backend: str = "claude-cli"
     on_backend_switched: object = None  # async callback(bot_name, new_cli, new_backend)
-    _compact_summary: str = field(default="", repr=False)
-    _resume_context: str = field(default="", repr=False)
+    _compact_summaries: dict[str, str] = field(default_factory=dict, repr=False)
+    _resume_contexts: dict[str, str] = field(default_factory=dict, repr=False)
     _channels: dict[str, object] = field(default_factory=dict, repr=False)
 
     def _resolve_channel(self, msg: IncomingMessage) -> object:
@@ -169,21 +170,32 @@ class Router:
 
     async def _cmd_new(self, msg: IncomingMessage):
         ch = self._resolve_channel(msg)
-        await self._reset_backend_session()
-        self._compact_summary = ""
-        self._resume_context = ""
+        chat_id = msg.chat_id
+        if self.pool:
+            self.pool.clear_session(chat_id)
+        else:
+            await self._reset_backend_session()
+        self._compact_summaries.pop(chat_id, None)
+        self._resume_contexts.pop(chat_id, None)
         if self.storage:
-            self.storage.clear_session(self.bot_name)
+            self.storage.clear_session(self.bot_name, chat_id=chat_id)
         await ch.send_text(
-            msg.chat_id, "Started a fresh conversation."
+            chat_id, "Started a fresh conversation."
         )
 
     async def _cmd_cancel(self, msg: IncomingMessage):
         ch = self._resolve_channel(msg)
-        await self.cli_process.cancel()
-        await ch.send_text(
-            msg.chat_id, "Cancelled current task."
-        )
+        chat_id = msg.chat_id
+        if self.pool:
+            active = self.pool.get_active(chat_id)
+            if active:
+                await active.cancel()
+                await ch.send_text(chat_id, "Cancelled current task.")
+            else:
+                await ch.send_text(chat_id, "No active task to cancel.")
+        else:
+            await self.cli_process.cancel()
+            await ch.send_text(chat_id, "Cancelled current task.")
 
     async def _cmd_resume(self, msg: IncomingMessage):
         ch = self._resolve_channel(msg)
@@ -319,23 +331,28 @@ class Router:
 
     async def _do_resume_native(self, msg: IncomingMessage, entry: dict[str, object]):
         ch = self._resolve_channel(msg)
+        chat_id = msg.chat_id
         target_session_id = str(entry["session_id"])
-        await self._reset_backend_session()
-        self._compact_summary = ""
-        self._resume_context = ""
-        self.cli_process.session_id = target_session_id
-        self.storage.save_session(self.bot_name, target_session_id)
+        if self.pool:
+            self.pool.set_session_id(chat_id, target_session_id)
+        else:
+            await self._reset_backend_session()
+            self.cli_process.session_id = target_session_id
+        self._compact_summaries.pop(chat_id, None)
+        self._resume_contexts.pop(chat_id, None)
+        self.storage.save_session(self.bot_name, target_session_id, chat_id=chat_id)
         await ch.send_text(
-            msg.chat_id,
+            chat_id,
             f"Resume target set to `{target_session_id}`. Your next message will continue that session.",
         )
 
     async def _do_resume_codex(self, msg: IncomingMessage, entry: dict[str, object]):
         ch = self._resolve_channel(msg)
+        chat_id = msg.chat_id
         target_path = entry.get("path")
         if not isinstance(target_path, str) or not target_path:
             await ch.send_text(
-                msg.chat_id,
+                chat_id,
                 "Selected Codex session is missing a local rollout path.",
             )
             return
@@ -343,19 +360,22 @@ class Router:
         resume_context = self.storage.build_codex_resume_context(target_path)
         if not resume_context:
             await ch.send_text(
-                msg.chat_id,
+                chat_id,
                 "Failed to recover context from the selected Codex session.",
             )
             return
 
-        await self._reset_backend_session()
-        self._compact_summary = ""
-        self._resume_context = resume_context
-        self.storage.clear_session(self.bot_name)
+        if self.pool:
+            self.pool.clear_session(chat_id)
+        else:
+            await self._reset_backend_session()
+        self._compact_summaries.pop(chat_id, None)
+        self._resume_contexts[chat_id] = resume_context
+        self.storage.clear_session(self.bot_name, chat_id=chat_id)
 
         session_id = str(entry["session_id"])
         await ch.send_text(
-            msg.chat_id,
+            chat_id,
             f"Prepared soft resume from Codex session `{session_id}`. "
             "Your next message will start a new session with recovered context from local logs.",
         )
@@ -403,10 +423,10 @@ class Router:
         self.cli_process.workspace = new_path
         self.workspace = new_path
         await self._reset_backend_session()
-        self._compact_summary = ""
-        self._resume_context = ""
+        self._compact_summaries.pop(msg.chat_id, None)
+        self._resume_contexts.pop(msg.chat_id, None)
         if self.storage:
-            self.storage.clear_session(self.bot_name)
+            self.storage.clear_session(self.bot_name, chat_id=msg.chat_id)
         await ch.send_text(
             msg.chat_id, f"Workspace switched: {current} → {new_path}"
         )
@@ -486,10 +506,10 @@ class Router:
         new_proc.start()
         self.cli_process = new_proc
         self.ai_backend = new_backend
-        self._compact_summary = ""
-        self._resume_context = ""
+        self._compact_summaries.clear()
+        self._resume_contexts.clear()
         if self.storage:
-            self.storage.clear_session(self.bot_name)
+            self.storage.clear_session(self.bot_name, chat_id=msg.chat_id)
         # Notify Gateway so watchdog/scheduler refs are updated too.
         if self.on_backend_switched:
             await self.on_backend_switched(self.bot_name, new_proc, new_backend)
@@ -500,13 +520,16 @@ class Router:
     async def _cmd_compact(self, msg: IncomingMessage):
         """Summarize current conversation, reset session, carry summary forward."""
         ch = self._resolve_channel(msg)
-        if not self.cli_process.session_id:
+        chat_id = msg.chat_id
+
+        sid = self.pool.get_session_id(chat_id) if self.pool else getattr(self.cli_process, "session_id", None)
+        if not sid:
             await ch.send_text(
-                msg.chat_id, "No active session to compact."
+                chat_id, "No active session to compact."
             )
             return
 
-        await ch.send_text(msg.chat_id, "Compacting conversation...")
+        await ch.send_text(chat_id, "Compacting conversation...")
 
         # Extract user instructions after /compact
         user_hint = msg.text.strip().partition(" ")[2].strip()
@@ -519,33 +542,50 @@ class Router:
         )
         if user_hint:
             summary_prompt += f"\n\nAdditional instructions: {user_hint}"
+
+        # Acquire a process to run the summary
+        proc = None
+        use_pool = self.pool is not None
+        if use_pool:
+            proc = await self.pool.acquire(chat_id)
+        else:
+            proc = self.cli_process
+
         collector = TextCollector()
-        await ch.show_typing(msg.chat_id)
+        await ch.show_typing(chat_id)
         try:
-            await self.cli_process.send(summary_prompt, collector)
+            await proc.send(summary_prompt, collector)
         except Exception as e:
+            if use_pool:
+                self.pool.release(chat_id, proc)
             await ch.send_text(
-                msg.chat_id, f"Failed to generate summary: {e}"
+                chat_id, f"Failed to generate summary: {e}"
             )
             return
+
+        if use_pool:
+            self.pool.release(chat_id, proc)
 
         summary = collector.text.strip()
         if not summary:
             await ch.send_text(
-                msg.chat_id, "Failed to generate summary (empty response)."
+                chat_id, "Failed to generate summary (empty response)."
             )
             return
 
         # Reset session
-        await self._reset_backend_session()
+        if use_pool:
+            self.pool.clear_session(chat_id)
+        else:
+            await self._reset_backend_session()
         if self.storage:
-            self.storage.clear_session(self.bot_name)
+            self.storage.clear_session(self.bot_name, chat_id=chat_id)
 
-        self._resume_context = ""
-        self._compact_summary = summary
+        self._resume_contexts.pop(chat_id, None)
+        self._compact_summaries[chat_id] = summary
 
         await ch.send_text(
-            msg.chat_id,
+            chat_id,
             f"Session compacted. Summary:\n\n{summary}\n\n"
             "Next message will start a new session with this context.",
         )
@@ -553,6 +593,7 @@ class Router:
     # ---- Dispatch ----
 
     async def _dispatch(self, msg: IncomingMessage):
+        chat_id = msg.chat_id
         # Build system prompt and user message separately
         system_parts = []
         user_parts = []
@@ -565,15 +606,16 @@ class Router:
         if context:
             system_parts.append(context)
 
-        if self._resume_context:
-            system_parts.append(self._resume_context)
-            self._resume_context = ""
+        resume_ctx = self._resume_contexts.pop(chat_id, "")
+        if resume_ctx:
+            system_parts.append(resume_ctx)
 
         # Inject compact summary if available (system-level)
         used_compact = False
-        if self._compact_summary:
+        compact_summary = self._compact_summaries.get(chat_id, "")
+        if compact_summary:
             system_parts.append(
-                f"[Previous conversation summary]\n{self._compact_summary}\n"
+                f"[Previous conversation summary]\n{compact_summary}\n"
                 f"[End of summary]\n"
             )
             used_compact = True
@@ -597,23 +639,33 @@ class Router:
 
         callback = ChannelCallback(
             channel=self._resolve_channel(msg),
-            chat_id=msg.chat_id,
+            chat_id=chat_id,
         )
+
+        # Acquire a process from the pool (or use the single cli_process)
+        proc = None
+        use_pool = self.pool is not None
+        if use_pool:
+            proc = await self.pool.acquire(chat_id)
+        else:
+            proc = self.cli_process
 
         await callback.start_typing()
         try:
-            await self.cli_process.send(prompt, callback, model=model_override, chat_id=msg.chat_id, append_system_prompt=append_system_prompt)
-            drain_output = getattr(self.cli_process, "drain_output", None)
+            await proc.send(prompt, callback, model=model_override, chat_id=chat_id, append_system_prompt=append_system_prompt)
+            drain_output = getattr(proc, "drain_output", None)
             if callable(drain_output):
                 await drain_output()
-            turn_failed = getattr(self.cli_process, "last_turn_failed", False) is True
+            turn_failed = getattr(proc, "last_turn_failed", False) is True
             if used_compact and not turn_failed:
-                self._compact_summary = ""
+                self._compact_summaries.pop(chat_id, None)
         finally:
             await callback.close()
+            if use_pool:
+                self.pool.release(chat_id, proc)
 
-        turn_failed = getattr(self.cli_process, "last_turn_failed", False) is True
-        turn_error = getattr(self.cli_process, "last_turn_error", "")
+        turn_failed = getattr(proc, "last_turn_failed", False) is True
+        turn_error = getattr(proc, "last_turn_error", "")
         if not isinstance(turn_error, str):
             turn_error = ""
 
@@ -621,8 +673,8 @@ class Router:
             logger.warning(
                 "Turn failed: bot=%s chat_id=%s session=%s assistant_len=%d error=%s",
                 self.bot_name,
-                msg.chat_id,
-                getattr(self.cli_process, "session_id", None),
+                chat_id,
+                getattr(proc, "session_id", None),
                 len(callback.collected_text),
                 turn_error,
             )
@@ -630,29 +682,30 @@ class Router:
             logger.info(
                 "Turn complete: bot=%s chat_id=%s session=%s assistant_len=%d",
                 self.bot_name,
-                msg.chat_id,
-                getattr(self.cli_process, "session_id", None),
+                chat_id,
+                getattr(proc, "session_id", None),
                 len(callback.collected_text),
             )
 
         # Log transcript
+        sid = self.pool.get_session_id(chat_id) if use_pool else getattr(proc, "session_id", None)
         if self.local_dir:
-            sid = getattr(self.cli_process, "session_id", None) or "unknown"
             assistant_text = callback.collected_text
             if turn_failed and not assistant_text and turn_error:
                 assistant_text = f"Error: {turn_error}"
             log_turn(
-                self.local_dir / "transcripts" / f"{sid}.jsonl",
-                self.bot_name, msg.chat_id, text,
+                self.local_dir / "transcripts" / f"{sid or 'unknown'}.jsonl",
+                self.bot_name, chat_id, text,
                 assistant_text,
             )
 
         # Persist session after each turn
-        if self.storage and self.cli_process.session_id:
+        if self.storage and sid:
             try:
                 self.storage.save_session(
-                    self.bot_name, self.cli_process.session_id,
+                    self.bot_name, sid,
                     preview=text, backend=self.ai_backend,
+                    chat_id=chat_id,
                 )
             except Exception as e:
                 logger.warning("Failed to save session: %s", e)
