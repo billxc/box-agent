@@ -417,10 +417,13 @@ class DiscordChannel:
             return
 
         # Filter by allowed categories (if configured)
+        # DMs (no category_id) always pass through
         if self.allowed_categories:
-            parent_id = getattr(message.channel, "category_id", None)
-            if parent_id not in self.allowed_categories:
-                return
+            is_dm = isinstance(message.channel, discord.DMChannel)
+            if not is_dm:
+                parent_id = getattr(message.channel, "category_id", None)
+                if parent_id not in self.allowed_categories:
+                    return
 
         attachments = []
         for att in message.attachments:
