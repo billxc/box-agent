@@ -83,19 +83,22 @@ When multiple specialists work on the same repo concurrently, they MUST NOT
 share a single checkout — file conflicts, dirty state, and broken builds will
 result.
 
-**Rule: one specialist = one git worktree.**
+**Rule: one specialist = one `git worktree`.**
+
+IMPORTANT: Use the `git worktree` CLI command — do NOT use Claude Code's
+built-in EnterWorktree / worktree feature.  Those are different things.
+Claude Code worktrees create temporary directories that get deleted between
+sessions and cause "No such file or directory" errors on resume.
 
 When assigning a coding task that touches a shared repo, instruct the
-specialist to create a worktree:
+specialist to create a git worktree:
 
 ```
-send_to_agent("dev-alice", "Create a git worktree for feat/auth-refactor, \\
-then implement the auth middleware per docs/PRD-auth.md subtask M2.1.")
+send_to_agent("dev-alice", "Use `git worktree add` to create an isolated \\
+checkout for branch feat/auth-refactor, then implement the auth middleware \\
+per docs/PRD-auth.md subtask M2.1.  Do NOT use Claude Code's built-in \\
+worktree feature — use the git CLI directly.")
 ```
-
-The specialist will run `git worktree add` in the repo and work in isolation.
-Multiple specialists can work on different branches of the same repo at the
-same time without interference.
 
 **When to require worktrees:**
 - Two or more specialists working on the same repo simultaneously
@@ -364,8 +367,13 @@ for your full operating manual.
 
 ## Worktree Isolation
 
-When your admin assigns you a task in a shared repo, **always use a git
-worktree** so your work doesn't interfere with other specialists:
+When your admin assigns you a task in a shared repo, use `git worktree`
+to work in isolation so you don't interfere with other specialists.
+
+IMPORTANT: Always use the **`git worktree` CLI command**.  Do NOT use
+Claude Code's built-in EnterWorktree / worktree feature — those create
+temporary directories under `.worktrees/` that get deleted between sessions,
+causing "No such file or directory" errors on resume.
 
 ```bash
 cd /path/to/repo
