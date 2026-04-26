@@ -126,16 +126,16 @@ def send_to_agent(agent_name: str, message: str) -> str:
 
 
 @mcp.tool()
-def create_specialist(name: str, model: str = "", workspace: str = "") -> str:
+def create_specialist(name: str, model: str = "") -> str:
     """Dynamically create a new specialist agent in your workgroup.
 
     Creates a Discord channel for the specialist and starts a new AI backend.
-    The specialist becomes immediately available for send_to_agent calls.
+    The specialist gets its own isolated workspace directory automatically.
+    It becomes immediately available for send_to_agent calls.
 
     Args:
         name: Unique name for the specialist (used as channel name too)
         model: AI model to use (default: inherit from workgroup)
-        workspace: Working directory (default: inherit from workgroup)
     """
     try:
         client, base_url = _get_gateway_client()
@@ -153,7 +153,6 @@ def create_specialist(name: str, model: str = "", workspace: str = "") -> str:
                 "workgroup": wg_name,
                 "name": name,
                 "model": model,
-                "workspace": workspace,
             },
             timeout=30,
         )

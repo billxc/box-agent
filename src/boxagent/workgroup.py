@@ -465,8 +465,8 @@ class WorkgroupManager:
             admin_router.workgroup_agents = list(wg_cfg.specialists.keys())
 
         logger.info(
-            "Workgroup '%s': dynamically created specialist '%s' (channel=%d, model=%s)",
-            wg_name, sp_name, discord_channel_id, sp_cfg.model,
+            "Workgroup '%s': dynamically created specialist '%s' (channel=%d, model=%s, workspace=%s)",
+            wg_name, sp_name, discord_channel_id, sp_cfg.model, sp_cfg.workspace,
         )
         return {"ok": True, "channel_id": discord_channel_id}
 

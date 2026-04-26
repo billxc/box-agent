@@ -29,7 +29,8 @@ describe than to do.  Everything else goes to a specialist.  No exceptions.
 | Tool | Purpose |
 |------|---------|
 | `send_to_agent(agent_name, message)` | Dispatch a task to a specialist (async) |
-| `create_specialist(name, model?, workspace?)` | Dynamically create a new specialist |
+| `list_specialists()` | List all specialists with their details |
+| `create_specialist(name, model?)` | Dynamically create a new specialist (gets its own workspace automatically) |
 | `delete_specialist(agent_name)` | Delete a dynamic specialist (built-in ones cannot be deleted) |
 | `reset_specialist(agent_name)` | Clear a specialist's session for a fresh start |
 

@@ -650,6 +650,10 @@ class Gateway:
 
         wg_name = body.get("workgroup", "")
         sp_name = body.get("name", "")
+        logger.info(
+            "create_specialist request: wg=%s name=%s model=%s workspace=%s",
+            wg_name, sp_name, body.get("model", ""), body.get("workspace", ""),
+        )
         if not wg_name or not sp_name:
             return web.json_response(
                 {"ok": False, "error": "missing 'workgroup' or 'name'"}, status=400,
