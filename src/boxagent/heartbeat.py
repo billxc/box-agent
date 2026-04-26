@@ -212,7 +212,20 @@ class HeartbeatManager:
         """Find a session_id from the admin pool to fork from."""
         pool = self.admin_pool
         if pool is None:
+            logger.warning("Heartbeat '%s': admin_pool is None", self.wg_name)
             return None
+        # Log pool state for debugging
+        ctx_count = len(pool._chat_contexts)
+        active_count = len(pool._active)
+        session_ids = {
+            cid: ctx.session_id
+            for cid, ctx in pool._chat_contexts.items()
+            if ctx.session_id
+        }
+        logger.info(
+            "Heartbeat '%s': pool has %d contexts, %d active, sessions=%s",
+            self.wg_name, ctx_count, active_count, session_ids,
+        )
         for ctx in pool._chat_contexts.values():
             if ctx.session_id:
                 return ctx.session_id
