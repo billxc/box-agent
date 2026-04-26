@@ -1,113 +1,24 @@
 #!/usr/bin/env python3
-"""BoxAgent MCP server — sends media to Telegram via Bot API,
-and exposes schedule/session management tools.
+"""BoxAgent MCP server — schedule and session tools.
 
-Launched as a subprocess by Claude CLI (via --mcp-config) or Codex CLI
-(via -c mcp_servers.*).
+Injected for all agents (admin, specialist, regular bots).
 
-Receives configuration via:
-  1. CLI args: ``python mcp_server.py <bot_token> <chat_id>``
-  2. Environment variables: BOXAGENT_BOT_TOKEN, BOXAGENT_CHAT_ID,
-     BOXAGENT_CONFIG_DIR, BOXAGENT_LOCAL_DIR, BOXAGENT_NODE_ID
+Receives configuration via environment variables:
+  BOXAGENT_CONFIG_DIR, BOXAGENT_LOCAL_DIR, BOXAGENT_NODE_ID
 """
 
 import os
-import sys
 
-import httpx
 from mcp.server.fastmcp import FastMCP
 
-mcp = FastMCP("boxagent-telegram")
-
-# CLI args take priority over env vars.
-# Usage: python mcp_server.py <bot_token> <chat_id>
-# The token always starts with a digit sequence + colon, so we can
-# distinguish real args from pytest/other launcher args.
-if len(sys.argv) >= 3 and ":" in sys.argv[1]:
-    BOT_TOKEN = sys.argv[1]
-    CHAT_ID = sys.argv[2]
-else:
-    BOT_TOKEN = os.environ.get("BOXAGENT_BOT_TOKEN", "")
-    CHAT_ID = os.environ.get("BOXAGENT_CHAT_ID", "")
-BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
+mcp = FastMCP("boxagent")
 
 CONFIG_DIR = os.environ.get("BOXAGENT_CONFIG_DIR", "")
 LOCAL_DIR = os.environ.get("BOXAGENT_LOCAL_DIR", "")
 NODE_ID = os.environ.get("BOXAGENT_NODE_ID", "")
 
 
-def _send_media(
-    method: str, field: str, file_path: str, caption: str = ""
-) -> str:
-    """Upload a file to Telegram via Bot API multipart POST."""
-    with open(file_path, "rb") as f:
-        files = {field: f}
-        data: dict[str, str] = {"chat_id": CHAT_ID}
-        if caption:
-            data["caption"] = caption
-        r = httpx.post(
-            f"{BASE_URL}/{method}", data=data, files=files, timeout=60
-        )
-        r.raise_for_status()
-    return f"Sent {field} to chat {CHAT_ID}"
-
-
-@mcp.tool()
-def send_photo(file_path: str, caption: str = "") -> str:
-    """Send a photo/image to the user via Telegram.
-
-    Args:
-        file_path: Absolute path to the image file (jpg, png, etc.)
-        caption: Optional caption text
-    """
-    return _send_media("sendPhoto", "photo", file_path, caption)
-
-
-@mcp.tool()
-def send_document(file_path: str, caption: str = "") -> str:
-    """Send a file/document to the user via Telegram.
-
-    Args:
-        file_path: Absolute path to the file
-        caption: Optional caption text
-    """
-    return _send_media("sendDocument", "document", file_path, caption)
-
-
-@mcp.tool()
-def send_video(file_path: str, caption: str = "") -> str:
-    """Send a video to the user via Telegram.
-
-    Args:
-        file_path: Absolute path to the video file (mp4, etc.)
-        caption: Optional caption text
-    """
-    return _send_media("sendVideo", "video", file_path, caption)
-
-
-@mcp.tool()
-def send_audio(file_path: str, caption: str = "") -> str:
-    """Send an audio file to the user via Telegram.
-
-    Args:
-        file_path: Absolute path to the audio file (mp3, ogg, etc.)
-        caption: Optional caption text
-    """
-    return _send_media("sendAudio", "audio", file_path, caption)
-
-
-@mcp.tool()
-def send_animation(file_path: str, caption: str = "") -> str:
-    """Send a GIF animation to the user via Telegram.
-
-    Args:
-        file_path: Absolute path to the GIF file
-        caption: Optional caption text
-    """
-    return _send_media("sendAnimation", "animation", file_path, caption)
-
-
-# ---- Schedule / Sessions tools ----
+# ---- Schedule tools ----
 
 
 @mcp.tool()
@@ -212,6 +123,9 @@ def schedule_run_detail(task_id: str, run_index: int = 1) -> str:
     from boxagent.schedule_cli import format_schedule_run_detail
 
     return format_schedule_run_detail(LOCAL_DIR, task_id, run_index)
+
+
+# ---- Session tools ----
 
 
 @mcp.tool()

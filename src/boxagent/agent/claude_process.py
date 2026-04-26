@@ -77,28 +77,50 @@ class ClaudeProcess(BaseCLIProcess):
                 args.append("--fork-session")
                 self.fork_session = False  # only fork on the first turn
 
-        # MCP server config for Telegram media tools
-        if self.bot_token and chat_id:
-            mcp_server_path = str(
-                Path(__file__).parent.parent / "mcp_server.py"
-            )
-            mcp_env = {
-                "BOXAGENT_BOT_TOKEN": self.bot_token,
-                "BOXAGENT_CHAT_ID": chat_id,
-            }
-            # Pass schedule/session config paths to MCP server
+        # MCP servers
+        mcp_pkg = Path(__file__).parent.parent
+        mcp_servers = {}
+
+        # boxagent — schedule + session tools (always available)
+        if chat_id:
+            agent_env = {"BOXAGENT_BOT_NAME": self.bot_name}
             for key in ("BOXAGENT_CONFIG_DIR", "BOXAGENT_LOCAL_DIR", "BOXAGENT_NODE_ID"):
                 val = os.environ.get(key, "")
                 if val:
-                    mcp_env[key] = val
-            mcp_config = json.dumps({"mcpServers": {
-                "boxagent-telegram": {
-                    "command": sys.executable,
-                    "args": [mcp_server_path],
-                    "env": mcp_env,
-                }
-            }})
-            args += ["--mcp-config", mcp_config]
+                    agent_env[key] = val
+            mcp_servers["boxagent"] = {
+                "command": sys.executable,
+                "args": [str(mcp_pkg / "mcp_server.py")],
+                "env": agent_env,
+            }
+
+        # boxagent-admin — send_to_agent + create_specialist (admin only)
+        if chat_id and self.is_workgroup_admin:
+            admin_env = {
+                "BOXAGENT_BOT_NAME": self.bot_name,
+            }
+            local_dir = os.environ.get("BOXAGENT_LOCAL_DIR", "")
+            if local_dir:
+                admin_env["BOXAGENT_LOCAL_DIR"] = local_dir
+            mcp_servers["boxagent-admin"] = {
+                "command": sys.executable,
+                "args": [str(mcp_pkg / "mcp_admin.py")],
+                "env": admin_env,
+            }
+
+        # boxagent-telegram — media tools (only when Telegram token available)
+        if self.bot_token and chat_id:
+            mcp_servers["boxagent-telegram"] = {
+                "command": sys.executable,
+                "args": [str(mcp_pkg / "mcp_telegram.py")],
+                "env": {
+                    "BOXAGENT_BOT_TOKEN": self.bot_token,
+                    "BOXAGENT_CHAT_ID": chat_id,
+                },
+            }
+
+        if mcp_servers:
+            args += ["--mcp-config", json.dumps({"mcpServers": mcp_servers})]
 
         # -p (print mode) is a boolean flag; message is a positional arg.
         # Use "--" to stop option parsing so messages starting with "-"

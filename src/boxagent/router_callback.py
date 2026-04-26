@@ -49,11 +49,10 @@ class TextCollector:
 
 @dataclass
 class ChannelCallback:
-    """Routes agent streaming output to a Telegram channel."""
+    """Routes agent streaming output to a channel."""
     channel: object
     chat_id: str
-    reply_prefix: str = ""  # prepended to first stream chunk (e.g. "bot-name: ")
-    _prefix_sent: bool = False
+    webhook_name: str = ""  # bot name for webhook-based workgroup replies
     _handle: object = None
     _typing_task: object = None
     _closed: bool = False
@@ -123,14 +122,12 @@ class ChannelCallback:
             if self._needs_paragraph_break_after_tool and text.strip():
                 prefix = "\n\n"
                 self._needs_paragraph_break_after_tool = False
-            # Prepend bot identity on first chunk in bus channel
-            if self.reply_prefix and not self._prefix_sent:
-                prefix = self.reply_prefix + prefix
-                self._prefix_sent = True
             self.collected_text += prefix + text
             self._stop_typing()
             if self._handle is None:
-                self._handle = await self.channel.stream_start(self.chat_id)
+                self._handle = await self.channel.stream_start(
+                    self.chat_id, webhook_name=self.webhook_name,
+                )
             await self.channel.stream_update(self._handle, prefix + text)
 
     async def on_tool_call(self, name: str, input: dict, result: str):
@@ -146,7 +143,8 @@ class ChannelCallback:
                     self._needs_paragraph_break_after_tool = True
                 else:
                     await self.channel.send_text(
-                        self.chat_id, fmt, parse_mode=None
+                        self.chat_id, fmt, parse_mode=None,
+                        webhook_name=self.webhook_name,
                     )
         # Restart typing — tool execution may take a long time
         await self.start_typing()
@@ -190,7 +188,8 @@ class ChannelCallback:
                 self._needs_paragraph_break_after_tool = True
             else:
                 await self.channel.send_text(
-                    self.chat_id, fmt, parse_mode=None
+                    self.chat_id, fmt, parse_mode=None,
+                    webhook_name=self.webhook_name,
                 )
         await self.start_typing()
 
@@ -202,7 +201,10 @@ class ChannelCallback:
         if self._handle:
             await self.channel.stream_end(self._handle)
             self._handle = None
-        await self.channel.send_text(self.chat_id, f"Error: {error}")
+        await self.channel.send_text(
+            self.chat_id, f"Error: {error}",
+            webhook_name=self.webhook_name,
+        )
 
     async def on_file(self, path: str, caption: str = ""):
         pass

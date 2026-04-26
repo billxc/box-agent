@@ -74,12 +74,15 @@ class CodexProcess(BaseCLIProcess):
 
     def _extra_env(self, chat_id: str) -> dict[str, str] | None:
         """Environment variables for the MCP server subprocess."""
-        if not self.bot_token or not chat_id:
+        if not chat_id:
             return None
-        return {
-            "BOXAGENT_BOT_TOKEN": self.bot_token,
-            "BOXAGENT_CHAT_ID": chat_id,
-        }
+        env = {}
+        if self.bot_token:
+            env["BOXAGENT_BOT_TOKEN"] = self.bot_token
+            env["BOXAGENT_CHAT_ID"] = chat_id
+        if self.bot_name:
+            env["BOXAGENT_BOT_NAME"] = self.bot_name
+        return env or None
 
     def _build_args(self, message: str, model: str, chat_id: str, append_system_prompt: str = "") -> list[str]:
         # Inject system-level context via Codex's developer_instructions config

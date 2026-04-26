@@ -33,6 +33,8 @@ class BaseCLIProcess:
     model: str = ""
     agent: str = ""
     bot_token: str = ""
+    bot_name: str = ""
+    is_workgroup_admin: bool = False
     yolo: bool = False
     state: Literal["idle", "busy", "dead"] = "idle"
     supports_session_persistence: bool = field(

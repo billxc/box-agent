@@ -78,7 +78,7 @@ class TestOnStreamStopsTyping:
 
     async def test_on_stream_starts_stream(self, callback, mock_channel):
         await callback.on_stream("hello")
-        mock_channel.stream_start.assert_called_once_with("chat1")
+        mock_channel.stream_start.assert_called_once_with("chat1", webhook_name="")
         mock_channel.stream_update.assert_called_once()
 
     async def test_on_stream_reuses_handle(self, callback, mock_channel):

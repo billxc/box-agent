@@ -26,7 +26,7 @@ class IncomingMessage:
     text: str
     attachments: list[Attachment] = field(default_factory=list)
     reply_to: str | None = None
-    via_bus: bool = False  # True when routed through the bus channel
+    via_workgroup: bool = False  # True when routed through workgroup delegation
     timestamp: datetime = field(default_factory=datetime.now)
 
 
@@ -36,6 +36,7 @@ class StreamHandle:
 
     message_id: str
     chat_id: str
+    webhook_name: str = ""  # bot name for webhook-based bus replies
 
 
 class Channel(Protocol):
@@ -45,10 +46,11 @@ class Channel(Protocol):
     async def stop(self) -> None: ...
 
     async def send_text(
-        self, chat_id: str, text: str, parse_mode: str = "Markdown"
+        self, chat_id: str, text: str, parse_mode: str = "Markdown",
+        **kwargs,
     ) -> str: ...
 
-    async def stream_start(self, chat_id: str) -> StreamHandle: ...
+    async def stream_start(self, chat_id: str, **kwargs) -> StreamHandle: ...
     async def stream_update(self, handle: StreamHandle, text: str) -> None: ...
     async def stream_end(self, handle: StreamHandle) -> str: ...
 

@@ -89,7 +89,8 @@ class TelegramChannel:
         logger.info("Telegram channel stopped")
 
     async def send_text(
-        self, chat_id: str, text: str, parse_mode: str = "MarkdownV2"
+        self, chat_id: str, text: str, parse_mode: str = "MarkdownV2",
+        **kwargs,
     ) -> str:
         """Send text message, splitting if too long.
 
@@ -152,7 +153,7 @@ class TelegramChannel:
                 raise
         return str(result.message_id)
 
-    async def stream_start(self, chat_id: str) -> StreamHandle:
+    async def stream_start(self, chat_id: str, **kwargs) -> StreamHandle:
         """Send initial placeholder message for streaming."""
         result = await self._bot.send_message(
             chat_id=chat_id, text="...", parse_mode=None

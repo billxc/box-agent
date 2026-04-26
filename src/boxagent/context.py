@@ -16,6 +16,7 @@ def build_session_context(
     model: str = "",
     workspace: str = "",
     config_dir: str = "",
+    workgroup_agents: list[str] | None = None,
 ) -> str:
     """Build a one-time context block for the first message of a session.
 
@@ -23,6 +24,7 @@ def build_session_context(
     1. BoxAgent runtime info (bot name, node, backend, model, etc.)
     2. {config_dir}/BOXAGENT.md (if exists)
     3. {workspace}/BOXAGENT.md (if exists)
+    4. Workgroup agent info (if this bot is an admin with specialists)
     """
     lines = [
         "[BoxAgent Context]",
@@ -42,6 +44,21 @@ def build_session_context(
         if content:
             lines.append(f"\n# From {label}/BOXAGENT.md")
             lines.append(content)
+
+    # Workgroup agent delegation info
+    if workgroup_agents:
+        lines.append("")
+        lines.append("[Workgroup]")
+        lines.append("You are the admin of a workgroup. Available specialist agents:")
+        for agent_name in workgroup_agents:
+            lines.append(f"- {agent_name}")
+        lines.append("")
+        lines.append(
+            "Use the send_to_agent MCP tool to delegate tasks to specialists. "
+            "The tool sends your message to the specialist's Discord channel "
+            "(visible to observers) and returns the specialist's full response."
+        )
+        lines.append("[/Workgroup]")
 
     lines.append("[/BoxAgent Context]")
     return "\n".join(lines)

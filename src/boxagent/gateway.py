@@ -11,13 +11,14 @@ from pathlib import Path
 from boxagent.agent.claude_process import ClaudeProcess
 from boxagent.channels.base import IncomingMessage
 from boxagent.channels.telegram import TelegramChannel
-from boxagent.config import AppConfig, BotConfig, node_matches
+from boxagent.config import AppConfig, BotConfig, WorkgroupConfig, node_matches
 from boxagent.paths import default_config_dir, default_local_dir, default_workspace_dir
 from boxagent.router import Router
 from boxagent.session_pool import SessionPool
 from boxagent.scheduler import BotRef, Scheduler, load_schedules
 from boxagent.storage import Storage
 from boxagent.watchdog import Watchdog
+from boxagent.workgroup import WorkgroupManager
 
 from aiohttp import web
 
@@ -40,6 +41,7 @@ def _create_backend(bot_cfg: BotConfig, session_id: str | None) -> object:
             model=bot_cfg.model,
             agent=bot_cfg.agent,
             bot_token=bot_cfg.telegram_token,
+            bot_name=bot_cfg.name,
         )
     if bot_cfg.ai_backend == "codex-cli":
         from boxagent.agent.codex_process import CodexProcess
@@ -50,6 +52,7 @@ def _create_backend(bot_cfg: BotConfig, session_id: str | None) -> object:
             model=bot_cfg.model,
             agent=bot_cfg.agent,
             bot_token=bot_cfg.telegram_token,
+            bot_name=bot_cfg.name,
             yolo=bot_cfg.yolo,
         )
     return ClaudeProcess(
@@ -58,6 +61,7 @@ def _create_backend(bot_cfg: BotConfig, session_id: str | None) -> object:
         model=bot_cfg.model,
         agent=bot_cfg.agent,
         bot_token=bot_cfg.telegram_token,
+        bot_name=bot_cfg.name,
         yolo=bot_cfg.yolo,
     )
 
@@ -157,6 +161,7 @@ class Gateway:
     _scheduler_task: asyncio.Task | None = field(default=None, repr=False)
     _http_runner: web.AppRunner | None = field(default=None, repr=False)
     _start_time: float = 0.0
+    _workgroup_mgr: WorkgroupManager | None = field(default=None, repr=False)
 
     def _get_bot_discord_channel(self, bot_name: str) -> object | None:
         """Return the shared Discord channel for a bot, or None."""
@@ -164,47 +169,6 @@ class Gateway:
         if key is None:
             return None
         return self._discord_channels.get(key)
-
-    async def send_to_bot(
-        self,
-        target_bot: str,
-        text: str,
-        from_bot: str = "",
-        chat_id: str = "",
-    ) -> bool:
-        """Route a message internally to another bot's Router.
-
-        Returns True if the message was delivered, False if target not found.
-        """
-        router = self._routers.get(target_bot)
-        if router is None:
-            logger.warning("send_to_bot: target '%s' not found", target_bot)
-            return False
-
-        # Use the target bot's first allowed user as fallback chat_id
-        if not chat_id:
-            target_cfg = self.config.bots.get(target_bot)
-            if target_cfg and target_cfg.allowed_users:
-                chat_id = str(target_cfg.allowed_users[0])
-
-        # Determine a bus channel_id for replies (find a text channel in
-        # the bus category so the target bot can reply there).
-        dc_channel = self._get_bot_discord_channel(target_bot)
-        reply_chat_id = chat_id
-
-        incoming = IncomingMessage(
-            channel="discord",
-            chat_id=reply_chat_id,
-            user_id=from_bot or "bus",
-            text=text,
-            via_bus=True,
-        )
-        logger.info(
-            "Bus internal route: %s → @%s: %s",
-            from_bot or "(unknown)", target_bot, text[:80],
-        )
-        await router.handle_message(incoming)
-        return True
 
     async def start(self) -> None:
         self._start_time = time.time()
@@ -232,6 +196,23 @@ class Gateway:
             await dc_ch.start()
             logger.info("Shared Discord channel '%s' started", dc_key)
 
+        # Phase 4: Start workgroups (after Discord channels are started)
+        if self.config.workgroups:
+            self._workgroup_mgr = WorkgroupManager(
+                config=self.config.workgroups,
+                config_dir=str(self.config_dir),
+                node_id=self.config.node_id,
+                local_dir=self._storage.local_dir if self._storage else None,
+                start_time=self._start_time,
+                storage=self._storage,
+                discord_channels=self._discord_channels,
+                _create_backend=_create_backend,
+                _ensure_git_repo=_ensure_git_repo,
+                _sync_skills=sync_skills,
+            )
+            for wg_name, wg_cfg in self.config.workgroups.items():
+                await self._workgroup_mgr.start_workgroup(wg_name, wg_cfg)
+
         # Start scheduler
         self._start_scheduler()
 
@@ -258,6 +239,14 @@ class Gateway:
                     tool_calls_display=bot_cfg.display_tool_calls,
                 )
             self._bot_discord_key[name] = key
+
+        # Ensure workgroup Discord identities are also created
+        for wg_name, wg_cfg in self.config.workgroups.items():
+            key = wg_cfg.discord_bot_id
+            if key and key not in self._discord_channels:
+                self._discord_channels[key] = DiscordChannel(
+                    token=wg_cfg.discord_token,
+                )
 
     async def _start_bot(self, name: str, bot_cfg: BotConfig) -> None:
         session_id = None
@@ -337,7 +326,6 @@ class Gateway:
             extra_skill_dirs=bot_cfg.extra_skill_dirs,
             ai_backend=bot_cfg.ai_backend,
             on_backend_switched=self._on_backend_switched,
-            on_bus_send=self._on_bus_send if bot_cfg.discord_bus_category else None,
         )
 
         # Wire Telegram channel to router
@@ -353,15 +341,9 @@ class Gateway:
             categories: list = list(bot_cfg.discord_allowed_categories)
             if bot_cfg.discord_dm:
                 categories.append(DM_CATEGORY)
-            dc_channel.register_route(router.handle_message, categories)
+            if categories:
+                dc_channel.register_route(router.handle_message, categories)
             router._channels["discord"] = dc_channel
-
-            # Register on shared bus channel if configured
-            if bot_cfg.discord_bus_category:
-                dc_channel.register_bus_route(
-                    router.handle_message, name, bot_cfg.discord_bus_category,
-                    is_admin=bot_cfg.discord_bus_admin,
-                )
 
         self._routers[name] = router
 
@@ -511,12 +493,6 @@ class Gateway:
             self._watchdogs[bot_name].cli_process = new_cli
         logger.info("Bot '%s' backend switched to %s (refs synced)", bot_name, new_backend)
 
-    async def _on_bus_send(
-        self, from_bot: str, target_bot: str, text: str, chat_id: str
-    ) -> None:
-        """Called by Router when AI output contains @bot-name — forward internally."""
-        await self.send_to_bot(target_bot, text, from_bot=from_bot, chat_id=chat_id)
-
     @property
     def _sock_path(self) -> Path:
         return self.local_dir / "api.sock"
@@ -536,6 +512,8 @@ class Gateway:
         """Start the internal HTTP API server (Unix socket + optional TCP)."""
         app = web.Application()
         app.router.add_post("/api/schedule/run", self._handle_schedule_run)
+        app.router.add_post("/api/workgroup/send", self._handle_workgroup_send)
+        app.router.add_post("/api/workgroup/create_specialist", self._handle_create_specialist)
         runner = web.AppRunner(app)
         await runner.setup()
         self._http_runner = runner
@@ -614,6 +592,51 @@ class Gateway:
         except Exception as e:
             logger.error("Async schedule/run '%s' failed: %s", task_id, e)
 
+    async def _handle_workgroup_send(self, request: web.Request) -> web.Response:
+        """Handle POST /api/workgroup/send — delegate to a specialist."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+
+        target = body.get("target", "")
+        message = body.get("message", "")
+        from_bot = body.get("from", "")
+
+        if not target:
+            return web.json_response({"ok": False, "error": "missing 'target'"}, status=400)
+        if not message:
+            return web.json_response({"ok": False, "error": "missing 'message'"}, status=400)
+
+        try:
+            result = await self._workgroup_mgr.send_to_specialist(target, message, from_bot=from_bot)
+            return web.json_response({"ok": True, "response": result})
+        except Exception as e:
+            logger.error("Workgroup send to '%s' failed: %s", target, e)
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+    async def _handle_create_specialist(self, request: web.Request) -> web.Response:
+        """Handle POST /api/workgroup/create_specialist."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+
+        wg_name = body.get("workgroup", "")
+        sp_name = body.get("name", "")
+        if not wg_name or not sp_name:
+            return web.json_response(
+                {"ok": False, "error": "missing 'workgroup' or 'name'"}, status=400,
+            )
+
+        result = await self._workgroup_mgr.create_specialist(
+            wg_name, sp_name,
+            model=body.get("model", ""),
+            workspace=body.get("workspace", ""),
+        )
+        status = 200 if result.get("ok") else 400
+        return web.json_response(result, status=status)
+
     async def stop(self) -> None:
         logger.info("Gateway shutting down...")
 
@@ -665,5 +688,9 @@ class Gateway:
                 await pool.stop()
             except Exception as e:
                 logger.error("Error stopping pool %s: %s", name, e)
+
+        # Stop workgroup resources
+        if self._workgroup_mgr:
+            await self._workgroup_mgr.stop()
 
         logger.info("Gateway stopped")

@@ -373,8 +373,9 @@ class TestMCPConfig:
         assert "12345" in args_str
         assert "boxagent-telegram" in args_str
 
-    async def test_no_mcp_config_without_bot_token(self, callback):
-        """--mcp-config is NOT added when bot_token is empty."""
+    async def test_no_telegram_mcp_without_bot_token(self, callback):
+        """boxagent-telegram MCP is NOT added when bot_token is empty,
+        but boxagent MCP is still present."""
         from boxagent.agent.claude_process import ClaudeProcess
 
         events = [result_event()]
@@ -392,7 +393,9 @@ class TestMCPConfig:
             await cli._execute_turn("test", callback, chat_id="12345")
 
         args_str = " ".join(str(a) for a in captured_args)
-        assert "--mcp-config" not in args_str
+        assert "--mcp-config" in args_str
+        assert "boxagent-telegram" not in args_str
+        assert '"boxagent"' in args_str
 
     async def test_no_mcp_config_without_chat_id(self, callback):
         """--mcp-config is NOT added when chat_id is empty."""
@@ -415,8 +418,8 @@ class TestMCPConfig:
         args_str = " ".join(str(a) for a in captured_args)
         assert "--mcp-config" not in args_str
 
-    async def test_mcp_config_contains_server_path(self, callback):
-        """MCP config JSON points to mcp_server.py."""
+    async def test_mcp_config_contains_both_servers(self, callback):
+        """MCP config has both boxagent and boxagent-telegram servers."""
         from boxagent.agent.claude_process import ClaudeProcess
 
         events = [result_event()]
@@ -437,10 +440,16 @@ class TestMCPConfig:
         args_list = list(captured_args)
         idx = args_list.index("--mcp-config")
         config_json = json.loads(args_list[idx + 1])
-        server = config_json["mcpServers"]["boxagent-telegram"]
-        assert "mcp_server.py" in server["args"][0]
-        assert server["env"]["BOXAGENT_BOT_TOKEN"] == "tok"
-        assert server["env"]["BOXAGENT_CHAT_ID"] == "999"
+
+        # boxagent server (schedule/session/workgroup)
+        agent_server = config_json["mcpServers"]["boxagent"]
+        assert "mcp_server.py" in agent_server["args"][0]
+
+        # boxagent-telegram server (media tools)
+        tg_server = config_json["mcpServers"]["boxagent-telegram"]
+        assert "mcp_telegram.py" in tg_server["args"][0]
+        assert tg_server["env"]["BOXAGENT_BOT_TOKEN"] == "tok"
+        assert tg_server["env"]["BOXAGENT_CHAT_ID"] == "999"
 
 
 class TestStop:

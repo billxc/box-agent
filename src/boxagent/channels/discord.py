@@ -35,7 +35,8 @@ class DiscordChannel:
 
     Supports multiple BA bots sharing a single Discord client connection.
     Each bot registers its own message handler for specific channel categories
-    via ``register_route()``.
+    via ``register_route()``, or for specific channels via
+    ``register_channel_route()`` (used by workgroups).
     """
 
     token: str
@@ -44,6 +45,12 @@ class DiscordChannel:
     # Category → message callback routing map.
     # Populated via register_route(); keyed by category_id (int) or DM_CATEGORY.
     _category_map: dict[CategoryKey, Callable] = field(
+        default_factory=dict, repr=False
+    )
+
+    # Channel → message callback routing map (takes priority over category).
+    # Populated via register_channel_route(); keyed by channel_id (int).
+    _channel_map: dict[int, Callable] = field(
         default_factory=dict, repr=False
     )
 
@@ -60,13 +67,10 @@ class DiscordChannel:
         default_factory=dict, repr=False
     )
 
-    # Bus channel: shared category where multiple bots listen,
-    # routed by @bot-name prefix.
-    _bus_category: int = 0  # 0 = disabled
-    _bus_map: dict[str, Callable] = field(
+    # Webhooks keyed by "bot_name" for workgroup virtual identities.
+    _webhooks: dict[str, discord.Webhook] = field(
         default_factory=dict, repr=False
-    )  # bot_name (lowercase) → callback
-    _bus_admin: str = ""  # bot_name that receives no-prefix bus messages
+    )
 
     def register_route(
         self,
@@ -86,44 +90,25 @@ class DiscordChannel:
                 )
             self._category_map[cat] = on_message
 
-    def register_bus_route(
+    def register_channel_route(
         self,
         on_message: Callable,
-        bot_name: str,
-        bus_category: int,
-        is_admin: bool = False,
+        channel_id: int,
     ) -> None:
-        """Register a bot on the shared bus channel.
+        """Register a message handler for a specific Discord channel.
+
+        Used by workgroups where each bot has its own channel.
 
         Args:
             on_message: Async callback ``(IncomingMessage) -> None``.
-            bot_name: Bot name used as ``@bot_name`` prefix for routing.
-            bus_category: Discord guild category ID for the bus channel.
-            is_admin: If True, this bot receives messages without @prefix.
+            channel_id: Discord channel ID.
         """
-        if self._bus_category and self._bus_category != bus_category:
+        if channel_id in self._channel_map:
             raise ValueError(
-                f"Bus category mismatch: existing {self._bus_category}, "
-                f"new {bus_category} from '{bot_name}'"
+                f"Discord channel {channel_id} is already registered to another route"
             )
-        self._bus_category = bus_category
-        key = bot_name.lower()
-        if key in self._bus_map:
-            raise ValueError(
-                f"Bus route for '{bot_name}' is already registered"
-            )
-        self._bus_map[key] = on_message
-        if is_admin:
-            if self._bus_admin:
-                raise ValueError(
-                    f"Bus admin already set to '{self._bus_admin}', "
-                    f"cannot also set '{bot_name}'"
-                )
-            self._bus_admin = key
-        logger.info(
-            "Registered bus route: @%s (category %d%s)",
-            key, bus_category, ", admin" if is_admin else "",
-        )
+        self._channel_map[channel_id] = on_message
+        logger.info("Registered channel route: %d", channel_id)
 
     @staticmethod
     def _get_category_key(channel: object) -> CategoryKey | None:
@@ -134,8 +119,72 @@ class DiscordChannel:
 
     def _resolve_callback(self, channel: object) -> Callable | None:
         """Find the registered callback for the given Discord channel."""
+        # Check channel-specific route first (workgroup)
+        channel_id = getattr(channel, "id", None)
+        if channel_id is not None and channel_id in self._channel_map:
+            return self._channel_map[channel_id]
+        # Fall back to category-based routing
         key = self._get_category_key(channel)
         return self._category_map.get(key)
+
+    async def _ensure_webhook(self, bot_name: str, chat_id: str) -> discord.Webhook | None:
+        """Get or create a webhook for a named identity in a channel."""
+        key = bot_name.lower()
+        # Key by "name:channel" to support same identity in multiple channels
+        cache_key = f"{key}:{chat_id}"
+        if cache_key in self._webhooks:
+            return self._webhooks[cache_key]
+        try:
+            channel = await self._resolve_channel(chat_id)
+            # Discord forbids "discord" in webhook names
+            safe_name = key.replace("discord", "dc")
+            webhook_name = f"ba-{safe_name}"
+            # Reuse existing webhook if found
+            existing = await channel.webhooks()
+            for wh in existing:
+                if wh.name == webhook_name:
+                    self._webhooks[cache_key] = wh
+                    logger.info("Reusing webhook '%s' in channel %s", webhook_name, chat_id)
+                    return wh
+            # Create new webhook
+            wh = await channel.create_webhook(name=webhook_name)
+            self._webhooks[cache_key] = wh
+            logger.info("Created webhook '%s' in channel %s", webhook_name, chat_id)
+            return wh
+        except Exception as e:
+            logger.warning("Failed to ensure webhook for '%s': %s", bot_name, e)
+            return None
+
+    async def create_text_channel(self, category_id: int, name: str) -> int:
+        """Create a text channel under a category. Returns the new channel ID."""
+        category = self._client.get_channel(category_id)
+        if category is None:
+            category = await self._client.fetch_channel(category_id)
+        channel = await category.guild.create_text_channel(name, category=category)
+        logger.info("Created Discord channel #%s (ID: %d) in category %d", name, channel.id, category_id)
+        return channel.id
+
+    async def send_via_webhook(
+        self, channel_id: int, webhook_name: str, text: str,
+    ) -> str:
+        """Send a message in a channel using a named webhook identity.
+
+        Used by workgroup admin to post tasks in specialist channels.
+        Returns the message ID.
+        """
+        chat_id = str(channel_id)
+        webhook = await self._ensure_webhook(webhook_name, chat_id)
+        if not webhook:
+            # Fallback to normal send
+            channel = await self._resolve_channel(chat_id)
+            result = await channel.send(text)
+            return str(result.id)
+        chunks = split_message(text, DISCORD_LIMIT)
+        last_msg_id = ""
+        for chunk in chunks:
+            result = await webhook.send(chunk, wait=True)
+            last_msg_id = str(result.id)
+        return last_msg_id
 
     async def start(self) -> None:
         """Start Discord bot connection."""
@@ -241,18 +290,26 @@ class DiscordChannel:
         return self._pending_interactions.pop(chat_id, None)
 
     async def send_text(
-        self, chat_id: str, text: str, parse_mode: str = "Markdown"
+        self, chat_id: str, text: str, parse_mode: str = "Markdown",
+        webhook_name: str = "",
     ) -> str:
         """Send text message, splitting if too long.
 
         If there is a pending slash-command interaction for this chat, the
         first chunk is delivered via ``interaction.edit_original_response``
         so that Discord's "thinking..." placeholder is replaced inline.
+
+        If *webhook_name* is set, sends via a bus webhook instead.
         """
         interaction = await self._consume_interaction(chat_id)
         text = md_to_discord(text)
         chunks = split_message(text, DISCORD_LIMIT)
         last_msg_id = ""
+
+        webhook = None
+        if webhook_name:
+            webhook = await self._ensure_webhook(webhook_name, chat_id)
+
         for i, chunk in enumerate(chunks):
             if i == 0 and interaction:
                 try:
@@ -262,8 +319,11 @@ class DiscordChannel:
                 except Exception as e:
                     logger.warning("Failed to edit interaction response: %s", e)
                     # Fall through to normal send
-            channel = await self._resolve_channel(chat_id)
-            result = await channel.send(chunk)
+            if webhook:
+                result = await webhook.send(chunk, wait=True)
+            else:
+                channel = await self._resolve_channel(chat_id)
+                result = await channel.send(chunk)
             last_msg_id = str(result.id)
         return last_msg_id
 
@@ -305,18 +365,21 @@ class DiscordChannel:
         result = await channel.send(md_to_discord(text), view=view)
         return str(result.id)
 
-    async def stream_start(self, chat_id: str) -> StreamHandle:
+    async def stream_start(self, chat_id: str, webhook_name: str = "") -> StreamHandle:
         """Send initial placeholder message for streaming.
 
         Reuses a pending slash-command interaction when available so the
         "thinking..." indicator becomes the streaming message.
+
+        If *webhook_name* is set, sends the placeholder via a bus webhook.
         """
         interaction = await self._consume_interaction(chat_id)
         if interaction:
             try:
                 msg = await interaction.edit_original_response(content="...")
                 handle = StreamHandle(
-                    message_id=str(msg.id), chat_id=chat_id
+                    message_id=str(msg.id), chat_id=chat_id,
+                    webhook_name=webhook_name,
                 )
                 self._stream_buffers[handle.message_id] = ""
                 self._stream_last_sent[handle.message_id] = ""
@@ -324,10 +387,23 @@ class DiscordChannel:
             except Exception as e:
                 logger.warning("Failed to edit interaction for stream: %s", e)
 
+        if webhook_name:
+            webhook = await self._ensure_webhook(webhook_name, chat_id)
+            if webhook:
+                result = await webhook.send("...", wait=True)
+                handle = StreamHandle(
+                    message_id=str(result.id), chat_id=chat_id,
+                    webhook_name=webhook_name,
+                )
+                self._stream_buffers[handle.message_id] = ""
+                self._stream_last_sent[handle.message_id] = ""
+                return handle
+
         channel = await self._resolve_channel(chat_id)
         result = await channel.send("...")
         handle = StreamHandle(
-            message_id=str(result.id), chat_id=chat_id
+            message_id=str(result.id), chat_id=chat_id,
+            webhook_name=webhook_name,
         )
         self._stream_buffers[handle.message_id] = ""
         self._stream_last_sent[handle.message_id] = ""
@@ -446,10 +522,17 @@ class DiscordChannel:
         if text and (text != last or final):
             try:
                 send_text = md_to_discord(text) if final else text
-                msg = await self._fetch_message(handle.chat_id, int(mid))
-                if msg:
-                    await msg.edit(content=send_text)
-                    self._stream_last_sent[mid] = text
+                if handle.webhook_name:
+                    cache_key = f"{handle.webhook_name.lower()}:{handle.chat_id}"
+                    webhook = self._webhooks.get(cache_key)
+                    if webhook:
+                        await webhook.edit_message(int(mid), content=send_text)
+                        self._stream_last_sent[mid] = text
+                else:
+                    msg = await self._fetch_message(handle.chat_id, int(mid))
+                    if msg:
+                        await msg.edit(content=send_text)
+                        self._stream_last_sent[mid] = text
             except Exception as e:
                 logger.warning("Failed to edit stream message: %s", e)
         self._stream_timers.pop(mid, None)
@@ -466,9 +549,15 @@ class DiscordChannel:
 
         # Edit old message with the 'keep' portion (converted for Discord)
         try:
-            msg = await self._fetch_message(handle.chat_id, int(old_mid))
-            if msg:
-                await msg.edit(content=md_to_discord(keep))
+            if handle.webhook_name:
+                cache_key = f"{handle.webhook_name.lower()}:{handle.chat_id}"
+                webhook = self._webhooks.get(cache_key)
+                if webhook:
+                    await webhook.edit_message(int(old_mid), content=md_to_discord(keep))
+            else:
+                msg = await self._fetch_message(handle.chat_id, int(old_mid))
+                if msg:
+                    await msg.edit(content=md_to_discord(keep))
         except Exception as e:
             logger.warning("Failed to edit stream message on split: %s", e)
 
@@ -478,8 +567,16 @@ class DiscordChannel:
         self._cancel_stream_timer(old_mid)
 
         # Send new message and update handle in-place
-        channel = await self._resolve_channel(handle.chat_id)
-        result = await channel.send(carry or "...")
+        if handle.webhook_name:
+            webhook = await self._ensure_webhook(handle.webhook_name, handle.chat_id)
+            if webhook:
+                result = await webhook.send(carry or "...", wait=True)
+            else:
+                channel = await self._resolve_channel(handle.chat_id)
+                result = await channel.send(carry or "...")
+        else:
+            channel = await self._resolve_channel(handle.chat_id)
+            result = await channel.send(carry or "...")
         new_mid = str(result.id)
         handle.message_id = new_mid
 
@@ -518,10 +615,15 @@ class DiscordChannel:
         return attachments
 
     async def _handle_incoming(self, message: discord.Message) -> None:
-        """Handle incoming Discord message — route by category."""
+        """Handle incoming Discord message — route by channel or category."""
         # Ignore messages from the bot itself
         is_self = message.author == self._client.user
         if is_self:
+            return
+
+        # Ignore webhook messages (workgroup admin posts, etc.)
+        # webhook_id is an int for webhook messages, None for normal messages.
+        if isinstance(message.webhook_id, int):
             return
 
         # Ignore system messages (member joins, boosts, pins, etc.)
@@ -531,39 +633,17 @@ class DiscordChannel:
         ):
             return
 
-        # Bus channel: route by @bot-name prefix (or to admin if no prefix)
-        category_id = getattr(message.channel, "category_id", None)
-        is_bus = self._bus_category and category_id == self._bus_category
-        if is_bus:
-            text = (message.content or "").strip()
-            if text.startswith("@"):
-                first_space = text.find(" ")
-                if first_space < 0:
-                    return  # just "@name" with no body
-                target = text[1:first_space].lower()
-                callback = self._bus_map.get(target)
-                if callback is None:
-                    return  # unknown bot name
-                body = text[first_space + 1:].strip()
-                if not body:
-                    return
-            elif self._bus_admin:
-                # No prefix → route to admin bot
-                callback = self._bus_map.get(self._bus_admin)
-                if callback is None:
-                    return
-                body = text
-            else:
-                return  # no prefix and no admin → ignore
-
+        # Channel-level routing (workgroup channels)
+        channel_id = message.channel.id
+        if channel_id in self._channel_map:
+            callback = self._channel_map[channel_id]
             attachments = await self._collect_attachments(message)
             incoming = IncomingMessage(
                 channel="discord",
-                chat_id=str(message.channel.id),
+                chat_id=str(channel_id),
                 user_id=str(message.author.id),
-                text=body,
+                text=message.content or "",
                 attachments=attachments,
-                via_bus=True,
             )
             await callback(incoming)
             return

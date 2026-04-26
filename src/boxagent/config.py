@@ -31,8 +31,6 @@ class BotConfig:
     discord_bot_id: str = ""
     discord_allowed_users: list[int] = field(default_factory=list)
     discord_allowed_categories: list[int] = field(default_factory=list)
-    discord_bus_category: int = 0
-    discord_bus_admin: bool = False
     discord_dm: bool = False
     model: str = ""
     agent: str = ""
@@ -44,11 +42,64 @@ class BotConfig:
 
 
 @dataclass
+class SpecialistConfig:
+    """A specialist agent within a workgroup."""
+
+    name: str
+    model: str = ""
+    workspace: str = ""
+    ai_backend: str = ""
+    display_name: str = ""
+    discord_channel: int = 0  # optional: show activity in this Discord channel
+    extra_skill_dirs: list[str] = field(default_factory=list)
+
+
+@dataclass
+class WorkgroupConfig:
+    """A standalone workgroup: admin agent + N specialist agents.
+
+    The admin is created inline (not referencing the bots section).
+    Specialists are virtual agents reachable only via send_to_agent.
+    """
+
+    name: str
+    workspace: str = ""             # root directory; admin uses {workspace}/.boxagent-workgroup/admin/
+    # Discord config (optional — omit for non-Discord workgroups)
+    discord_bot_id: str = ""        # references discord_bots.yaml
+    discord_token: str = ""         # resolved token
+    admin_discord_category: int = 0 # admin listens on this Discord category
+    # Agent config
+    allowed_users: list[int] = field(default_factory=list)
+    model: str = ""
+    ai_backend: str = "claude-cli"
+    yolo: bool = False
+    display_name: str = ""
+    display_tool_calls: str = "silent"
+    extra_skill_dirs: list[str] = field(default_factory=list)
+    specialists: dict[str, SpecialistConfig] = field(default_factory=dict)
+
+    @property
+    def workgroup_dir(self) -> str:
+        """The .boxagent-workgroup directory under workspace."""
+        return str(Path(self.workspace) / ".boxagent-workgroup") if self.workspace else ""
+
+    @property
+    def admin_workspace(self) -> str:
+        return str(Path(self.workgroup_dir) / "admin") if self.workgroup_dir else ""
+
+    def specialist_workspace(self, sp_name: str) -> str:
+        if not self.workgroup_dir:
+            return ""
+        return str(Path(self.workgroup_dir) / "specialists" / sp_name)
+
+
+@dataclass
 class AppConfig:
     node_id: str = ""
     log_level: str = "info"
     api_port: int = 0
     bots: dict[str, BotConfig] = field(default_factory=dict)
+    workgroups: dict[str, WorkgroupConfig] = field(default_factory=dict)
     telegram_bots: dict[str, str] = field(default_factory=dict)
     discord_bots: dict[str, str] = field(default_factory=dict)
 
@@ -77,14 +128,26 @@ def _validate_discord_categories(bots: dict[str, BotConfig]) -> None:
                     )
                 seen[cat] = bot_name
 
-        # bus_category must not collide with any bot's exclusive categories
-        for bot_name, cfg in members:
-            if cfg.discord_bus_category and cfg.discord_bus_category in seen:
+
+def _validate_workgroups(
+    workgroups: dict[str, WorkgroupConfig],
+) -> None:
+    """Validate workgroup configuration."""
+    seen_categories: dict[int, str] = {}
+
+    for wg_name, wg in workgroups.items():
+        if not wg.workspace:
+            raise ConfigError(f"Workgroup '{wg_name}': missing workspace")
+
+        # Discord category uniqueness (if configured)
+        if wg.admin_discord_category:
+            cat = wg.admin_discord_category
+            if cat in seen_categories:
                 raise ConfigError(
-                    f"Discord bus_category {cfg.discord_bus_category!r} in "
-                    f"'{bot_name}' collides with exclusive category of "
-                    f"'{seen[cfg.discord_bus_category]}'"
+                    f"Workgroup '{wg_name}': Discord category {cat} "
+                    f"already used by '{seen_categories[cat]}'"
                 )
+            seen_categories[cat] = wg_name
 
 
 def load_config(
@@ -154,11 +217,23 @@ def load_config(
     # Validate Discord category uniqueness across bots sharing the same bot_id
     _validate_discord_categories(bots)
 
+    # Parse workgroups
+    workgroups: dict[str, WorkgroupConfig] = {}
+    for wg_name, wg_raw in effective_raw.get("workgroups", {}).items():
+        workgroups[wg_name] = _parse_workgroup(
+            wg_name, wg_raw,
+            box_agent_dir=box_agent_dir, config_dir=config_dir,
+            discord_bots=discord_bots,
+        )
+
+    _validate_workgroups(workgroups)
+
     return AppConfig(
         node_id=node_id,
         log_level=log_level,
         api_port=api_port,
         bots=bots,
+        workgroups=workgroups,
         telegram_bots=telegram_bots,
         discord_bots=discord_bots,
     )
@@ -344,8 +419,6 @@ def _parse_bot(
     discord_bot_id = ""
     discord_allowed_users: list[int] = []
     discord_allowed_categories: list[int] = []
-    discord_bus_category: int = 0
-    discord_bus_admin: bool = False
     discord_dm = False
     if discord:
         discord_token = discord.get("token", "")
@@ -366,8 +439,6 @@ def _parse_bot(
                 raise ConfigError(f"Bot '{name}': missing channels.discord.token or bot_id")
         discord_allowed_users = discord.get("allowed_users", [])
         discord_allowed_categories = discord.get("allowed_categories", [])
-        discord_bus_category = discord.get("bus_category", 0)
-        discord_bus_admin = discord.get("bus_admin", False)
         discord_dm = discord.get("dm", False)
 
     # At least one channel must be configured
@@ -422,8 +493,6 @@ def _parse_bot(
         discord_bot_id=discord_bot_id,
         discord_allowed_users=discord_allowed_users,
         discord_allowed_categories=discord_allowed_categories,
-        discord_bus_category=discord_bus_category,
-        discord_bus_admin=discord_bus_admin,
         discord_dm=discord_dm,
         model=raw.get("model", ""),
         agent=raw.get("agent", ""),
@@ -432,4 +501,104 @@ def _parse_bot(
         display_name=raw.get("display_name", ""),
         enabled_on_nodes=raw.get("enabled_on_nodes", ""),
         yolo=bool(raw.get("yolo", False)),
+    )
+
+
+def _parse_workgroup(
+    name: str,
+    raw: dict,
+    *,
+    box_agent_dir: Path | str | None = None,
+    config_dir: Path | str | None = None,
+    discord_bots: dict[str, str] | None = None,
+) -> WorkgroupConfig:
+    """Parse a standalone workgroup configuration block."""
+    ba_dir = resolve_boxagent_dir(box_agent_dir)
+    config_base = Path(config_dir).expanduser() if config_dir else None
+
+    # Workspace (required)
+    workspace = raw.get("workspace", "")
+    if workspace:
+        ws_path = Path(workspace).expanduser()
+        if not ws_path.is_absolute():
+            ws_path = ba_dir / ws_path
+        workspace = str(ws_path)
+
+    # Discord config (optional)
+    discord_bot_id = str(raw.get("discord_bot_id", ""))
+    discord_token = ""
+    if discord_bot_id and discord_bots:
+        discord_token = discord_bots.get(discord_bot_id, "")
+        if not discord_token:
+            raise ConfigError(
+                f"Workgroup '{name}': discord_bot_id '{discord_bot_id}' "
+                f"not found in discord_bots.yaml"
+            )
+
+    admin_raw = raw.get("admin", {})
+    admin_discord_category = int(admin_raw.get("discord_category", 0))
+
+    # Agent config
+    ai_backend = raw.get("ai_backend", "claude-cli")
+    model = raw.get("model", "")
+    allowed_users = raw.get("allowed_users", [])
+    yolo = bool(raw.get("yolo", False))
+    display_name = raw.get("display_name", name)
+    display_tool_calls = raw.get("display", {}).get("tool_calls", "silent")
+
+    extra_skill_dirs: list[str] = []
+    for d in raw.get("extra_skill_dirs", []):
+        path = Path(d).expanduser()
+        if not path.is_absolute() and config_base is not None:
+            path = config_base / path
+        extra_skill_dirs.append(str(path))
+
+    # Specialists
+    specialists: dict[str, SpecialistConfig] = {}
+    for sp_name, sp_raw in raw.get("specialists", {}).items():
+        sp_model = sp_raw.get("model", "") or model
+        sp_workspace = sp_raw.get("workspace", "")
+        if sp_workspace:
+            ws_path = Path(sp_workspace).expanduser()
+            if not ws_path.is_absolute():
+                ws_path = ba_dir / ws_path
+            sp_workspace = str(ws_path)
+        else:
+            sp_workspace = str(Path(workspace) / ".boxagent-workgroup" / "specialists" / sp_name)
+
+        sp_ai_backend = sp_raw.get("ai_backend", "") or ai_backend
+        sp_display_name = sp_raw.get("display_name", sp_name)
+        sp_discord_channel = int(sp_raw.get("discord_channel", 0))
+
+        sp_skill_dirs: list[str] = []
+        for d in sp_raw.get("extra_skill_dirs", []):
+            path = Path(d).expanduser()
+            if not path.is_absolute() and config_base is not None:
+                path = config_base / path
+            sp_skill_dirs.append(str(path))
+
+        specialists[sp_name] = SpecialistConfig(
+            name=sp_name,
+            model=sp_model,
+            workspace=sp_workspace,
+            ai_backend=sp_ai_backend,
+            display_name=sp_display_name,
+            discord_channel=sp_discord_channel,
+            extra_skill_dirs=sp_skill_dirs or extra_skill_dirs,
+        )
+
+    return WorkgroupConfig(
+        name=name,
+        workspace=workspace,
+        discord_bot_id=discord_bot_id,
+        discord_token=discord_token,
+        admin_discord_category=admin_discord_category,
+        allowed_users=allowed_users,
+        model=model,
+        ai_backend=ai_backend,
+        yolo=yolo,
+        display_name=display_name,
+        display_tool_calls=display_tool_calls,
+        extra_skill_dirs=extra_skill_dirs,
+        specialists=specialists,
     )

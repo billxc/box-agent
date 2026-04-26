@@ -43,7 +43,7 @@ class Router:
     extra_skill_dirs: list[str] = field(default_factory=list)
     ai_backend: str = "claude-cli"
     on_backend_switched: object = None  # async callback(bot_name, new_cli, new_backend)
-    on_bus_send: object = None  # async callback(from_bot, target_bot, text, chat_id)
+    workgroup_agents: list[str] = field(default_factory=list)  # specialist names for context
     _compact_summaries: dict[str, str] = field(default_factory=dict, repr=False)
     _resume_contexts: dict[str, str] = field(default_factory=dict, repr=False)
     _channels: dict[str, object] = field(default_factory=dict, repr=False)
@@ -545,7 +545,8 @@ class Router:
 
     # ---- Dispatch ----
 
-    async def _dispatch(self, msg: IncomingMessage):
+    async def _dispatch(self, msg: IncomingMessage) -> str:
+        """Dispatch message to AI backend. Returns collected response text."""
         chat_id = msg.chat_id
         # Build system prompt and user message separately
         system_parts = []
@@ -593,7 +594,7 @@ class Router:
         callback = ChannelCallback(
             channel=self._resolve_channel(msg),
             chat_id=chat_id,
-            reply_prefix=f"{self.bot_name}: " if msg.via_bus else "",
+            webhook_name=self.bot_name if msg.via_workgroup else "",
         )
 
         # Acquire a process from the pool (or use the single cli_process)
@@ -653,10 +654,6 @@ class Router:
                 assistant_text,
             )
 
-        # Bus: check if AI output starts with @bot-name and forward internally
-        if self.on_bus_send and not turn_failed:
-            await self._check_bus_output(callback.collected_text, chat_id)
-
         # Persist session after each turn
         if self.storage and sid:
             try:
@@ -675,27 +672,25 @@ class Router:
             except Exception as e:
                 logger.warning("Failed to save session: %s", e)
 
-    # ---- Internal helpers ----
+        return callback.collected_text
 
-    async def _check_bus_output(self, text: str, chat_id: str) -> None:
-        """If AI output contains @bot-name lines, forward them via bus."""
-        if not text or not self.on_bus_send:
-            return
-        for line in text.splitlines():
-            line = line.strip()
-            if not line.startswith("@"):
-                continue
-            first_space = line.find(" ")
-            if first_space < 0:
-                continue
-            target = line[1:first_space]
-            body = line[first_space + 1:].strip()
-            if not body:
-                continue
-            try:
-                await self.on_bus_send(self.bot_name, target, body, chat_id)
-            except Exception as e:
-                logger.warning("Bus send failed: %s → @%s: %s", self.bot_name, target, e)
+    # ---- Workgroup delegation ----
+
+    async def dispatch_sync(self, text: str, chat_id: str, from_bot: str = "") -> str:
+        """Process a message internally and return the response text.
+
+        Used by workgroup delegation — skips auth and command handling.
+        """
+        msg = IncomingMessage(
+            channel="discord",
+            chat_id=chat_id,
+            user_id=from_bot or "workgroup",
+            text=text,
+            via_workgroup=True,
+        )
+        return await self._dispatch(msg)
+
+    # ---- Internal helpers ----
 
     async def _reset_backend_session(self):
         """Reset session state, falling back to session_id-only backends."""
@@ -723,4 +718,5 @@ class Router:
             model=model,
             workspace=workspace,
             config_dir=self.config_dir,
+            workgroup_agents=self.workgroup_agents,
         )
