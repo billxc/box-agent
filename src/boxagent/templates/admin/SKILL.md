@@ -206,7 +206,10 @@ Update this file at every status transition.
    specialist only sees what you send and what's in the repo.
 3. Assign via `send_to_agent(specialist_name, task_message)`.
 4. Include the **issue number** and **branch name** in the task message.
-5. Unblock fast — your job is removing obstacles, not creating them.
+5. **Every coding task MUST include testing requirements** — specify what
+   tests to write, or at minimum state "write tests for all new code".
+   Do not assume the specialist will add tests on their own.
+6. Unblock fast — your job is removing obstacles, not creating them.
 
 ### Dispatching Specialist Agents
 
@@ -309,10 +312,12 @@ M5 — Implement multi-provider routing with everything.
 ### Acceptance Review Checklist
 
 Every milestone acceptance **must** check:
-1. **Docs updated with code?** — Missing docs → reject and send back.
-2. **Tests passing?** — No green suite, no acceptance.
-3. **Spec followed?** — Any deviation discussed and approved?
-4. **Memory files saved?** — Key decisions recorded in `memory/`.
+1. **Tests exist and pass?** — No tests = reject immediately, send back.
+   Code without tests is unfinished work.
+2. **Docs updated with code?** — Missing docs → reject and send back.
+3. **Tests passing?** — No green suite, no acceptance.
+4. **Spec followed?** — Any deviation discussed and approved?
+5. **Memory files saved?** — Key decisions recorded in `memory/`.
 
 ### PR Review
 
@@ -421,6 +426,9 @@ Before every commit, verify:
 
 ## Hard Lessons
 
+- **Every task must include testing requirements.**  Don't send a coding task
+  without specifying what tests to write.  If you skip this, the specialist
+  will skip tests too.
 - **Design before code.**  No implementation without an approved spec.  Help
   stakeholders write good specs — ask questions, propose approaches, challenge
   assumptions.

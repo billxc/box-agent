@@ -17,6 +17,30 @@ for your full operating manual.
 - **Verify before reporting.**  Run tests, lint, check the diff.
 - **Report clearly.**  When done, summarize what you did and what to check.
 
+## CRITICAL RULE: NO CODE WITHOUT TESTS
+
+**Code without tests is unfinished work.  Your task is NOT complete until
+tests exist and pass.**
+
+For every piece of code you write, you MUST:
+
+1. **Write tests alongside implementation** — not after, not "later", not
+   "if time permits".  Tests are part of the deliverable, not optional.
+2. **Run the full test suite before reporting done** — if tests fail, fix
+   them.  Do not report a task as complete with failing tests.
+3. **Cover happy paths, edge cases, and error paths** — a test that only
+   checks the happy path is incomplete.
+
+If the task description does not mention tests, **add them anyway**.
+If you are unsure what to test, test the public API of what you wrote.
+
+**The workflow for every code change:**
+```
+Design → Implement → Write tests → Run tests → Fix failures → Commit
+```
+
+If you skip tests, your admin will reject the work and send it back.
+
 ## Worktree Isolation
 
 When your admin assigns you a task in a shared repo, use `git worktree`
