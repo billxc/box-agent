@@ -214,21 +214,27 @@ class HeartbeatManager:
         if pool is None:
             logger.warning("Heartbeat '%s': admin_pool is None", self.wg_name)
             return None
-        # Log pool state for debugging
-        ctx_count = len(pool._chat_contexts)
-        active_count = len(pool._active)
-        session_ids = {
-            cid: ctx.session_id
-            for cid, ctx in pool._chat_contexts.items()
-            if ctx.session_id
-        }
-        logger.info(
-            "Heartbeat '%s': pool has %d contexts, %d active, sessions=%s",
-            self.wg_name, ctx_count, active_count, session_ids,
-        )
-        for ctx in pool._chat_contexts.values():
+
+        # Trigger lazy load from storage for the heartbeat chat_id
+        if self.discord_chat_id:
+            ctx = pool._get_ctx(self.discord_chat_id)
             if ctx.session_id:
+                logger.info(
+                    "Heartbeat '%s': found session via chat_id %s: %s",
+                    self.wg_name, self.discord_chat_id, ctx.session_id,
+                )
                 return ctx.session_id
+
+        # Fall back to any existing session in the pool
+        for cid, ctx in pool._chat_contexts.items():
+            if ctx.session_id:
+                logger.info(
+                    "Heartbeat '%s': found session via pool scan chat_id=%s: %s",
+                    self.wg_name, cid, ctx.session_id,
+                )
+                return ctx.session_id
+
+        logger.info("Heartbeat '%s': no session found in pool", self.wg_name)
         return None
 
     def _write_heartbeat_log(self, decision: str, meta: dict) -> None:
