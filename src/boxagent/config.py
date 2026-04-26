@@ -76,6 +76,7 @@ class WorkgroupConfig:
     display_name: str = ""
     display_tool_calls: str = "silent"
     extra_skill_dirs: list[str] = field(default_factory=list)
+    heartbeat_interval_seconds: int = 0  # 0 = disabled
     specialists: dict[str, SpecialistConfig] = field(default_factory=dict)
 
     @property
@@ -587,6 +588,8 @@ def _parse_workgroup(
             extra_skill_dirs=sp_skill_dirs or extra_skill_dirs,
         )
 
+    heartbeat_interval_seconds = int(raw.get("heartbeat_interval_seconds", 0))
+
     return WorkgroupConfig(
         name=name,
         workspace=workspace,
@@ -600,5 +603,6 @@ def _parse_workgroup(
         display_name=display_name,
         display_tool_calls=display_tool_calls,
         extra_skill_dirs=extra_skill_dirs,
+        heartbeat_interval_seconds=heartbeat_interval_seconds,
         specialists=specialists,
     )

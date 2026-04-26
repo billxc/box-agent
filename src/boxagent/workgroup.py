@@ -9,8 +9,10 @@ from pathlib import Path
 import yaml
 
 from boxagent.config import BotConfig, SpecialistConfig, WorkgroupConfig
+from boxagent.heartbeat import HeartbeatManager
 from boxagent.router import Router
 from boxagent.session_pool import SessionPool
+from boxagent.workspace_templates import seed_admin_workspace, seed_specialist_workspace
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,7 @@ class WorkgroupManager:
     _tasks: dict[str, asyncio.Task] = field(default_factory=dict, repr=False)
     _task_results: dict[str, dict] = field(default_factory=dict, repr=False)
     _task_counter: int = field(default=0, repr=False)
+    _heartbeats: dict[str, HeartbeatManager] = field(default_factory=dict, repr=False)
 
     # Injected by Gateway
     _create_backend: object = None  # Callable[[BotConfig, str|None], object]
@@ -130,6 +133,9 @@ class WorkgroupManager:
         if syn_cfg.extra_skill_dirs and self._sync_skills:
             self._sync_skills(syn_cfg.workspace, syn_cfg.extra_skill_dirs, syn_cfg.ai_backend)
 
+        # Seed specialist workspace templates (CLAUDE.md, skills)
+        seed_specialist_workspace(syn_cfg.workspace, sp_name, wg_cfg.name)
+
         sp_router = Router(
             cli_process=cli,
             channel=dc_channel,
@@ -196,6 +202,9 @@ class WorkgroupManager:
         if wg_cfg.extra_skill_dirs and self._sync_skills:
             self._sync_skills(admin_ws, wg_cfg.extra_skill_dirs, wg_cfg.ai_backend)
 
+        # Seed admin workspace templates (CLAUDE.md, skills, HEARTBEAT.md)
+        seed_admin_workspace(admin_ws, wg_name, list(wg_cfg.specialists.keys()))
+
         admin_router = Router(
             cli_process=admin_cli,
             channel=dc_channel,
@@ -243,6 +252,23 @@ class WorkgroupManager:
 
         admin_router.workgroup_agents = specialist_names
         logger.info("Workgroup '%s' ready: specialists=%s", wg_name, specialist_names)
+
+        # --- Start heartbeat (if configured) ---
+        if wg_cfg.heartbeat_interval_seconds > 0:
+            hb = HeartbeatManager(
+                wg_name=wg_name,
+                admin_pool=admin_pool,
+                admin_router=admin_router,
+                workspace=admin_ws,
+                interval_seconds=wg_cfg.heartbeat_interval_seconds,
+                ai_backend=wg_cfg.ai_backend,
+                model=wg_cfg.model,
+                yolo=wg_cfg.yolo,
+                discord_channel=dc_channel,
+                discord_chat_id=str(wg_cfg.admin_discord_category) if wg_cfg.admin_discord_category else "",
+            )
+            hb.start()
+            self._heartbeats[wg_name] = hb
 
     async def send_to_specialist(
         self, target: str, text: str, from_bot: str = "",
@@ -398,7 +424,10 @@ class WorkgroupManager:
         return {"ok": True, "channel_id": discord_channel_id}
 
     async def stop(self) -> None:
-        """Stop all workgroup processes and pools."""
+        """Stop all workgroup processes, pools, and heartbeats."""
+        for name, hb in self._heartbeats.items():
+            hb.stop()
+        self._heartbeats.clear()
         for name, cli in self.procs.items():
             try:
                 await cli.stop()
