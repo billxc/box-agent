@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,6 +16,14 @@ from boxagent.session_pool import SessionPool
 from boxagent.workspace_templates import seed_admin_workspace, seed_specialist_workspace
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_specialist_response(text: str) -> str:
+    """Extract content from <specialist_response> tags. Falls back to raw text."""
+    m = re.search(r"<specialist_response>(.*?)</specialist_response>", text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    return text.strip()
 
 
 @dataclass
@@ -304,6 +313,18 @@ class WorkgroupManager:
 
         chat_id = str(sp_discord_channel) if sp_discord_channel else f"wg:{target}"
 
+        # Wrap admin's message with system instruction for XML-tagged response
+        wrapped_text = (
+            f"{text}\n\n"
+            "---\n"
+            "[SYSTEM] When you are done, wrap your final response/summary in "
+            "<specialist_response> tags. Example:\n"
+            "<specialist_response>\n"
+            "Summary of what was done, results, and any issues.\n"
+            "</specialist_response>\n"
+            "You MUST include <specialist_response> tags in your reply."
+        )
+
         async def _run():
             result = ""
             try:
@@ -314,7 +335,8 @@ class WorkgroupManager:
                     except Exception as e:
                         logger.warning("Failed to post task to specialist channel: %s", e)
 
-                result = await router.dispatch_sync(text, chat_id, from_bot=from_bot)
+                raw_result = await router.dispatch_sync(wrapped_text, chat_id, from_bot=from_bot)
+                result = _extract_specialist_response(raw_result)
                 self._task_results[task_id] = {
                     "status": "done",
                     "result": result,
