@@ -154,5 +154,36 @@ def reset_specialist(agent_name: str) -> str:
         return f"Error: {e}"
 
 
+@mcp.tool()
+def delete_specialist(agent_name: str) -> str:
+    """Delete a dynamically created specialist agent from your workgroup.
+
+    Stops the specialist's process and pool, removes it from routing and
+    persistence.  Built-in specialists (defined in config.yaml) cannot be
+    deleted — only dynamically created ones can be removed.
+
+    Args:
+        agent_name: Name of the specialist to delete
+    """
+    try:
+        client, base_url = _get_gateway_client()
+    except RuntimeError as e:
+        return f"Error: {e}"
+
+    try:
+        resp = client.post(
+            f"{base_url}/api/workgroup/delete_specialist",
+            json={"name": agent_name},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("ok"):
+            return f"Specialist '{agent_name}' deleted."
+        return f"Error: {data.get('error', 'unknown error')}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

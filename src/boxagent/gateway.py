@@ -515,6 +515,7 @@ class Gateway:
         app.router.add_post("/api/workgroup/send", self._handle_workgroup_send)
         app.router.add_post("/api/workgroup/create_specialist", self._handle_create_specialist)
         app.router.add_post("/api/workgroup/reset_specialist", self._handle_reset_specialist)
+        app.router.add_post("/api/workgroup/delete_specialist", self._handle_delete_specialist)
         runner = web.AppRunner(app)
         await runner.setup()
         self._http_runner = runner
@@ -673,6 +674,21 @@ class Gateway:
             return web.json_response({"ok": False, "error": "missing 'name'"}, status=400)
 
         result = self._workgroup_mgr.reset_specialist(target)
+        status = 200 if result.get("ok") else 400
+        return web.json_response(result, status=status)
+
+    async def _handle_delete_specialist(self, request: web.Request) -> web.Response:
+        """Handle POST /api/workgroup/delete_specialist."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+
+        target = body.get("name", "")
+        if not target:
+            return web.json_response({"ok": False, "error": "missing 'name'"}, status=400)
+
+        result = await self._workgroup_mgr.delete_specialist(target)
         status = 200 if result.get("ok") else 400
         return web.json_response(result, status=status)
 

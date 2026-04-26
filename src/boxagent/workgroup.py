@@ -40,6 +40,7 @@ class WorkgroupManager:
     _task_results: dict[str, dict] = field(default_factory=dict, repr=False)
     _task_counter: int = field(default=0, repr=False)
     _heartbeats: dict[str, HeartbeatManager] = field(default_factory=dict, repr=False)
+    _builtin_specialists: dict[str, set[str]] = field(default_factory=dict, repr=False)  # wg → names from config.yaml
 
     # Injected by Gateway
     _create_backend: object = None  # Callable[[BotConfig, str|None], object]
@@ -235,6 +236,7 @@ class WorkgroupManager:
             )
 
         # --- Create specialists (config + saved dynamic ones) ---
+        self._builtin_specialists[wg_name] = set(wg_cfg.specialists.keys())
         saved = self._load_saved_specialists(wg_name)
         for sp_name, sp_cfg in saved.items():
             if sp_name not in wg_cfg.specialists:
@@ -422,6 +424,79 @@ class WorkgroupManager:
             wg_name, sp_name, discord_channel_id, sp_cfg.model,
         )
         return {"ok": True, "channel_id": discord_channel_id}
+
+    async def delete_specialist(self, sp_name: str) -> dict:
+        """Delete a dynamically created specialist.
+
+        Stops its process and pool, removes from routing and persistence.
+        Built-in specialists (defined in config.yaml) cannot be deleted.
+        """
+        if sp_name not in self.routers:
+            return {"ok": False, "error": f"specialist '{sp_name}' not found"}
+
+        # Check if built-in
+        for wg_name, builtin_names in self._builtin_specialists.items():
+            if sp_name in builtin_names:
+                return {
+                    "ok": False,
+                    "error": f"specialist '{sp_name}' is built-in (defined in config.yaml) and cannot be deleted",
+                }
+
+        # Find which workgroup owns this specialist
+        wg_name = ""
+        for name, wg_cfg in self.config.items():
+            if sp_name in wg_cfg.specialists:
+                wg_name = name
+                break
+
+        # Stop process
+        cli = self.procs.pop(sp_name, None)
+        if cli:
+            try:
+                await cli.stop()
+            except Exception as e:
+                logger.warning("Error stopping specialist CLI '%s': %s", sp_name, e)
+
+        # Stop pool
+        pool = self.pools.pop(sp_name, None)
+        if pool:
+            try:
+                await pool.stop()
+            except Exception as e:
+                logger.warning("Error stopping specialist pool '%s': %s", sp_name, e)
+
+        # Remove router
+        self.routers.pop(sp_name, None)
+
+        # Remove from config and saved file
+        if wg_name:
+            wg_cfg = self.config[wg_name]
+            wg_cfg.specialists.pop(sp_name, None)
+            self._remove_saved_specialist(wg_name, sp_name)
+
+            # Update admin's specialist list
+            admin_router = self.routers.get(wg_name)
+            if admin_router:
+                admin_router.workgroup_agents = list(wg_cfg.specialists.keys())
+
+        logger.info("Deleted specialist '%s' from workgroup '%s'", sp_name, wg_name)
+        return {"ok": True}
+
+    def _remove_saved_specialist(self, wg_name: str, sp_name: str) -> None:
+        """Remove a specialist from the saved workgroup_specialists.yaml."""
+        path = self._specialists_file()
+        if not path.is_file():
+            return
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            wg_data = data.get(wg_name, {})
+            if sp_name in wg_data:
+                del wg_data[sp_name]
+                with open(path, "w", encoding="utf-8") as f:
+                    yaml.dump(data, f, default_flow_style=False)
+        except Exception as e:
+            logger.warning("Failed to remove saved specialist '%s': %s", sp_name, e)
 
     async def stop(self) -> None:
         """Stop all workgroup processes, pools, and heartbeats."""
