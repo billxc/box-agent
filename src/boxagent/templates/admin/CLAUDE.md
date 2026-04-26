@@ -85,19 +85,23 @@ result.
 
 **Rule: one specialist = one `git worktree`.**
 
+**All worktrees MUST be created under:** `{worktrees_dir}`
+
 IMPORTANT: Use the `git worktree` CLI command — do NOT use Claude Code's
 built-in EnterWorktree / worktree feature.  Those are different things.
 Claude Code worktrees create temporary directories that get deleted between
 sessions and cause "No such file or directory" errors on resume.
 
 When assigning a coding task that touches a shared repo, instruct the
-specialist to create a git worktree:
+specialist to create a git worktree under the shared worktrees directory:
 
 ```
-send_to_agent("dev-alice", "Use `git worktree add` to create an isolated \
-checkout for branch feat/auth-refactor, then implement the auth middleware \
-per docs/PRD-auth.md subtask M2.1.  Do NOT use Claude Code's built-in \
-worktree feature — use the git CLI directly.")
+send_to_agent("dev-alice", "Create a worktree for branch feat/auth-refactor:\n\
+  cd /path/to/repo\n\
+  git worktree add {worktrees_dir}/feat-auth-refactor -b feat/auth-refactor\n\
+  cd {worktrees_dir}/feat-auth-refactor\n\
+Then implement the auth middleware per docs/PRD-auth.md subtask M2.1.\n\
+Do NOT use Claude Code's built-in worktree feature — use the git CLI directly.")
 ```
 
 **When to require worktrees:**

@@ -22,6 +22,8 @@ for your full operating manual.
 When your admin assigns you a task in a shared repo, use `git worktree`
 to work in isolation so you don't interfere with other specialists.
 
+**All worktrees MUST be created under:** `{worktrees_dir}`
+
 IMPORTANT: Always use the **`git worktree` CLI command**.  Do NOT use
 Claude Code's built-in EnterWorktree / worktree feature — those create
 temporary directories under `.worktrees/` that get deleted between sessions,
@@ -29,15 +31,15 @@ causing "No such file or directory" errors on resume.
 
 ```bash
 cd /path/to/repo
-git worktree add ../worktree-{{branch}} -b {{branch}}
-cd ../worktree-{{branch}}
+git worktree add {worktrees_dir}/my-branch -b my-branch
+cd {worktrees_dir}/my-branch
 # ... do your work here ...
 ```
 
 After completing and pushing your branch, clean up:
 ```bash
 cd /path/to/repo
-git worktree remove ../worktree-{{branch}}
+git worktree remove {worktrees_dir}/my-branch
 ```
 
 **Why:** Multiple specialists may work on the same repo concurrently.

@@ -83,11 +83,14 @@ def seed_admin_workspace(
     else:
         specialists_block = "_No specialists configured yet._"
 
+    worktrees_dir = str(Path(workspace).parent / "worktrees")
+
     # .claude/CLAUDE.md
     content = ADMIN_CLAUDE_MD.format(
         wg_name=wg_name,
         specialists_block=specialists_block,
         superboss_ref=SUPERBOSS_REF,
+        worktrees_dir=worktrees_dir,
     )
     if _write_exclusive(ws / ".claude" / "CLAUDE.md", content):
         created.append(".claude/CLAUDE.md")
@@ -129,11 +132,14 @@ def seed_specialist_workspace(
     ws = Path(workspace)
     created: list[str] = []
 
+    worktrees_dir = str(ws.parent.parent / "worktrees")
+
     # .claude/CLAUDE.md
     content = SPECIALIST_CLAUDE_MD.format(
         sp_name=sp_name,
         wg_name=wg_name,
         supercrew_ref=SUPERCREW_REF,
+        worktrees_dir=worktrees_dir,
     )
     if _write_exclusive(ws / ".claude" / "CLAUDE.md", content):
         created.append(".claude/CLAUDE.md")

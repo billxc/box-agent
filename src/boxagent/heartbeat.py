@@ -19,7 +19,10 @@ HEARTBEAT_FILE = "HEARTBEAT.md"
 def is_silent_reply(text: str) -> bool:
     """Return True if the agent response means 'nothing to do'."""
     t = text.strip().upper()
-    return t in ("NO_REPLY", "HEARTBEAT_OK", "")
+    # Exact match or text contains NO_REPLY / HEARTBEAT_OK anywhere
+    if t in ("NO_REPLY", "HEARTBEAT_OK", ""):
+        return True
+    return "NO_REPLY" in t or "HEARTBEAT_OK" in t
 
 
 def _build_heartbeat_prompt(wg_name: str, content: str) -> str:
@@ -35,10 +38,28 @@ def _build_heartbeat_prompt(wg_name: str, content: str) -> str:
         "---\n"
         "\n"
         "Review your tasks and decide if any action is needed right now.\n"
-        "If you decide to act, describe what needs to be done clearly and concisely — your\n"
-        "response will be sent to your main session for execution.\n"
-        "If nothing to do, respond with only: NO_REPLY"
+        "\n"
+        "Respond in ONE of these two formats:\n"
+        "\n"
+        "If nothing to do:\n"
+        "<heartbeat_action>NO_REPLY</heartbeat_action>\n"
+        "\n"
+        "If action is needed (your text will be sent to your main session for execution):\n"
+        "<heartbeat_action>\n"
+        "Describe what needs to be done clearly and concisely.\n"
+        "</heartbeat_action>\n"
+        "\n"
+        "You MUST wrap your response in <heartbeat_action> tags."
     )
+
+
+def _extract_action(text: str) -> str:
+    """Extract content from <heartbeat_action> tags. Falls back to raw text."""
+    import re
+    m = re.search(r"<heartbeat_action>(.*?)</heartbeat_action>", text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    return text.strip()
 
 
 @dataclass
@@ -54,7 +75,8 @@ class HeartbeatManager:
     model: str = ""
     yolo: bool = False
     discord_channel: object | None = None  # DiscordChannel
-    discord_chat_id: str = ""
+    discord_chat_id: str = ""  # actual text channel ID (not category)
+    display_heartbeat: bool = False
     _running: bool = field(default=False, repr=False)
     _is_ticking: bool = field(default=False, repr=False)
     _task: asyncio.Task | None = field(default=None, repr=False)
@@ -66,8 +88,8 @@ class HeartbeatManager:
         self._running = True
         self._task = asyncio.ensure_future(self._loop())
         logger.info(
-            "Heartbeat started for workgroup '%s' (every %ds)",
-            self.wg_name, self.interval_seconds,
+            "Heartbeat started for workgroup '%s' (every %ds, chat_id=%s)",
+            self.wg_name, self.interval_seconds, self.discord_chat_id,
         )
 
     def stop(self) -> None:
@@ -79,15 +101,15 @@ class HeartbeatManager:
         logger.info("Heartbeat stopped for workgroup '%s'", self.wg_name)
 
     async def _loop(self) -> None:
-        """Main loop: sleep then tick."""
+        """Main loop: tick then sleep."""
         while self._running:
-            await asyncio.sleep(self.interval_seconds)
-            if not self._running:
-                break
             try:
                 await self._tick()
             except Exception as e:
                 logger.error("Heartbeat tick error for '%s': %s", self.wg_name, e)
+            await asyncio.sleep(self.interval_seconds)
+            if not self._running:
+                break
 
     async def _tick(self) -> None:
         """Single heartbeat cycle."""
@@ -104,18 +126,37 @@ class HeartbeatManager:
         logger.info("Heartbeat triggered for '%s'", self.wg_name)
 
         try:
-            # Phase 1: Fork session to decide
+            # Display heartbeat prompt (if configured)
+            if self.display_heartbeat and self.discord_channel and self.discord_chat_id:
+                now = datetime.datetime.now().strftime("%H:%M")
+                await self.discord_channel.send_text(
+                    self.discord_chat_id,
+                    f"**[Heartbeat {now}]**\n```\n{content.strip()}\n```",
+                )
+
+            # Phase 1: Fork session to decide (doesn't pollute main session)
             decision = await self._fork_and_decide(content)
 
             if is_silent_reply(decision):
                 logger.debug("Heartbeat silent reply from '%s'", self.wg_name)
+                if self.display_heartbeat and self.discord_channel and self.discord_chat_id:
+                    await self.discord_channel.send_text(
+                        self.discord_chat_id, "_Heartbeat: nothing to do._",
+                    )
                 return
 
-            # Phase 2: Send decision to original admin session for execution
+            # Phase 2: Send decision to admin session for execution
             logger.info(
                 "Heartbeat action for '%s': %s",
                 self.wg_name, decision[:200],
             )
+            if self.display_heartbeat and self.discord_channel and self.discord_chat_id:
+                preview = decision[:500] + "..." if len(decision) > 500 else decision
+                await self.discord_channel.send_text(
+                    self.discord_chat_id,
+                    f"**[Heartbeat decision]**\n{preview}",
+                )
+
             chat_id = self.discord_chat_id or f"heartbeat:{self.wg_name}"
             await self.admin_router.dispatch_sync(
                 decision, chat_id, from_bot="heartbeat",
@@ -124,7 +165,7 @@ class HeartbeatManager:
             self._is_ticking = False
 
     async def _fork_and_decide(self, content: str) -> str:
-        """Fork admin session, send heartbeat prompt, return the decision text."""
+        """Fork admin session to evaluate heartbeat without polluting main context."""
         from boxagent.agent.claude_process import ClaudeProcess
         from boxagent.router_callback import TextCollector
 
@@ -142,7 +183,7 @@ class HeartbeatManager:
         try:
             collector = TextCollector()
             await proc.send(prompt, collector, model=self.model)
-            return collector.text.strip()
+            return _extract_action(collector.text)
         finally:
             await proc.stop()
 

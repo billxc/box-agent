@@ -265,7 +265,8 @@ class WorkgroupManager:
                 model=wg_cfg.model,
                 yolo=wg_cfg.yolo,
                 discord_channel=dc_channel,
-                discord_chat_id=str(wg_cfg.admin_discord_category) if wg_cfg.admin_discord_category else "",
+                discord_chat_id=str(wg_cfg.admin_discord_channel) if wg_cfg.admin_discord_channel else "",
+                display_heartbeat=wg_cfg.display_heartbeat,
             )
             hb.start()
             self._heartbeats[wg_name] = hb

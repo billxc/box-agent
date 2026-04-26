@@ -69,6 +69,7 @@ class WorkgroupConfig:
     discord_bot_id: str = ""        # references discord_bots.yaml
     discord_token: str = ""         # resolved token
     admin_discord_category: int = 0 # admin listens on this Discord category
+    admin_discord_channel: int = 0  # text channel for heartbeat/notifications
     # Agent config
     allowed_users: list[int] = field(default_factory=list)
     model: str = ""
@@ -78,6 +79,7 @@ class WorkgroupConfig:
     display_tool_calls: str = "silent"
     extra_skill_dirs: list[str] = field(default_factory=list)
     heartbeat_interval_seconds: int = 0  # 0 = disabled
+    display_heartbeat: bool = False
     specialists: dict[str, SpecialistConfig] = field(default_factory=dict)
 
     @property
@@ -539,6 +541,7 @@ def _parse_workgroup(
 
     admin_raw = raw.get("admin", {})
     admin_discord_category = int(admin_raw.get("discord_category", 0))
+    admin_discord_channel = int(admin_raw.get("discord_admin_channel", 0))
 
     # Agent config
     ai_backend = raw.get("ai_backend", "claude-cli")
@@ -590,6 +593,7 @@ def _parse_workgroup(
         )
 
     heartbeat_interval_seconds = int(raw.get("heartbeat_interval_seconds", 0))
+    display_heartbeat = bool(raw.get("display_heartbeat", False))
 
     return WorkgroupConfig(
         name=name,
@@ -598,6 +602,7 @@ def _parse_workgroup(
         discord_bot_id=discord_bot_id,
         discord_token=discord_token,
         admin_discord_category=admin_discord_category,
+        admin_discord_channel=admin_discord_channel,
         allowed_users=allowed_users,
         model=model,
         ai_backend=ai_backend,
@@ -606,5 +611,6 @@ def _parse_workgroup(
         display_tool_calls=display_tool_calls,
         extra_skill_dirs=extra_skill_dirs,
         heartbeat_interval_seconds=heartbeat_interval_seconds,
+        display_heartbeat=display_heartbeat,
         specialists=specialists,
     )
