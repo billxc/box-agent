@@ -42,6 +42,53 @@ def _get_gateway_client() -> tuple[httpx.Client, str]:
 
 
 @mcp.tool()
+def list_specialists() -> str:
+    """List all specialist agents in your workgroup with their details.
+
+    Returns each specialist's name, model, workspace, status, and whether
+    it is a built-in or dynamically created specialist.
+    """
+    try:
+        client, base_url = _get_gateway_client()
+    except RuntimeError as e:
+        return f"Error: {e}"
+
+    try:
+        resp = client.get(
+            f"{base_url}/api/workgroup/specialists",
+            params={"workgroup": BOT_NAME},
+            timeout=10,
+        )
+        data = resp.json()
+        if not data.get("ok"):
+            return f"Error: {data.get('error', 'unknown error')}"
+
+        specialists = data.get("specialists", [])
+        if not specialists:
+            return "No specialists found in this workgroup."
+
+        lines = []
+        for sp in specialists:
+            parts = [f"**{sp['name']}**"]
+            if sp.get("display_name") and sp["display_name"] != sp["name"]:
+                parts.append(f"({sp['display_name']})")
+            parts.append(f"— model: {sp.get('model', 'default')}")
+            if sp.get("workspace"):
+                parts.append(f"| workspace: {sp['workspace']}")
+            if sp.get("builtin"):
+                parts.append("| built-in")
+            else:
+                parts.append("| dynamic")
+            if sp.get("running_tasks"):
+                parts.append(f"| running: {', '.join(sp['running_tasks'])}")
+            lines.append(" ".join(parts))
+
+        return f"Specialists ({len(specialists)}):\n" + "\n".join(lines)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
 def send_to_agent(agent_name: str, message: str) -> str:
     """Dispatch a task to a specialist agent in your workgroup.
 

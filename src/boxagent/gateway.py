@@ -512,6 +512,7 @@ class Gateway:
         """Start the internal HTTP API server (Unix socket + optional TCP)."""
         app = web.Application()
         app.router.add_post("/api/schedule/run", self._handle_schedule_run)
+        app.router.add_get("/api/workgroup/specialists", self._handle_list_specialists)
         app.router.add_post("/api/workgroup/send", self._handle_workgroup_send)
         app.router.add_post("/api/workgroup/create_specialist", self._handle_create_specialist)
         app.router.add_post("/api/workgroup/reset_specialist", self._handle_reset_specialist)
@@ -676,6 +677,12 @@ class Gateway:
         result = self._workgroup_mgr.reset_specialist(target)
         status = 200 if result.get("ok") else 400
         return web.json_response(result, status=status)
+
+    async def _handle_list_specialists(self, request: web.Request) -> web.Response:
+        """Handle GET /api/workgroup/specialists — list all specialists with details."""
+        wg_name = request.query.get("workgroup", "")
+        result = self._workgroup_mgr.list_specialists(wg_name)
+        return web.json_response(result)
 
     async def _handle_delete_specialist(self, request: web.Request) -> web.Response:
         """Handle POST /api/workgroup/delete_specialist."""

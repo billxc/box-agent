@@ -112,6 +112,13 @@ class WorkgroupManager:
             display_name=sp_cfg.display_name,
         )
 
+        # Prepare workspace BEFORE starting backend
+        if syn_cfg.workspace and self._ensure_git_repo:
+            self._ensure_git_repo(Path(syn_cfg.workspace))
+        if syn_cfg.extra_skill_dirs and self._sync_skills:
+            self._sync_skills(syn_cfg.workspace, syn_cfg.extra_skill_dirs, syn_cfg.ai_backend)
+        seed_specialist_workspace(syn_cfg.workspace, sp_name, wg_cfg.name)
+
         cli = self._make_backend(syn_cfg)
         cli.start()
         self.procs[sp_name] = cli
@@ -128,14 +135,6 @@ class WorkgroupManager:
         )
         pool.start(_factory)
         self.pools[sp_name] = pool
-
-        if syn_cfg.workspace and self._ensure_git_repo:
-            self._ensure_git_repo(Path(syn_cfg.workspace))
-        if syn_cfg.extra_skill_dirs and self._sync_skills:
-            self._sync_skills(syn_cfg.workspace, syn_cfg.extra_skill_dirs, syn_cfg.ai_backend)
-
-        # Seed specialist workspace templates (CLAUDE.md, skills)
-        seed_specialist_workspace(syn_cfg.workspace, sp_name, wg_cfg.name)
 
         sp_router = Router(
             cli_process=cli,
@@ -178,6 +177,13 @@ class WorkgroupManager:
             extra_skill_dirs=wg_cfg.extra_skill_dirs,
         )
 
+        # Prepare admin workspace BEFORE starting backend
+        if admin_ws and self._ensure_git_repo:
+            self._ensure_git_repo(Path(admin_ws))
+        if wg_cfg.extra_skill_dirs and self._sync_skills:
+            self._sync_skills(admin_ws, wg_cfg.extra_skill_dirs, wg_cfg.ai_backend)
+        seed_admin_workspace(admin_ws, wg_name, list(wg_cfg.specialists.keys()))
+
         admin_cli = self._make_backend(admin_bot_cfg)
         admin_cli.is_workgroup_admin = True
         admin_cli.start()
@@ -197,14 +203,6 @@ class WorkgroupManager:
         )
         admin_pool.start(_admin_factory)
         self.pools[wg_name] = admin_pool
-
-        if admin_ws and self._ensure_git_repo:
-            self._ensure_git_repo(Path(admin_ws))
-        if wg_cfg.extra_skill_dirs and self._sync_skills:
-            self._sync_skills(admin_ws, wg_cfg.extra_skill_dirs, wg_cfg.ai_backend)
-
-        # Seed admin workspace templates (CLAUDE.md, skills, HEARTBEAT.md)
-        seed_admin_workspace(admin_ws, wg_name, list(wg_cfg.specialists.keys()))
 
         admin_router = Router(
             cli_process=admin_cli,
@@ -368,6 +366,36 @@ class WorkgroupManager:
         self._tasks[task_id] = task
 
         return {"ok": True, "task_id": task_id, "specialist": target}
+
+    def list_specialists(self, wg_name: str = "") -> dict:
+        """List all specialists with their details.
+
+        If *wg_name* is given, list only specialists for that workgroup.
+        Otherwise list across all workgroups.
+        """
+        specialists = []
+        for name, wg_cfg in self.config.items():
+            if wg_name and name != wg_name:
+                continue
+            is_builtin_set = self._builtin_specialists.get(name, set())
+            for sp_name, sp_cfg in wg_cfg.specialists.items():
+                # Check running tasks
+                running_tasks = [
+                    tid for tid, info in self._task_results.items()
+                    if tid.startswith(f"{sp_name}-") and info.get("status") == "running"
+                ]
+                specialists.append({
+                    "name": sp_name,
+                    "workgroup": name,
+                    "model": sp_cfg.model,
+                    "workspace": sp_cfg.workspace,
+                    "ai_backend": sp_cfg.ai_backend,
+                    "display_name": sp_cfg.display_name,
+                    "discord_channel": sp_cfg.discord_channel,
+                    "builtin": sp_name in is_builtin_set,
+                    "running_tasks": running_tasks,
+                })
+        return {"ok": True, "specialists": specialists}
 
     def get_task_result(self, task_id: str) -> dict:
         """Check the status/result of an async task."""
