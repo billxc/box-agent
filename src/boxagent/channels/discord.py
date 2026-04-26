@@ -179,6 +179,19 @@ class DiscordChannel:
         logger.info("Created Discord channel #%s (ID: %d) in category %d", name, channel.id, category_id)
         return channel.id
 
+    async def delete_text_channel(self, channel_id: int) -> bool:
+        """Delete a text channel by ID. Returns True if deleted."""
+        channel = self._client.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await self._client.fetch_channel(channel_id)
+            except Exception:
+                logger.warning("Discord channel %d not found, skipping delete", channel_id)
+                return False
+        await channel.delete(reason="specialist deleted")
+        logger.info("Deleted Discord channel #%s (ID: %d)", channel.name, channel_id)
+        return True
+
     async def send_via_webhook(
         self, channel_id: int, webhook_name: str, text: str,
     ) -> str:
