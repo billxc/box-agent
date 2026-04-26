@@ -211,6 +211,9 @@ class Gateway:
                 _sync_skills=sync_skills,
             )
             for wg_name, wg_cfg in self.config.workgroups.items():
+                if not node_matches(wg_cfg.enabled_on_nodes, self.config.node_id):
+                    logger.info("Workgroup '%s' skipped (enabled_on_nodes=%s, current=%s)", wg_name, wg_cfg.enabled_on_nodes, self.config.node_id)
+                    continue
                 await self._workgroup_mgr.start_workgroup(wg_name, wg_cfg)
 
         # Start scheduler

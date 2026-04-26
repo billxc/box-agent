@@ -64,6 +64,7 @@ class WorkgroupConfig:
 
     name: str
     workspace: str = ""             # root directory; admin uses {workspace}/.boxagent-workgroup/admin/
+    enabled_on_nodes: str | list[str] = ""  # empty = run everywhere
     # Discord config (optional — omit for non-Discord workgroups)
     discord_bot_id: str = ""        # references discord_bots.yaml
     discord_token: str = ""         # resolved token
@@ -593,6 +594,7 @@ def _parse_workgroup(
     return WorkgroupConfig(
         name=name,
         workspace=workspace,
+        enabled_on_nodes=raw.get("enabled_on_nodes", ""),
         discord_bot_id=discord_bot_id,
         discord_token=discord_token,
         admin_discord_category=admin_discord_category,
