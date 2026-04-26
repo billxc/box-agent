@@ -331,20 +331,37 @@ class WorkgroupManager:
                 logger.error("Task %s failed: %s", task_id, e)
                 result = f"Error: {e}"
 
-            # Callback: notify admin's channel via allowed webhook
-            if reply_chat_id and dc_channel:
-                preview = result[:200] + "..." if len(result) > 200 else result
-                callback_text = f"**[{target}]** task done:\n{preview}"
-                try:
-                    wh = await dc_channel.ensure_allowed_webhook(
-                        "TaskNotification", reply_chat_id,
+            # Callback: short Discord notification + full result to admin router
+            if reply_chat_id:
+                # 1. Short notification on Discord (for human observers)
+                if dc_channel:
+                    status = "done" if "Error" not in result[:10] else "failed"
+                    notify = f"**[{target}]** {status} ({len(result)} chars)"
+                    try:
+                        wh = await dc_channel.ensure_allowed_webhook(
+                            "TaskNotification", reply_chat_id,
+                        )
+                        if wh:
+                            await wh.send(notify, wait=True)
+                    except Exception as e:
+                        logger.warning("Failed to send task notification: %s", e)
+
+                # 2. Full result to admin router (internal, admin AI processes it)
+                admin_router = self.routers.get(wg_name)
+                if admin_router:
+                    from boxagent.channels.base import IncomingMessage
+                    callback_msg = IncomingMessage(
+                        channel="discord",
+                        chat_id=reply_chat_id,
+                        user_id="workgroup",
+                        text=f"[TaskResult from {target}]\n{result}",
+                        trusted=True,
+                        via_workgroup=True,
                     )
-                    if wh:
-                        await wh.send(callback_text, wait=True)
-                    else:
-                        await dc_channel.send_text(reply_chat_id, callback_text)
-                except Exception as e:
-                    logger.warning("Failed to send task callback: %s", e)
+                    try:
+                        await admin_router.handle_message(callback_msg)
+                    except Exception as e:
+                        logger.warning("Failed to deliver task result to admin: %s", e)
 
         self._task_results[task_id] = {"status": "running"}
         task = asyncio.create_task(_run())
@@ -444,10 +461,24 @@ class WorkgroupManager:
 
         # Find which workgroup owns this specialist
         wg_name = ""
+        sp_discord_channel = 0
         for name, wg_cfg in self.config.items():
             if sp_name in wg_cfg.specialists:
                 wg_name = name
+                sp_discord_channel = wg_cfg.specialists[sp_name].discord_channel
                 break
+
+        # Delete Discord channel (if exists)
+        if sp_discord_channel and wg_name:
+            wg_cfg = self.config[wg_name]
+            dc_channel = None
+            if wg_cfg.discord_bot_id:
+                dc_channel = self.discord_channels.get(wg_cfg.discord_bot_id)
+            if dc_channel:
+                try:
+                    await dc_channel.delete_text_channel(sp_discord_channel)
+                except Exception as e:
+                    logger.warning("Failed to delete Discord channel for '%s': %s", sp_name, e)
 
         # Stop process
         cli = self.procs.pop(sp_name, None)
