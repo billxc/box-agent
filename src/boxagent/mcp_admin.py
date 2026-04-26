@@ -69,7 +69,6 @@ def send_to_agent(agent_name: str, message: str) -> str:
             },
             timeout=10,
         )
-        resp.raise_for_status()
         data = resp.json()
         if data.get("ok"):
             task_id = data.get("task_id", "")
@@ -111,7 +110,6 @@ def create_specialist(name: str, model: str = "", workspace: str = "") -> str:
             },
             timeout=30,
         )
-        resp.raise_for_status()
         data = resp.json()
         if data.get("ok"):
             ch_id = data.get("channel_id", 0)
@@ -145,7 +143,6 @@ def reset_specialist(agent_name: str) -> str:
             json={"name": agent_name},
             timeout=10,
         )
-        resp.raise_for_status()
         data = resp.json()
         if data.get("ok"):
             return f"Specialist '{agent_name}' session reset. Next task will start fresh."
@@ -176,7 +173,6 @@ def delete_specialist(agent_name: str) -> str:
             json={"name": agent_name},
             timeout=10,
         )
-        resp.raise_for_status()
         data = resp.json()
         if data.get("ok"):
             return f"Specialist '{agent_name}' deleted."
