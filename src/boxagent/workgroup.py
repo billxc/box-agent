@@ -331,6 +331,21 @@ class WorkgroupManager:
             return {"ok": False, "error": f"task '{task_id}' not found"}
         return {"ok": True, **info}
 
+    def reset_specialist(self, target: str) -> dict:
+        """Clear a specialist's session so the next task starts fresh."""
+        pool = self.pools.get(target)
+        if pool is None:
+            return {"ok": False, "error": f"specialist '{target}' not found"}
+        # chat_id used by send_to_specialist
+        for wg_cfg in self.config.values():
+            if target in wg_cfg.specialists:
+                sp = wg_cfg.specialists[target]
+                chat_id = str(sp.discord_channel) if sp.discord_channel else f"wg:{target}"
+                pool.clear_session(chat_id)
+                logger.info("Reset session for specialist '%s' (chat_id=%s)", target, chat_id)
+                return {"ok": True}
+        return {"ok": False, "error": f"specialist '{target}' not in any workgroup"}
+
     async def create_specialist(
         self, wg_name: str, sp_name: str,
         model: str = "", workspace: str = "",
