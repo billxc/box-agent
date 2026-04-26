@@ -219,59 +219,10 @@ class DiscordChannel:
         intents = discord.Intents.default()
         intents.message_content = True
         self._client = discord.Client(intents=intents)
-        tree = discord.app_commands.CommandTree(self._client)
-
-        # Register slash commands matching Telegram's command menu
-        _COMMANDS = [
-            ("new", "Start a fresh conversation"),
-            ("resume", "List or restore a previous session"),
-            ("compact", "Summarize and start new session with context"),
-            ("model", "Show or switch model (e.g. /model sonnet)"),
-            ("cd", "Show or switch workspace directory"),
-            ("backend", "Show or switch AI backend"),
-            ("status", "Show bot state and uptime"),
-            ("cancel", "Cancel the current running task"),
-            ("verbose", "Cycle tool call display mode"),
-            ("exec", "Run a shell command (e.g. /exec ls -la)"),
-            ("sync_skills", "Re-sync linked skill directories"),
-            ("trust_workspace", "Trust current workspace for agent"),
-            ("review_loop", "Multi-agent adversarial review loop"),
-            ("sessions", "List Claude CLI sessions"),
-            ("schedule", "Manage schedules (list/logs/show/run)"),
-            ("version", "Show version and commit hash"),
-            ("help", "Show available commands"),
-        ]
-
-        def _make_slash_callback(name: str):
-            async def _slash(interaction: discord.Interaction, args: str = ""):
-                await interaction.response.defer()
-                chat_id = str(interaction.channel_id)
-                self._pending_interactions[chat_id] = interaction
-                callback = self._resolve_callback(interaction.channel)
-                if callback:
-                    text = f"/{name} {args}".strip() if args else f"/{name}"
-                    incoming = IncomingMessage(
-                        channel="discord",
-                        chat_id=chat_id,
-                        user_id=str(interaction.user.id),
-                        text=text,
-                    )
-                    await callback(incoming)
-            return _slash
-
-        for cmd_name, cmd_desc in _COMMANDS:
-            cb = _make_slash_callback(cmd_name)
-            tree.command(name=cmd_name, description=cmd_desc)(
-                discord.app_commands.describe(args="Optional arguments")(cb)
-            )
 
         @self._client.event
         async def on_ready():
-            await tree.sync()
-            logger.info(
-                "Discord channel ready as %s (synced %d commands)",
-                self._client.user, len(_COMMANDS),
-            )
+            logger.info("Discord channel ready as %s", self._client.user)
 
         @self._client.event
         async def on_message(message: discord.Message):
