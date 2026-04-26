@@ -377,15 +377,15 @@ causing "No such file or directory" errors on resume.
 
 ```bash
 cd /path/to/repo
-git worktree add ../worktree-{branch} -b {branch}
-cd ../worktree-{branch}
+git worktree add ../worktree-{{branch}} -b {{branch}}
+cd ../worktree-{{branch}}
 # ... do your work here ...
 ```
 
 After completing and pushing your branch, clean up:
 ```bash
 cd /path/to/repo
-git worktree remove ../worktree-{branch}
+git worktree remove ../worktree-{{branch}}
 ```
 
 **Why:** Multiple specialists may work on the same repo concurrently.
@@ -486,8 +486,8 @@ Idea → Design Doc → Review Gate → Task Breakdown → Implementation
 
 ### Branch Convention
 
-- Single features: `fix/{issue}` or `feat/{description}`.
-- Multi-milestone: `feat/{feature}/dev-m1` → `dev-m2` → `dev-m3`.
+- Single features: `fix/<issue>` or `feat/<description>`.
+- Multi-milestone: `feat/<feature>/dev-m1` → `dev-m2` → `dev-m3`.
 - Include issue number in commits: `feat(scope): description (#48)`.
 
 ### Commit Practices
@@ -575,7 +575,7 @@ SPECIALIST_TEMPLATES_MD = """\
 ```markdown
 ## PR: {title}
 
-**Branch:** `{branch}` → `{base}`
+**Branch:** `{{branch}}` → `{base}`
 
 ### Pre-Submit
 - [ ] Code compiles without errors
