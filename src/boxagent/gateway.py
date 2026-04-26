@@ -527,6 +527,11 @@ class Gateway:
             sock_path = self._sock_path
             unix_site = web.UnixSite(runner, str(sock_path))
             await unix_site.start()
+            # Record inode so _stop_http only deletes OUR socket
+            try:
+                self._sock_inode = sock_path.stat().st_ino
+            except OSError:
+                self._sock_inode = 0
             logger.info("HTTP API listening on unix:%s", sock_path)
         else:
             # Windows: no Unix sockets. If api_port is unset, ask the OS for a free port.
@@ -550,7 +555,22 @@ class Gateway:
         if self._http_runner:
             await self._http_runner.cleanup()
             self._http_runner = None
-        self._clear_http_artifacts()
+        # Only delete socket if it's the one WE created (inode match).
+        # Prevents a shutting-down instance from deleting a new instance's socket.
+        sock = self._sock_path
+        if sock.exists():
+            try:
+                current_inode = sock.stat().st_ino
+            except OSError:
+                current_inode = 0
+            if current_inode == getattr(self, "_sock_inode", 0) and current_inode != 0:
+                sock.unlink(missing_ok=True)
+                logger.info("Removed own socket: %s", sock)
+            else:
+                logger.info("Socket %s belongs to another instance (inode %d != %d), not removing",
+                            sock, current_inode, getattr(self, "_sock_inode", 0))
+        if self._api_port_file.exists():
+            self._api_port_file.unlink(missing_ok=True)
 
     async def _handle_schedule_run(self, request: web.Request) -> web.Response:
         """Handle POST /api/schedule/run — execute a schedule once."""

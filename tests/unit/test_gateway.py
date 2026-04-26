@@ -395,9 +395,32 @@ class TestGateway:
         assert sock.exists()
         assert port_file.exists()
 
+        # Simulate that this gateway created the socket (record inode)
+        gw._sock_inode = sock.stat().st_ino
+
         await gw._stop_http()
         assert not sock.exists()
         assert not port_file.exists()
+
+    async def test_stop_http_preserves_other_instance_socket(self, tmp_path):
+        """_stop_http does NOT remove a socket created by another instance."""
+        from boxagent.gateway import Gateway
+
+        mock_config = MagicMock()
+        mock_config.bots = {}
+        mock_config.node_id = "test-node"
+        mock_config.api_port = 0
+
+        local_dir = tmp_path / "local"
+        local_dir.mkdir()
+        gw = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
+
+        sock = local_dir / "api.sock"
+        sock.touch()
+
+        # gw._sock_inode not set → different instance
+        await gw._stop_http()
+        assert sock.exists()  # should NOT be deleted
 
     async def test_start_skips_bot_on_node_mismatch(self, tmp_path):
         from boxagent.gateway import Gateway
