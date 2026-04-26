@@ -668,6 +668,9 @@ class Router:
             if use_pool:
                 self.pool.release(chat_id, proc)
 
+        # Get session_id BEFORE release (release clears proc.session_id)
+        sid = self.pool.get_session_id(chat_id) if use_pool else getattr(proc, "session_id", None)
+
         turn_failed = getattr(proc, "last_turn_failed", False) is True
         turn_error = getattr(proc, "last_turn_error", "")
         if not isinstance(turn_error, str):
@@ -678,7 +681,7 @@ class Router:
                 "Turn failed: bot=%s chat_id=%s session=%s assistant_len=%d error=%s",
                 self.bot_name,
                 chat_id,
-                getattr(proc, "session_id", None),
+                sid,
                 len(callback.collected_text),
                 turn_error,
             )
@@ -687,12 +690,11 @@ class Router:
                 "Turn complete: bot=%s chat_id=%s session=%s assistant_len=%d",
                 self.bot_name,
                 chat_id,
-                getattr(proc, "session_id", None),
+                sid,
                 len(callback.collected_text),
             )
 
         # Log transcript
-        sid = self.pool.get_session_id(chat_id) if use_pool else getattr(proc, "session_id", None)
         if self.local_dir:
             assistant_text = callback.collected_text
             if turn_failed and not assistant_text and turn_error:
