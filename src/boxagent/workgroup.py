@@ -303,12 +303,18 @@ class WorkgroupManager:
                 logger.error("Task %s failed: %s", task_id, e)
                 result = f"Error: {e}"
 
-            # Callback: notify admin's channel
+            # Callback: notify admin's channel via allowed webhook
             if reply_chat_id and dc_channel:
                 preview = result[:200] + "..." if len(result) > 200 else result
                 callback_text = f"**[{target}]** task done:\n{preview}"
                 try:
-                    await dc_channel.send_text(reply_chat_id, callback_text)
+                    wh = await dc_channel.ensure_allowed_webhook(
+                        "TaskNotification", reply_chat_id,
+                    )
+                    if wh:
+                        await wh.send(callback_text, wait=True)
+                    else:
+                        await dc_channel.send_text(reply_chat_id, callback_text)
                 except Exception as e:
                     logger.warning("Failed to send task callback: %s", e)
 

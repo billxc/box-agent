@@ -65,7 +65,7 @@ class Router:
 
         ch = self._resolve_channel(msg)
 
-        if uid not in self.allowed_users:
+        if not msg.trusted and uid not in self.allowed_users:
             await ch.send_text(
                 msg.chat_id,
                 "Unauthorized: you are not allowed to use this bot.",

@@ -27,6 +27,7 @@ class IncomingMessage:
     attachments: list[Attachment] = field(default_factory=list)
     reply_to: str | None = None
     via_workgroup: bool = False  # True when routed through workgroup delegation
+    trusted: bool = False  # True for internal messages (skip auth check)
     timestamp: datetime = field(default_factory=datetime.now)
 
 

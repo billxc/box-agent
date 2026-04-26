@@ -71,6 +71,10 @@ class DiscordChannel:
     _webhooks: dict[str, discord.Webhook] = field(
         default_factory=dict, repr=False
     )
+    # Webhook IDs whose messages should be processed (not filtered).
+    _allowed_webhook_ids: set[int] = field(
+        default_factory=set, repr=False
+    )
 
     def register_route(
         self,
@@ -154,6 +158,17 @@ class DiscordChannel:
         except Exception as e:
             logger.warning("Failed to ensure webhook for '%s': %s", bot_name, e)
             return None
+
+    async def ensure_allowed_webhook(self, name: str, chat_id: str) -> discord.Webhook | None:
+        """Get or create a webhook whose messages are NOT filtered.
+
+        Messages from this webhook pass through ``_handle_incoming`` and
+        are routed to the appropriate handler like normal user messages.
+        """
+        wh = await self._ensure_webhook(name, chat_id)
+        if wh:
+            self._allowed_webhook_ids.add(wh.id)
+        return wh
 
     async def create_text_channel(self, category_id: int, name: str) -> int:
         """Create a text channel under a category. Returns the new channel ID."""
@@ -621,10 +636,13 @@ class DiscordChannel:
         if is_self:
             return
 
-        # Ignore webhook messages (workgroup admin posts, etc.)
-        # webhook_id is an int for webhook messages, None for normal messages.
+        # Ignore webhook messages — except those in the allow list
+        # (e.g. TaskNotification webhooks used for workgroup callbacks).
+        is_allowed_webhook = False
         if isinstance(message.webhook_id, int):
-            return
+            if message.webhook_id not in self._allowed_webhook_ids:
+                return
+            is_allowed_webhook = True
 
         # Ignore system messages (member joins, boosts, pins, etc.)
         if message.type not in (
@@ -644,6 +662,7 @@ class DiscordChannel:
                 user_id=str(message.author.id),
                 text=message.content or "",
                 attachments=attachments,
+                trusted=is_allowed_webhook,
             )
             await callback(incoming)
             return
@@ -660,5 +679,6 @@ class DiscordChannel:
             user_id=str(message.author.id),
             text=message.content or "",
             attachments=attachments,
+            trusted=is_allowed_webhook,
         )
         await callback(incoming)
