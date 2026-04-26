@@ -47,6 +47,7 @@ class Router:
     _compact_summaries: dict[str, str] = field(default_factory=dict, repr=False)
     _resume_contexts: dict[str, str] = field(default_factory=dict, repr=False)
     _channels: dict[str, object] = field(default_factory=dict, repr=False)
+    _pending_messages: dict[str, list] = field(default_factory=dict, repr=False)  # chat_id → buffered IncomingMessages
 
     def _resolve_channel(self, msg: IncomingMessage) -> object:
         """Return the channel that should handle this message's replies."""
@@ -80,6 +81,15 @@ class Router:
             if command in SYSTEM_COMMANDS:
                 await self._handle_command(command, msg)
                 return
+
+        # Buffer if this chat_id already has an active turn
+        if self.pool and self.pool.get_active(msg.chat_id):
+            self._pending_messages.setdefault(msg.chat_id, []).append(msg)
+            logger.debug(
+                "Buffered message for busy chat_id=%s (%d pending)",
+                msg.chat_id, len(self._pending_messages[msg.chat_id]),
+            )
+            return
 
         await self._dispatch(msg)
 
@@ -546,7 +556,46 @@ class Router:
     # ---- Dispatch ----
 
     async def _dispatch(self, msg: IncomingMessage) -> str:
-        """Dispatch message to AI backend. Returns collected response text."""
+        """Dispatch message to AI backend. Returns collected response text.
+
+        After each turn, drains any messages that were buffered while the
+        session was busy and processes them in a follow-up turn.
+        """
+        chat_id = msg.chat_id
+        current_msg = msg
+        last_collected = ""
+
+        while True:
+            last_collected = await self._dispatch_one(current_msg)
+
+            # Drain pending messages that arrived during this turn
+            pending = self._pending_messages.pop(chat_id, [])
+            if not pending:
+                break
+
+            # Combine buffered messages into one follow-up prompt
+            lines = ["[Messages arrived while you were working]"]
+            for m in pending:
+                lines.append(f"- {m.text}")
+            combined_text = "\n".join(lines)
+
+            logger.info(
+                "Draining %d buffered message(s) for chat_id=%s",
+                len(pending), chat_id,
+            )
+            current_msg = IncomingMessage(
+                channel=msg.channel,
+                chat_id=chat_id,
+                user_id=msg.user_id,
+                text=combined_text,
+                via_workgroup=msg.via_workgroup,
+                trusted=msg.trusted,
+            )
+
+        return last_collected
+
+    async def _dispatch_one(self, msg: IncomingMessage) -> str:
+        """Run a single dispatch turn."""
         chat_id = msg.chat_id
         # Build system prompt and user message separately
         system_parts = []
