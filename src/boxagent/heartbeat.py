@@ -142,7 +142,10 @@ class HeartbeatManager:
                 )
 
             # Phase 1: Fork session to decide (doesn't pollute main session)
-            decision = await self._fork_and_decide(content)
+            decision, meta = await self._fork_and_decide(content)
+
+            # Log to workspace file
+            self._write_heartbeat_log(decision, meta)
 
             if is_silent_reply(decision):
                 logger.debug("Heartbeat silent reply from '%s'", self.wg_name)
@@ -171,18 +174,22 @@ class HeartbeatManager:
         finally:
             self._is_ticking = False
 
-    async def _fork_and_decide(self, content: str) -> str:
-        """Fork admin session to evaluate heartbeat without polluting main context."""
+    async def _fork_and_decide(self, content: str) -> tuple[str, dict]:
+        """Fork admin session to evaluate heartbeat without polluting main context.
+
+        Returns (extracted_action, metadata) where metadata contains
+        session IDs and raw response for logging.
+        """
         from boxagent.agent.claude_process import ClaudeProcess
         from boxagent.router_callback import TextCollector
 
-        session_id = self._find_fork_session_id()
+        source_session_id = self._find_fork_session_id()
         prompt = _build_heartbeat_prompt(self.wg_name, content)
 
         proc = ClaudeProcess(
             workspace=self.workspace,
-            session_id=session_id,
-            fork_session=bool(session_id),
+            session_id=source_session_id,
+            fork_session=bool(source_session_id),
             yolo=self.yolo,
         )
         proc.start()
@@ -190,7 +197,14 @@ class HeartbeatManager:
         try:
             collector = TextCollector()
             await proc.send(prompt, collector, model=self.model)
-            return _extract_action(collector.text)
+            raw = collector.text.strip()
+            action = _extract_action(raw)
+            return action, {
+                "source_session_id": source_session_id or "",
+                "fork_session_id": proc.session_id or "",
+                "raw_response": raw,
+                "prompt": prompt,
+            }
         finally:
             await proc.stop()
 
@@ -203,6 +217,35 @@ class HeartbeatManager:
             if ctx.session_id:
                 return ctx.session_id
         return None
+
+    def _write_heartbeat_log(self, decision: str, meta: dict) -> None:
+        """Append heartbeat record to workspace/heartbeat.log."""
+        if not self.workspace:
+            return
+        log_path = Path(self.workspace) / "heartbeat.log"
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        silent = is_silent_reply(decision)
+        entry = (
+            f"=== {now} ===\n"
+            f"source_session: {meta.get('source_session_id', 'none')}\n"
+            f"fork_session:   {meta.get('fork_session_id', 'none')}\n"
+            f"silent: {silent}\n"
+            f"\n"
+            f"--- prompt ---\n"
+            f"{meta.get('prompt', '').strip()}\n"
+            f"\n"
+            f"--- raw response ---\n"
+            f"{meta.get('raw_response', '').strip()}\n"
+            f"\n"
+            f"--- extracted action ---\n"
+            f"{decision}\n"
+            f"\n"
+        )
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(entry)
+        except Exception as e:
+            logger.warning("Failed to write heartbeat log: %s", e)
 
     def _read_heartbeat_md(self) -> str | None:
         """Read HEARTBEAT.md from workspace. Returns None if not found."""
