@@ -593,7 +593,7 @@ class Gateway:
             logger.error("Async schedule/run '%s' failed: %s", task_id, e)
 
     async def _handle_workgroup_send(self, request: web.Request) -> web.Response:
-        """Handle POST /api/workgroup/send — delegate to a specialist."""
+        """Handle POST /api/workgroup/send — dispatch task to a specialist (async)."""
         try:
             body = await request.json()
         except Exception:
@@ -610,7 +610,7 @@ class Gateway:
 
         try:
             result = await self._workgroup_mgr.send_to_specialist(target, message, from_bot=from_bot)
-            return web.json_response({"ok": True, "response": result})
+            return web.json_response(result)
         except Exception as e:
             logger.error("Workgroup send to '%s' failed: %s", target, e)
             return web.json_response({"ok": False, "error": str(e)}, status=500)

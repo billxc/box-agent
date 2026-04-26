@@ -1,6 +1,8 @@
 """WorkgroupManager — manages workgroup lifecycle, specialists, and delegation."""
 
+import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -31,6 +33,10 @@ class WorkgroupManager:
     routers: dict[str, Router] = field(default_factory=dict)    # name → Router
     pools: dict[str, SessionPool] = field(default_factory=dict)  # name → Pool
     procs: dict[str, object] = field(default_factory=dict)       # name → CLI process
+    # Async task tracking
+    _tasks: dict[str, asyncio.Task] = field(default_factory=dict, repr=False)
+    _task_results: dict[str, dict] = field(default_factory=dict, repr=False)
+    _task_counter: int = field(default=0, repr=False)
 
     # Injected by Gateway
     _create_backend: object = None  # Callable[[BotConfig, str|None], object]
@@ -240,13 +246,20 @@ class WorkgroupManager:
 
     async def send_to_specialist(
         self, target: str, text: str, from_bot: str = "",
-    ) -> str:
-        """Send a message to a specialist and return the response."""
+    ) -> dict:
+        """Dispatch a task to a specialist asynchronously.
+
+        Returns immediately with a task_id. The specialist processes in the
+        background; results are visible in the Discord channel (if configured).
+        """
         router = self.routers.get(target)
         if router is None:
-            return f"Error: specialist '{target}' not found"
+            return {"ok": False, "error": f"specialist '{target}' not found"}
 
-        # Find specialist's Discord channel (if configured)
+        self._task_counter += 1
+        task_id = f"{target}-{self._task_counter}"
+
+        # Resolve Discord channel info
         sp_discord_channel = 0
         dc_channel = None
         wg_display = from_bot or "admin"
@@ -258,16 +271,44 @@ class WorkgroupManager:
                 wg_display = wg_cfg.display_name or from_bot or "admin"
                 break
 
-        if sp_discord_channel and dc_channel:
-            try:
-                await dc_channel.send_via_webhook(sp_discord_channel, wg_display, text)
-            except Exception as e:
-                logger.warning("Failed to post task to specialist channel: %s", e)
-            chat_id = str(sp_discord_channel)
-        else:
-            chat_id = f"wg:{target}"
+        chat_id = str(sp_discord_channel) if sp_discord_channel else f"wg:{target}"
 
-        return await router.dispatch_sync(text, chat_id, from_bot=from_bot)
+        async def _run():
+            try:
+                # Post task in specialist's channel via webhook
+                if sp_discord_channel and dc_channel:
+                    try:
+                        await dc_channel.send_via_webhook(sp_discord_channel, wg_display, text)
+                    except Exception as e:
+                        logger.warning("Failed to post task to specialist channel: %s", e)
+
+                result = await router.dispatch_sync(text, chat_id, from_bot=from_bot)
+                self._task_results[task_id] = {
+                    "status": "done",
+                    "result": result,
+                    "finished_at": time.time(),
+                }
+                logger.info("Task %s completed (%d chars)", task_id, len(result))
+            except Exception as e:
+                self._task_results[task_id] = {
+                    "status": "error",
+                    "error": str(e),
+                    "finished_at": time.time(),
+                }
+                logger.error("Task %s failed: %s", task_id, e)
+
+        self._task_results[task_id] = {"status": "running"}
+        task = asyncio.create_task(_run())
+        self._tasks[task_id] = task
+
+        return {"ok": True, "task_id": task_id, "specialist": target}
+
+    def get_task_result(self, task_id: str) -> dict:
+        """Check the status/result of an async task."""
+        info = self._task_results.get(task_id)
+        if info is None:
+            return {"ok": False, "error": f"task '{task_id}' not found"}
+        return {"ok": True, **info}
 
     async def create_specialist(
         self, wg_name: str, sp_name: str,

@@ -42,11 +42,11 @@ def _get_gateway_client() -> tuple[httpx.Client, str]:
 
 @mcp.tool()
 def send_to_agent(agent_name: str, message: str) -> str:
-    """Delegate a task to a specialist agent in your workgroup and wait for the response.
+    """Dispatch a task to a specialist agent in your workgroup.
 
-    The message will be sent to the specialist's Discord channel (visible to
-    observers) and the specialist will process it. This tool blocks until the
-    specialist completes and returns the full response text.
+    The task is dispatched asynchronously — this tool returns immediately.
+    The specialist processes the task in the background; results are visible
+    in the specialist's Discord channel.
 
     Args:
         agent_name: Name of the specialist agent to delegate to
@@ -65,15 +65,14 @@ def send_to_agent(agent_name: str, message: str) -> str:
                 "message": message,
                 "from": BOT_NAME,
             },
-            timeout=300,
+            timeout=10,
         )
         resp.raise_for_status()
         data = resp.json()
         if data.get("ok"):
-            return data.get("response", "")
+            task_id = data.get("task_id", "")
+            return f"Task dispatched to {agent_name} (task_id: {task_id}). Check the specialist's Discord channel for progress."
         return f"Error: {data.get('error', 'unknown error')}"
-    except httpx.TimeoutException:
-        return f"Error: specialist '{agent_name}' timed out (5 min limit)"
     except Exception as e:
         return f"Error: {e}"
 
