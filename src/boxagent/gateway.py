@@ -602,6 +602,7 @@ class Gateway:
         target = body.get("target", "")
         message = body.get("message", "")
         from_bot = body.get("from", "")
+        reply_chat_id = body.get("reply_chat_id", "")
 
         if not target:
             return web.json_response({"ok": False, "error": "missing 'target'"}, status=400)
@@ -609,7 +610,9 @@ class Gateway:
             return web.json_response({"ok": False, "error": "missing 'message'"}, status=400)
 
         try:
-            result = await self._workgroup_mgr.send_to_specialist(target, message, from_bot=from_bot)
+            result = await self._workgroup_mgr.send_to_specialist(
+                target, message, from_bot=from_bot, reply_chat_id=reply_chat_id,
+            )
             return web.json_response(result)
         except Exception as e:
             logger.error("Workgroup send to '%s' failed: %s", target, e)

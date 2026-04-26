@@ -16,6 +16,7 @@ mcp = FastMCP("boxagent-admin")
 
 LOCAL_DIR = os.environ.get("BOXAGENT_LOCAL_DIR", "")
 BOT_NAME = os.environ.get("BOXAGENT_BOT_NAME", "")
+CHAT_ID = os.environ.get("BOXAGENT_CHAT_ID", "")
 
 
 def _get_gateway_client() -> tuple[httpx.Client, str]:
@@ -64,6 +65,7 @@ def send_to_agent(agent_name: str, message: str) -> str:
                 "target": agent_name,
                 "message": message,
                 "from": BOT_NAME,
+                "reply_chat_id": CHAT_ID,
             },
             timeout=10,
         )

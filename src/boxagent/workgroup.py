@@ -246,11 +246,13 @@ class WorkgroupManager:
 
     async def send_to_specialist(
         self, target: str, text: str, from_bot: str = "",
+        reply_chat_id: str = "",
     ) -> dict:
         """Dispatch a task to a specialist asynchronously.
 
         Returns immediately with a task_id. The specialist processes in the
         background; results are visible in the Discord channel (if configured).
+        When done, a summary is posted back to reply_chat_id (admin's channel).
         """
         router = self.routers.get(target)
         if router is None:
@@ -263,17 +265,20 @@ class WorkgroupManager:
         sp_discord_channel = 0
         dc_channel = None
         wg_display = from_bot or "admin"
-        for wg_cfg in self.config.values():
+        wg_name = ""
+        for name, wg_cfg in self.config.items():
             if target in wg_cfg.specialists:
                 sp_discord_channel = wg_cfg.specialists[target].discord_channel
                 if wg_cfg.discord_bot_id:
                     dc_channel = self.discord_channels.get(wg_cfg.discord_bot_id)
                 wg_display = wg_cfg.display_name or from_bot or "admin"
+                wg_name = name
                 break
 
         chat_id = str(sp_discord_channel) if sp_discord_channel else f"wg:{target}"
 
         async def _run():
+            result = ""
             try:
                 # Post task in specialist's channel via webhook
                 if sp_discord_channel and dc_channel:
@@ -296,6 +301,16 @@ class WorkgroupManager:
                     "finished_at": time.time(),
                 }
                 logger.error("Task %s failed: %s", task_id, e)
+                result = f"Error: {e}"
+
+            # Callback: notify admin's channel
+            if reply_chat_id and dc_channel:
+                preview = result[:200] + "..." if len(result) > 200 else result
+                callback_text = f"**[{target}]** task done:\n{preview}"
+                try:
+                    await dc_channel.send_text(reply_chat_id, callback_text)
+                except Exception as e:
+                    logger.warning("Failed to send task callback: %s", e)
 
         self._task_results[task_id] = {"status": "running"}
         task = asyncio.create_task(_run())

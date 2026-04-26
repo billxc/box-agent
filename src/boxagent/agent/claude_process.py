@@ -98,6 +98,7 @@ class ClaudeProcess(BaseCLIProcess):
         if chat_id and self.is_workgroup_admin:
             admin_env = {
                 "BOXAGENT_BOT_NAME": self.bot_name,
+                "BOXAGENT_CHAT_ID": chat_id,
             }
             local_dir = os.environ.get("BOXAGENT_LOCAL_DIR", "")
             if local_dir:
