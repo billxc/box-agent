@@ -352,18 +352,21 @@ class WorkgroupManager:
                 logger.error("Task %s failed: %s", task_id, e)
                 result = f"Error: {e}"
 
-            # Callback: short Discord notification + full result to admin router
+            # Callback: Discord notification with result + full result to admin router
             if reply_chat_id:
-                # 1. Short notification on Discord (for human observers)
+                # 1. Result notification on Discord (for human observers)
                 if dc_channel:
                     status = "done" if "Error" not in result[:10] else "failed"
-                    notify = f"**[{target}]** {status} ({len(result)} chars)"
+                    preview = result[:800] + "..." if len(result) > 800 else result
+                    notify = f"**[{target}]** {status}\n{preview}"
                     try:
                         wh = await dc_channel.ensure_allowed_webhook(
                             "TaskNotification", reply_chat_id,
                         )
                         if wh:
                             await wh.send(notify, wait=True)
+                        else:
+                            await dc_channel.send_text(reply_chat_id, notify)
                     except Exception as e:
                         logger.warning("Failed to send task notification: %s", e)
 
