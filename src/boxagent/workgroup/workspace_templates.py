@@ -110,6 +110,7 @@ def seed_admin_workspace(
     else:
         specialists_block = "_No specialists configured yet._"
 
+    workgroup_dir = str(Path(workspace).parent)
     worktrees_dir = str(Path(workspace).parent / "worktrees")
 
     # --- System layer (overwritten every startup) ---
@@ -120,6 +121,7 @@ def seed_admin_workspace(
         specialists_block=specialists_block,
         superboss_ref=SUPERBOSS_REF,
         worktrees_dir=worktrees_dir,
+        workgroup_dir=workgroup_dir,
     )
     if _write_always(ws / ".claude" / "CLAUDE.md", content):
         written.append(".claude/CLAUDE.md")
@@ -164,6 +166,7 @@ def seed_specialist_workspace(
     ws = Path(workspace)
     written: list[str] = []
 
+    workgroup_dir = str(ws.parent.parent)
     worktrees_dir = str(ws.parent.parent / "worktrees")
 
     # --- System layer (overwritten every startup) ---
@@ -174,6 +177,7 @@ def seed_specialist_workspace(
         wg_name=wg_name,
         supercrew_ref=SUPERCREW_REF,
         worktrees_dir=worktrees_dir,
+        workgroup_dir=workgroup_dir,
     )
     if _write_always(ws / ".claude" / "CLAUDE.md", content):
         written.append(".claude/CLAUDE.md")

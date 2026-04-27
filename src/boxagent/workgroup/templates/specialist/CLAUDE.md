@@ -70,3 +70,22 @@ git worktree remove {worktrees_dir}/my-branch
 Without worktrees you would clobber each other's uncommitted changes,
 break each other's builds, and create merge nightmares.  Each worktree
 is a fully independent checkout on its own branch.
+
+## Issue Tracker (YAIT)
+
+This workgroup uses YAIT to track issues.  Every command requires
+`YAIT_HOME` and `-P` since no global env var is set.
+
+```bash
+# List issues
+YAIT_HOME={workgroup_dir}/.yait-data yait -P {wg_name} list
+
+# Create an issue
+YAIT_HOME={workgroup_dir}/.yait-data yait -P {wg_name} new "Title" -t bug
+
+# Show issue details
+YAIT_HOME={workgroup_dir}/.yait-data yait -P {wg_name} show <ID>
+
+# Update issue status
+YAIT_HOME={workgroup_dir}/.yait-data yait -P {wg_name} update <ID> -s closed
+```
