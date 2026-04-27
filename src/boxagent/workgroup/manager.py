@@ -395,12 +395,15 @@ class WorkgroupManager:
             # Callback: Discord notification with result + full result to admin router
             if reply_chat_id:
                 # 1. Result notification on Discord (for human observers)
+                # Use _ensure_webhook (NOT ensure_allowed_webhook) so the
+                # notification is filtered out by _handle_incoming and doesn't
+                # trigger the admin to reply again.
                 if dc_channel:
                     status = "done" if "Error" not in result[:10] else "failed"
                     preview = result[:800] + "..." if len(result) > 800 else result
                     notify = f"**[{target}]** {status}\n{preview}"
                     try:
-                        wh = await dc_channel.ensure_allowed_webhook(
+                        wh = await dc_channel._ensure_webhook(
                             "TaskNotification", reply_chat_id,
                         )
                         if wh:
