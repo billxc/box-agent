@@ -135,11 +135,16 @@ def _validate_discord_categories(bots: dict[str, BotConfig]) -> None:
 
 def _validate_workgroups(
     workgroups: dict[str, WorkgroupConfig],
+    node_id: str = "",
 ) -> None:
     """Validate workgroup configuration."""
     seen_categories: dict[int, str] = {}
 
     for wg_name, wg in workgroups.items():
+        # Skip workgroups not enabled on this node
+        if not node_matches(wg.enabled_on_nodes, node_id):
+            continue
+
         if not wg.workspace:
             raise ConfigError(f"Workgroup '{wg_name}': missing workspace")
 
@@ -230,7 +235,7 @@ def load_config(
             discord_bots=discord_bots,
         )
 
-    _validate_workgroups(workgroups)
+    _validate_workgroups(workgroups, node_id=node_id)
 
     return AppConfig(
         node_id=node_id,
