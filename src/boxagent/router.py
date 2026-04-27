@@ -149,46 +149,8 @@ class Router:
                 msg, channel=ch, config_dir=self.config_dir,
                 local_dir=self.local_dir, node_id=self.node_id,
             )
-        elif command == "/heartbeat":
-            if getattr(self.cli_process, "is_workgroup_admin", False):
-                await self._cmd_heartbeat(msg)
 
     # ---- Core session commands ----
-
-    async def _cmd_heartbeat(self, msg: IncomingMessage):
-        """View or update HEARTBEAT.md.
-
-        /heartbeat          — show current content
-        /heartbeat set ...  — replace content
-        /heartbeat add ...  — append a line
-        """
-        ch = self._resolve_channel(msg)
-        parts = msg.text.split(maxsplit=2)
-        sub = parts[1] if len(parts) > 1 else ""
-        arg = parts[2] if len(parts) > 2 else ""
-
-        ws = self.workspace
-        if self.pool:
-            ws = self.pool.get_workspace(msg.chat_id) or ws
-        if not ws:
-            await ch.send_text(msg.chat_id, "No workspace configured.")
-            return
-
-        hb_path = Path(ws) / "HEARTBEAT.md"
-
-        if sub == "set" and arg:
-            hb_path.write_text(arg + "\n", encoding="utf-8")
-            await ch.send_text(msg.chat_id, f"HEARTBEAT.md updated:\n```\n{arg}\n```")
-        elif sub == "add" and arg:
-            existing = hb_path.read_text(encoding="utf-8") if hb_path.is_file() else ""
-            hb_path.write_text(existing.rstrip() + f"\n- {arg}\n", encoding="utf-8")
-            await ch.send_text(msg.chat_id, f"Added to HEARTBEAT.md: `{arg}`")
-        else:
-            if hb_path.is_file():
-                content = hb_path.read_text(encoding="utf-8").strip()
-                await ch.send_text(msg.chat_id, f"**HEARTBEAT.md:**\n```\n{content}\n```")
-            else:
-                await ch.send_text(msg.chat_id, "No HEARTBEAT.md found.")
 
     async def _cmd_review_loop(self, msg: IncomingMessage):
         """Start a multi-agent review loop."""
