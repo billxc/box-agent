@@ -242,6 +242,25 @@ class WorkgroupManager:
                 wg_name, wg_cfg.admin_discord_category,
             )
 
+        # Also register admin on the admin channel (e.g. DM) if different from category
+        if dc_channel and wg_cfg.admin_discord_channel:
+            try:
+                dc_channel.register_channel_route(
+                    admin_router.handle_message,
+                    wg_cfg.admin_discord_channel,
+                )
+                admin_router._channels["discord"] = dc_channel
+                logger.info(
+                    "Workgroup '%s': admin registered on Discord channel %d",
+                    wg_name, wg_cfg.admin_discord_channel,
+                )
+            except ValueError:
+                # Already registered (e.g. same channel used by another route)
+                logger.debug(
+                    "Workgroup '%s': Discord channel %d already registered, skipping",
+                    wg_name, wg_cfg.admin_discord_channel,
+                )
+
         # --- Create specialists (config + saved dynamic ones) ---
         self._builtin_specialists[wg_name] = set(wg_cfg.specialists.keys())
         saved = self._load_saved_specialists(wg_name)
