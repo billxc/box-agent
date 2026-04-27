@@ -116,18 +116,18 @@ Do NOT use Claude Code's built-in worktree feature — use the git CLI directly.
 ## Issue Tracker (YAIT)
 
 This workgroup uses YAIT to track issues.  Every command requires
-`YAIT_HOME` and `-P` since no global env var is set.
+`-P` since no global env var is set.
 
 ```bash
 # List issues
-YAIT_HOME={workgroup_dir}/.yait-data yait -P {wg_name} list
+yait -P {wg_name} list
 
 # Create an issue
-YAIT_HOME={workgroup_dir}/.yait-data yait -P {wg_name} new "Title" -t bug
+yait -P {wg_name} new "Title" -t bug
 
 # Show issue details
-YAIT_HOME={workgroup_dir}/.yait-data yait -P {wg_name} show <ID>
+yait -P {wg_name} show <ID>
 
 # Update issue status
-YAIT_HOME={workgroup_dir}/.yait-data yait -P {wg_name} update <ID> -s closed
+yait -P {wg_name} update <ID> -s closed
 ```
