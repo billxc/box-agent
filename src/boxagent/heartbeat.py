@@ -159,6 +159,23 @@ class HeartbeatManager:
             if not self._running:
                 break
 
+    async def _send_display(self, text: str) -> None:
+        """Send a heartbeat display message via dedicated webhook.
+
+        Uses _ensure_webhook (NOT ensure_allowed_webhook) so the message
+        is filtered out by _handle_incoming and never reaches the admin router.
+        """
+        try:
+            wh = await self.discord_channel._ensure_webhook("Heartbeat", self.discord_chat_id)
+            if wh:
+                from boxagent.channels.splitter import split_message
+                for chunk in split_message(text, 2000):
+                    await wh.send(chunk, wait=True)
+            else:
+                await self.discord_channel.send_text(self.discord_chat_id, text)
+        except Exception as e:
+            logger.warning("Heartbeat '%s': failed to send display: %s", self.wg_name, e)
+
     async def _tick(self) -> None:
         """Single heartbeat cycle."""
         if self._is_ticking:
@@ -177,8 +194,7 @@ class HeartbeatManager:
             # Display heartbeat prompt (if configured)
             if self.display_heartbeat and self.discord_channel and self.discord_chat_id:
                 now = datetime.datetime.now().strftime("%H:%M")
-                await self.discord_channel.send_text(
-                    self.discord_chat_id,
+                await self._send_display(
                     f"**[Heartbeat {now}]**\n```\n{content.strip()}\n```",
                 )
 
@@ -191,9 +207,7 @@ class HeartbeatManager:
             if is_silent_reply(decision):
                 logger.debug("Heartbeat silent reply from '%s'", self.wg_name)
                 if self.display_heartbeat and self.discord_channel and self.discord_chat_id:
-                    await self.discord_channel.send_text(
-                        self.discord_chat_id, "_Heartbeat: nothing to do._",
-                    )
+                    await self._send_display("_Heartbeat: nothing to do._")
                 return
 
             # Phase 2: Send decision to admin session for execution
@@ -203,10 +217,7 @@ class HeartbeatManager:
             )
             if self.display_heartbeat and self.discord_channel and self.discord_chat_id:
                 preview = decision[:500] + "..." if len(decision) > 500 else decision
-                await self.discord_channel.send_text(
-                    self.discord_chat_id,
-                    f"**[Heartbeat decision]**\n{preview}",
-                )
+                await self._send_display(f"**[Heartbeat decision]**\n{preview}")
 
             chat_id = self.discord_chat_id or f"heartbeat:{self.wg_name}"
             await self.admin_router.dispatch_sync(
