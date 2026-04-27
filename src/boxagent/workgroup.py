@@ -295,6 +295,8 @@ class WorkgroupManager:
                 discord_channel=dc_channel,
                 discord_chat_id=str(wg_cfg.admin_discord_channel) if wg_cfg.admin_discord_channel else "",
                 display_heartbeat=wg_cfg.display_heartbeat,
+                start_time=self.start_time,
+                get_running_tasks=lambda wg=wg_name: self._get_running_tasks(wg),
             )
             hb.start()
             self._heartbeats[wg_name] = hb
@@ -406,7 +408,11 @@ class WorkgroupManager:
                     except Exception as e:
                         logger.warning("Failed to deliver task result to admin: %s", e)
 
-        self._task_results[task_id] = {"status": "running"}
+        self._task_results[task_id] = {
+            "status": "running",
+            "target": target,
+            "started_at": time.time(),
+        }
         task = asyncio.create_task(_run())
         self._tasks[task_id] = task
 
@@ -448,6 +454,23 @@ class WorkgroupManager:
         if info is None:
             return {"ok": False, "error": f"task '{task_id}' not found"}
         return {"ok": True, **info}
+
+    def _get_running_tasks(self, wg_name: str) -> list[dict]:
+        """Return currently running tasks for a workgroup."""
+        result = []
+        for tid, info in self._task_results.items():
+            if info.get("status") != "running":
+                continue
+            target = info.get("target", "")
+            # Check if target belongs to this workgroup
+            wg_cfg = self.config.get(wg_name)
+            if wg_cfg and target in wg_cfg.specialists:
+                result.append({
+                    "task_id": tid,
+                    "target": target,
+                    "started_at": info.get("started_at", 0),
+                })
+        return result
 
     def reset_specialist(self, target: str) -> dict:
         """Clear a specialist's session so the next task starts fresh."""

@@ -8,6 +8,7 @@ to the original admin session for execution.
 import asyncio
 import datetime
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -25,13 +26,44 @@ def is_silent_reply(text: str) -> bool:
     return "NO_REPLY" in t or "HEARTBEAT_OK" in t
 
 
-def _build_heartbeat_prompt(wg_name: str, content: str) -> str:
+def _build_heartbeat_prompt(
+    wg_name: str, content: str,
+    uptime_seconds: float = 0,
+    running_tasks: list[dict] | None = None,
+) -> str:
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    # Format uptime
+    uptime_str = ""
+    if uptime_seconds > 0:
+        hours, rem = divmod(int(uptime_seconds), 3600)
+        minutes, secs = divmod(rem, 60)
+        if hours > 0:
+            uptime_str = f"{hours}h {minutes}m"
+        else:
+            uptime_str = f"{minutes}m {secs}s"
+
+    # Format running tasks
+    tasks_block = ""
+    if running_tasks:
+        lines = []
+        for t in running_tasks:
+            elapsed = ""
+            if t.get("started_at"):
+                elapsed_s = time.time() - t["started_at"]
+                em, es = divmod(int(elapsed_s), 60)
+                elapsed = f" (running {em}m {es}s)"
+            lines.append(f"  - {t.get('task_id', '?')}: {t.get('target', '?')}{elapsed}")
+        tasks_block = "\nCurrently running specialist tasks:\n" + "\n".join(lines) + "\n"
+    else:
+        tasks_block = "\nNo specialist tasks currently running.\n"
+
     return (
         "[HEARTBEAT CHECK]\n"
         f"time: {now}\n"
         f"bot: {wg_name}\n"
-        "\n"
+        f"uptime: {uptime_str}\n"
+        f"{tasks_block}\n"
         "You are in a HEARTBEAT CHECK session — a read-only environment.\n"
         "You have NO execution permissions here: you cannot call tools, run\n"
         "commands, send messages to specialists, or modify any files.\n"
@@ -84,6 +116,8 @@ class HeartbeatManager:
     discord_channel: object | None = None  # DiscordChannel
     discord_chat_id: str = ""  # actual text channel ID (not category)
     display_heartbeat: bool = False
+    start_time: float = 0.0
+    get_running_tasks: object = None  # Callable[[], list[dict]]
     _running: bool = field(default=False, repr=False)
     _is_ticking: bool = field(default=False, repr=False)
     _task: asyncio.Task | None = field(default=None, repr=False)
@@ -191,7 +225,14 @@ class HeartbeatManager:
         from boxagent.router_callback import TextCollector
 
         source_session_id = self._find_fork_session_id()
-        prompt = _build_heartbeat_prompt(self.wg_name, content)
+
+        uptime = time.time() - self.start_time if self.start_time else 0
+        running_tasks = self.get_running_tasks() if callable(self.get_running_tasks) else []
+        prompt = _build_heartbeat_prompt(
+            self.wg_name, content,
+            uptime_seconds=uptime,
+            running_tasks=running_tasks,
+        )
 
         proc = ClaudeProcess(
             workspace=self.workspace,
