@@ -477,6 +477,35 @@ class WorkgroupManager:
             return {"ok": False, "error": f"task '{task_id}' not found"}
         return {"ok": True, **info}
 
+    async def cancel_task(self, task_id: str) -> dict:
+        """Cancel a running specialist task."""
+        info = self._task_results.get(task_id)
+        if info is None:
+            return {"ok": False, "error": f"task '{task_id}' not found"}
+        if info.get("status") != "running":
+            return {"ok": False, "error": f"task '{task_id}' is not running (status={info.get('status')})"}
+
+        target = info.get("target", "")
+
+        # Cancel the specialist's active process
+        pool = self.pools.get(target)
+        if pool:
+            for proc in pool._active.values():
+                await proc.cancel()
+
+        # Cancel the asyncio task
+        async_task = self._tasks.get(task_id)
+        if async_task and not async_task.done():
+            async_task.cancel()
+
+        self._task_results[task_id] = {
+            "status": "cancelled",
+            "target": target,
+            "finished_at": time.time(),
+        }
+        logger.info("Task %s cancelled (specialist=%s)", task_id, target)
+        return {"ok": True, "task_id": task_id, "specialist": target}
+
     def _get_running_tasks(self, wg_name: str) -> list[dict]:
         """Return currently running tasks for a workgroup."""
         result = []

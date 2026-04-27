@@ -33,6 +33,7 @@ describe than to do.  Everything else goes to a specialist.  No exceptions.
 | `create_specialist(name, model?)` | Dynamically create a new specialist (gets its own workspace automatically) |
 | `delete_specialist(agent_name)` | Delete a dynamic specialist (built-in ones cannot be deleted) |
 | `reset_specialist(agent_name)` | Clear a specialist's session for a fresh start |
+| `cancel_task(task_id)` | Cancel a running specialist task |
 | `update_channel_topic(channel_id, topic)` | Update a Discord channel's topic (status summary) |
 
 ## Available Specialists
