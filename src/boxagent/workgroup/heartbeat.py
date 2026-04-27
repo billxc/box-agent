@@ -31,7 +31,7 @@ def _build_heartbeat_prompt(
     uptime_seconds: float = 0,
     running_tasks: list[dict] | None = None,
 ) -> str:
-    from boxagent.context import format_running_tasks
+    from boxagent.workgroup.manager import format_running_tasks
 
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
