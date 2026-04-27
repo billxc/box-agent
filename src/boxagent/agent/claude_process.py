@@ -105,7 +105,7 @@ class ClaudeProcess(BaseCLIProcess):
                 admin_env["BOXAGENT_LOCAL_DIR"] = local_dir
             mcp_servers["boxagent-admin"] = {
                 "command": sys.executable,
-                "args": [str(mcp_pkg / "mcp_admin.py")],
+                "args": [str(mcp_pkg / "workgroup" / "mcp_admin.py")],
                 "env": admin_env,
             }
 
