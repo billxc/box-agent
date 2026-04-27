@@ -24,27 +24,29 @@ def build_session_context(
     Combines:
     1. BoxAgent runtime info (bot name, node, backend, model, etc.)
     2. {config_dir}/BOXAGENT.md (if exists)
-    3. {workspace}/BOXAGENT.md (if exists)
+    3. {workspace}/BOXAGENT.md (if exists, and different from config)
     4. Workgroup agent info (if this bot is an admin with specialists)
     """
     lines = [
         "[BoxAgent Context]",
         f"bot: {bot_name}",
-        f"node: {node_id or '(any)'}",
-        f"backend: {ai_backend}",
-        f"model: {model or 'default'}",
-        f"workspace: {workspace}",
-        f"time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}",
     ]
     if display_name:
-        lines.insert(2, f"display_name: {display_name}")
+        lines.append(f"display_name: {display_name}")
+    lines.append(f"node: {node_id or '(any)'}")
+    lines.append(f"workspace: {workspace}")
+    lines.append(f"time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
-    # Read BOXAGENT.md from config dir and workspace
-    for label, base_dir in [("config", config_dir), ("workspace", workspace)]:
-        content = _read_boxagent_md(base_dir)
-        if content:
-            lines.append(f"\n# From {label}/BOXAGENT.md")
-            lines.append(content)
+    # Read BOXAGENT.md — deduplicate if config and workspace point to same file
+    config_content = _read_boxagent_md(config_dir)
+    workspace_content = _read_boxagent_md(workspace)
+
+    if config_content:
+        lines.append(f"\n# BOXAGENT.md")
+        lines.append(config_content)
+    if workspace_content and workspace_content != config_content:
+        lines.append(f"\n# Workspace BOXAGENT.md")
+        lines.append(workspace_content)
 
     # Workgroup agent delegation info
     if workgroup_agents:
@@ -63,8 +65,8 @@ def build_session_context(
         lines.append("")
         lines.append(
             "Use the send_to_agent MCP tool to delegate tasks to specialists. "
-            "The tool sends your message to the specialist's Discord channel "
-            "(visible to observers) and returns the specialist's full response."
+            "The specialist processes your message asynchronously and returns "
+            "the result via callback."
         )
         lines.append("[/Workgroup]")
 

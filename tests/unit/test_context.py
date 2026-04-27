@@ -22,8 +22,6 @@ class TestBuildSessionContext:
         assert "bot: test-bot" in ctx
         assert "display_name: Test Bot" in ctx
         assert "node: my-node" in ctx
-        assert "backend: claude-cli" in ctx
-        assert "model: opus" in ctx
         assert "workspace: /tmp/ws" in ctx
 
     def test_empty_display_name_skipped(self):
@@ -35,20 +33,17 @@ class TestBuildSessionContext:
         ctx = build_session_context(node_id="")
         assert "node: (any)" in ctx
 
-    def test_empty_model_shows_default(self):
-        ctx = build_session_context(model="")
-        assert "model: default" in ctx
-
     def test_reads_config_boxagent_md(self, tmp_path):
         (tmp_path / "BOXAGENT.md").write_text("config instructions here")
         ctx = build_session_context(config_dir=str(tmp_path))
-        assert "# From config/BOXAGENT.md" in ctx
+        assert "BOXAGENT.md" in ctx
         assert "config instructions here" in ctx
 
     def test_reads_workspace_boxagent_md(self, tmp_path):
-        (tmp_path / "BOXAGENT.md").write_text("workspace instructions here")
-        ctx = build_session_context(workspace=str(tmp_path))
-        assert "# From workspace/BOXAGENT.md" in ctx
+        ws_dir = tmp_path / "ws"
+        ws_dir.mkdir()
+        (ws_dir / "BOXAGENT.md").write_text("workspace instructions here")
+        ctx = build_session_context(workspace=str(ws_dir))
         assert "workspace instructions here" in ctx
 
     def test_reads_both_md_files(self, tmp_path):
@@ -65,6 +60,15 @@ class TestBuildSessionContext:
         )
         assert "from config" in ctx
         assert "from workspace" in ctx
+
+    def test_dedup_same_boxagent_md(self, tmp_path):
+        """When config and workspace point to the same dir, content appears only once."""
+        (tmp_path / "BOXAGENT.md").write_text("shared content")
+        ctx = build_session_context(
+            config_dir=str(tmp_path),
+            workspace=str(tmp_path),
+        )
+        assert ctx.count("shared content") == 1
 
     def test_missing_md_files_no_error(self):
         ctx = build_session_context(
