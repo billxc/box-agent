@@ -179,8 +179,11 @@ class HeartbeatManager:
             pass
         # Fallback: send as bot (DM or webhook unavailable)
         # Bot's own messages are filtered by is_self check in _handle_incoming
+        # Add separators so heartbeat is visually distinct from normal messages
         try:
-            await self.discord_channel.send_text(self.discord_chat_id, text)
+            await self.discord_channel.send_text(
+                self.discord_chat_id, f"───── heartbeat ─────\n{text}\n─────────────────────",
+            )
         except Exception as e:
             logger.warning("Heartbeat '%s': failed to send display: %s", self.wg_name, e)
 
