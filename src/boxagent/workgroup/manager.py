@@ -153,7 +153,7 @@ class WorkgroupManager:
             return self._make_backend(cfg)
 
         pool = SessionPool(
-            size=2,
+            size=1,
             default_model=syn_cfg.model,
             default_workspace=syn_cfg.workspace,
             storage=self.storage,
