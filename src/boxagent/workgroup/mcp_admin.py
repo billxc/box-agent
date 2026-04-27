@@ -89,6 +89,59 @@ def list_specialists() -> str:
 
 
 @mcp.tool()
+def get_specialist_status(agent_name: str) -> str:
+    """Get a specialist's current status, recent tasks, and chat history.
+
+    Shows whether the specialist is active, its task history with results,
+    and the last few lines of conversation.
+
+    Args:
+        agent_name: Name of the specialist to check
+    """
+    try:
+        client, base_url = _get_gateway_client()
+    except RuntimeError as e:
+        return f"Error: {e}"
+
+    try:
+        resp = client.get(
+            f"{base_url}/api/workgroup/specialist_status",
+            params={"name": agent_name},
+            timeout=10,
+        )
+        data = resp.json()
+        if not data.get("ok"):
+            return f"Error: {data.get('error', 'unknown error')}"
+
+        lines = [f"**{agent_name}** — {'active' if data.get('active') else 'idle'}"]
+
+        tasks = data.get("tasks", [])
+        if tasks:
+            lines.append(f"\nTasks ({len(tasks)}):")
+            for t in tasks[-5:]:  # last 5 tasks
+                status = t.get("status", "?")
+                tid = t.get("task_id", "?")
+                preview = t.get("result_preview", "")
+                error = t.get("error", "")
+                line = f"  - {tid}: {status}"
+                if preview:
+                    line += f" — {preview[:100]}"
+                if error:
+                    line += f" — ERROR: {error[:100]}"
+                lines.append(line)
+
+        chat = data.get("recent_chat", [])
+        if chat:
+            lines.append(f"\nRecent chat ({len(chat)} lines):")
+            for c in chat:
+                lines.append(f"  {c}")
+
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
 def send_to_agent(agent_name: str, message: str) -> str:
     """Dispatch a task to a specialist agent in your workgroup.
 

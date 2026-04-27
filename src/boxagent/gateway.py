@@ -516,6 +516,7 @@ class Gateway:
         app = web.Application()
         app.router.add_post("/api/schedule/run", self._handle_schedule_run)
         app.router.add_get("/api/workgroup/specialists", self._handle_list_specialists)
+        app.router.add_get("/api/workgroup/specialist_status", self._handle_specialist_status)
         app.router.add_post("/api/workgroup/send", self._handle_workgroup_send)
         app.router.add_post("/api/workgroup/create_specialist", self._handle_create_specialist)
         app.router.add_post("/api/workgroup/reset_specialist", self._handle_reset_specialist)
@@ -691,6 +692,14 @@ class Gateway:
         """Handle GET /api/workgroup/specialists — list all specialists with details."""
         wg_name = request.query.get("workgroup", "")
         result = self._workgroup_mgr.list_specialists(wg_name)
+        return web.json_response(result)
+
+    async def _handle_specialist_status(self, request: web.Request) -> web.Response:
+        """Handle GET /api/workgroup/specialist_status — get specialist status + recent chat."""
+        name = request.query.get("name", "")
+        if not name:
+            return web.json_response({"ok": False, "error": "missing 'name'"}, status=400)
+        result = self._workgroup_mgr.get_specialist_status(name)
         return web.json_response(result)
 
     async def _handle_delete_specialist(self, request: web.Request) -> web.Response:

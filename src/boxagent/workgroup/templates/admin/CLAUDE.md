@@ -30,6 +30,7 @@ describe than to do.  Everything else goes to a specialist.  No exceptions.
 |------|---------|
 | `send_to_agent(agent_name, message)` | Dispatch a task to a specialist (async) |
 | `list_specialists()` | List all specialists with their details |
+| `get_specialist_status(agent_name)` | Get specialist's status, recent tasks, and chat history |
 | `create_specialist(name, model?)` | Dynamically create a new specialist (gets its own workspace automatically) |
 | `delete_specialist(agent_name)` | Delete a dynamic specialist (built-in ones cannot be deleted) |
 | `reset_specialist(agent_name)` | Clear a specialist's session for a fresh start |

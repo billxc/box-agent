@@ -477,6 +477,69 @@ class WorkgroupManager:
             return {"ok": False, "error": f"task '{task_id}' not found"}
         return {"ok": True, **info}
 
+    def get_specialist_status(self, target: str, max_lines: int = 20) -> dict:
+        """Get specialist's running status and recent chat history."""
+        if target not in self.routers:
+            return {"ok": False, "error": f"specialist '{target}' not found"}
+
+        pool = self.pools.get(target)
+
+        # Running state
+        active = False
+        if pool:
+            for proc in pool._active.values():
+                if getattr(proc, "state", "idle") == "busy":
+                    active = True
+                    break
+
+        # Recent tasks
+        tasks = []
+        for tid, info in self._task_results.items():
+            if info.get("target") == target:
+                entry = {"task_id": tid, "status": info.get("status", "?")}
+                if info.get("started_at"):
+                    entry["started_at"] = info["started_at"]
+                if info.get("finished_at"):
+                    entry["finished_at"] = info["finished_at"]
+                if info.get("result"):
+                    entry["result_preview"] = info["result"][:300]
+                if info.get("error"):
+                    entry["error"] = info["error"]
+                tasks.append(entry)
+
+        # Recent transcript from session
+        transcript_lines = []
+        if pool and self.local_dir:
+            # Find session_id for this specialist
+            for wg_cfg in self.config.values():
+                if target in wg_cfg.specialists:
+                    sp = wg_cfg.specialists[target]
+                    chat_id = str(sp.discord_channel) if sp.discord_channel else f"wg:{target}"
+                    sid = pool.get_session_id(chat_id)
+                    if sid:
+                        transcript_path = self.local_dir / "transcripts" / f"{sid}.jsonl"
+                        if transcript_path.is_file():
+                            try:
+                                import json
+                                lines = transcript_path.read_text(encoding="utf-8").strip().split("\n")
+                                for line in lines[-max_lines:]:
+                                    record = json.loads(line)
+                                    event = record.get("event", "")
+                                    text = record.get("text", "")
+                                    preview = text[:200] + "..." if len(text) > 200 else text
+                                    transcript_lines.append(f"[{event}] {preview}")
+                            except Exception:
+                                pass
+                    break
+
+        return {
+            "ok": True,
+            "specialist": target,
+            "active": active,
+            "tasks": tasks,
+            "recent_chat": transcript_lines,
+        }
+
     async def cancel_task(self, task_id: str) -> dict:
         """Cancel a running specialist task."""
         info = self._task_results.get(task_id)
