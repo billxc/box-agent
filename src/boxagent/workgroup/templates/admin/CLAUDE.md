@@ -96,6 +96,20 @@ scrolling through messages.
 - `MEMORY.md` — your long-term memory (you maintain this)
 - `docs/` — design docs and specs
 
+## Maintain HEARTBEAT.md
+
+`HEARTBEAT.md` is read by the heartbeat system every few minutes to decide
+if action is needed.  **You should update it** to reflect your current
+priorities.  Edit the file directly when:
+
+- A new project or sprint starts — add relevant checklist items
+- Tasks complete or new ones are dispatched — update the list
+- Blockers appear — add items to check on them
+- Old items are no longer relevant — remove them
+
+Keep it short and actionable — each line should be something the heartbeat
+can evaluate in a few seconds.
+
 ## Worktree Isolation for Parallel Coding Tasks
 
 When multiple specialists work on the same repo concurrently, they MUST NOT
