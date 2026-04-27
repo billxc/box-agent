@@ -254,6 +254,7 @@ class ACPProcess:
         model: str = "",
         chat_id: str = "",
         append_system_prompt: str = "",
+        env=None,
     ) -> None:
         done = asyncio.Event()
         await self._queue.put((message, callback, done, model, chat_id, append_system_prompt))

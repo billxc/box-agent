@@ -167,7 +167,7 @@ class _StreamingBackend:
     session_id: str | None = None
     supports_session_persistence: bool = False
 
-    async def send(self, prompt, callback, model="", chat_id="", append_system_prompt=""):
+    async def send(self, prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
         await callback.on_stream(self.stream_text)
 
     async def cancel(self):
@@ -251,7 +251,7 @@ class TestDispatch:
     async def test_failed_turn_logs_error_into_transcript(
         self, mock_channel, mock_cli, tmp_path
     ):
-        async def fail_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
+        async def fail_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
             mock_cli.last_turn_failed = True
             mock_cli.last_turn_error = "Claude CLI exit code 1: broken"
             await callback.on_error(mock_cli.last_turn_error)

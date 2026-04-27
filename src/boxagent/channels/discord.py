@@ -11,6 +11,7 @@ from typing import Union
 
 import discord
 
+from boxagent.agent_env import ChannelInfo
 from boxagent.channels.base import Attachment, IncomingMessage, StreamHandle
 from boxagent.channels.md_format import md_to_discord
 from boxagent.channels.splitter import split_message, _find_split_point
@@ -631,6 +632,8 @@ class DiscordChannel:
         ):
             return
 
+        channel_info = self._build_channel_info(message.channel)
+
         # Channel-level routing (workgroup channels)
         channel_id = message.channel.id
         if channel_id in self._channel_map:
@@ -643,6 +646,7 @@ class DiscordChannel:
                 text=message.content or "",
                 attachments=attachments,
                 trusted=is_allowed_webhook,
+                channel_info=channel_info,
             )
             await callback(incoming)
             return
@@ -660,5 +664,33 @@ class DiscordChannel:
             text=message.content or "",
             attachments=attachments,
             trusted=is_allowed_webhook,
+            channel_info=channel_info,
         )
         await callback(incoming)
+
+    @staticmethod
+    def _build_channel_info(ch: object) -> ChannelInfo:
+        """Build ChannelInfo from a Discord channel object."""
+        if isinstance(ch, discord.DMChannel):
+            return ChannelInfo(
+                platform="discord",
+                discord_channel_type="dm",
+                discord_channel_id=ch.id,
+            )
+        if isinstance(ch, discord.Thread):
+            return ChannelInfo(
+                platform="discord",
+                discord_channel_type="guild_thread",
+                discord_guild_id=ch.guild.id if ch.guild else 0,
+                discord_category_id=getattr(ch.parent, "category_id", 0) or 0,
+                discord_channel_id=ch.parent.id if ch.parent else 0,
+                discord_thread_id=ch.id,
+            )
+        # Guild text channel
+        return ChannelInfo(
+            platform="discord",
+            discord_channel_type="guild_text",
+            discord_guild_id=ch.guild.id if getattr(ch, "guild", None) else 0,
+            discord_category_id=getattr(ch, "category_id", 0) or 0,
+            discord_channel_id=ch.id,
+        )

@@ -23,7 +23,7 @@ class _FakeBusyBackend:
         self.send_calls = []
         self.cancel_calls = 0
 
-    async def send(self, prompt, callback, model="", chat_id="", append_system_prompt=""):
+    async def send(self, prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
         self.send_calls.append(prompt)
         self.state = "busy"
         self._entered_busy.set()

@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Awaitable, Callable, Protocol
 
+from boxagent.agent_env import ChannelInfo
+
 
 @dataclass
 class Attachment:
@@ -20,7 +22,7 @@ class Attachment:
 class IncomingMessage:
     """Message received from a channel."""
 
-    channel: str  # "telegram" / "web"
+    channel: str  # "telegram" / "discord" / "web" (kept for backward compat)
     chat_id: str
     user_id: str
     text: str
@@ -29,6 +31,7 @@ class IncomingMessage:
     via_workgroup: bool = False  # True when routed through workgroup delegation
     trusted: bool = False  # True for internal messages (skip auth check)
     timestamp: datetime = field(default_factory=datetime.now)
+    channel_info: ChannelInfo | None = None  # Rich channel metadata
 
 
 @dataclass

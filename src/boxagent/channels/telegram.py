@@ -10,6 +10,7 @@ from pathlib import Path
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message as AiogramMessage
 
+from boxagent.agent_env import ChannelInfo
 from boxagent.channels.base import Attachment, IncomingMessage, StreamHandle
 from boxagent.channels.md_format import md_to_telegram
 from boxagent.channels.splitter import split_message, _find_split_point
@@ -387,12 +388,15 @@ class TelegramChannel:
             except Exception as e:
                 logger.warning("Failed to download document: %s", e)
 
+        chat_type = message.chat.type if message.chat else "private"
+        channel_info = ChannelInfo(platform="telegram", telegram_chat_type=chat_type)
         incoming = IncomingMessage(
             channel="telegram",
             chat_id=str(message.chat.id),
             user_id=str(message.from_user.id) if message.from_user else "",
             text=message.text or message.caption or "",
             attachments=attachments,
+            channel_info=channel_info,
         )
         await self.on_message(incoming)
 
@@ -414,10 +418,12 @@ class TelegramChannel:
         chat_id = str(callback_query.message.chat.id) if callback_query.message else ""
         user_id = str(user.id) if user else ""
 
+        cb_chat_type = callback_query.message.chat.type if callback_query.message and callback_query.message.chat else "private"
         incoming = IncomingMessage(
             channel="telegram",
             chat_id=chat_id,
             user_id=user_id,
             text=data,
+            channel_info=ChannelInfo(platform="telegram", telegram_chat_type=cb_chat_type),
         )
         await self.on_message(incoming)

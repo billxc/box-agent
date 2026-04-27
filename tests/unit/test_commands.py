@@ -212,7 +212,7 @@ class TestResumeCommand:
         prompts = []
         append_system_prompts = []
 
-        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
+        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
             prompts.append(prompt)
             append_system_prompts.append(append_system_prompt)
 
@@ -404,7 +404,7 @@ class TestCompactCommand:
             side_effect=lambda: setattr(cli, "session_id", None)
         )
 
-        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
+        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
             await callback.on_stream("- Discussed topic A\n- Decided B")
 
         cli.send = fake_send
@@ -439,7 +439,7 @@ class TestCompactCommand:
         call_log = []
         system_log = []
 
-        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
+        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
             call_log.append(prompt)
             system_log.append(append_system_prompt)
             await callback.on_stream("summary text here")
@@ -489,7 +489,7 @@ class TestCompactCommand:
 
         captured_prompts = []
 
-        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
+        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
             captured_prompts.append(prompt)
             await callback.on_stream("summary with focus")
 
@@ -520,7 +520,7 @@ class TestCompactCommand:
 
         captured_prompts = []
 
-        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
+        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
             captured_prompts.append(prompt)
             await callback.on_stream("plain summary")
 
@@ -574,7 +574,7 @@ class TestAtModelPrefix:
 
         captured = {}
 
-        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
+        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
             captured["prompt"] = prompt
             captured["append_system_prompt"] = append_system_prompt
 
@@ -611,7 +611,7 @@ class TestAtModelPrefix:
 
         captured = {}
 
-        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
+        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
             captured["prompt"] = prompt
             captured["model"] = model
             captured["append_system_prompt"] = append_system_prompt
@@ -647,7 +647,7 @@ class TestAtModelPrefix:
 
         captured = {}
 
-        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
+        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
             captured["prompt"] = prompt
             captured["model"] = model
             captured["append_system_prompt"] = append_system_prompt
@@ -684,7 +684,7 @@ class TestAtModelPrefix:
 
         captured = {}
 
-        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt=""):
+        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
             captured["prompt"] = prompt
             captured["append_system_prompt"] = append_system_prompt
 

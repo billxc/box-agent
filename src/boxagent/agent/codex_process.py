@@ -1,5 +1,7 @@
 """CodexProcess — Codex CLI backend (codex exec --json)."""
 
+from __future__ import annotations
+
 import json
 import logging
 import sys
@@ -84,7 +86,7 @@ class CodexProcess(BaseCLIProcess):
             env["BOXAGENT_BOT_NAME"] = self.bot_name
         return env or None
 
-    def _build_args(self, message: str, model: str, chat_id: str, append_system_prompt: str = "") -> list[str]:
+    def _build_args(self, message: str, model: str, chat_id: str, append_system_prompt: str = "", env=None) -> list[str]:
         # Inject system-level context via Codex's developer_instructions config
         dev_instr_args: list[str] = []
         if append_system_prompt:

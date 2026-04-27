@@ -1,5 +1,7 @@
 """BaseCLIProcess — shared subprocess-per-turn infrastructure."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -9,9 +11,12 @@ import signal
 import sys
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from boxagent.agent.callback import AgentCallback
+
+if TYPE_CHECKING:
+    from boxagent.agent_env import AgentEnv
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +63,10 @@ class BaseCLIProcess:
         """Start the message processing loop."""
         self._queue_task = asyncio.create_task(self._process_queue())
 
-    async def send(self, message: str, callback: AgentCallback, model: str = "", chat_id: str = "", append_system_prompt: str = ""):
+    async def send(self, message: str, callback: AgentCallback, model: str = "", chat_id: str = "", append_system_prompt: str = "", env: AgentEnv | None = None):
         """Enqueue a message. Returns when the turn completes."""
         done = asyncio.Event()
-        await self._queue.put((message, callback, done, model, chat_id, append_system_prompt))
+        await self._queue.put((message, callback, done, model, chat_id, append_system_prompt, env))
         await done.wait()
 
     async def wait_idle(self):
@@ -130,7 +135,7 @@ class BaseCLIProcess:
         """Consume messages serially, spawning a process per turn."""
         while True:
             try:
-                message, callback, done, model_override, chat_id, append_system_prompt = await self._queue.get()
+                message, callback, done, model_override, chat_id, append_system_prompt, env = await self._queue.get()
             except asyncio.CancelledError:
                 return
 
@@ -142,7 +147,7 @@ class BaseCLIProcess:
             self._turn_error_detail = ""
 
             try:
-                await self._execute_turn(message, callback, model_override, chat_id, append_system_prompt)
+                await self._execute_turn(message, callback, model_override, chat_id, append_system_prompt, env=env)
             except Exception as e:
                 self.last_turn_failed = True
                 self.last_turn_error = f"Turn failed: {e}"
@@ -157,7 +162,7 @@ class BaseCLIProcess:
 
     # --- Subclass hooks ---
 
-    def _build_args(self, message: str, model: str, chat_id: str, append_system_prompt: str = "") -> list[str]:
+    def _build_args(self, message: str, model: str, chat_id: str, append_system_prompt: str = "", env: AgentEnv | None = None) -> list[str]:
         """Return the full argv list for this turn. Must be overridden."""
         raise NotImplementedError
 
@@ -242,10 +247,10 @@ class BaseCLIProcess:
 
     # --- Shared execution ---
 
-    async def _execute_turn(self, message: str, callback: AgentCallback, model_override: str = "", chat_id: str = "", append_system_prompt: str = ""):
+    async def _execute_turn(self, message: str, callback: AgentCallback, model_override: str = "", chat_id: str = "", append_system_prompt: str = "", env: AgentEnv | None = None):
         """Spawn a CLI process for one turn, stream-parse JSONL/NDJSON output."""
         effective_model = model_override or self.model
-        args = self._build_args(message, effective_model, chat_id, append_system_prompt=append_system_prompt)
+        args = self._build_args(message, effective_model, chat_id, append_system_prompt=append_system_prompt, env=env)
 
         logger.debug("%s args: %s", self._backend_label, args)
 

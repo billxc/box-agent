@@ -28,7 +28,7 @@ def _mock_author():
     """Return a mock author process whose send() streams text to the callback."""
     author = AsyncMock()
 
-    async def mock_send(prompt, callback, model="", chat_id=""):
+    async def mock_send(prompt, callback, model="", chat_id="", env=None):
         await callback.on_stream("some content")
 
     author.send = AsyncMock(side_effect=mock_send)

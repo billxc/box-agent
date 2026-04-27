@@ -1,14 +1,21 @@
 """Session context injection for first-message prompt enrichment."""
 
+from __future__ import annotations
+
 import datetime
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from boxagent.agent_env import AgentEnv
 
 logger = logging.getLogger(__name__)
 
 
 def build_session_context(
     *,
+    env: AgentEnv | None = None,
     bot_name: str = "",
     display_name: str = "",
     node_id: str = "",
@@ -21,12 +28,28 @@ def build_session_context(
 ) -> str:
     """Build a one-time context block for the first message of a session.
 
+    When *env* is provided the context is derived from it; the individual
+    keyword arguments are ignored.  When *env* is ``None`` the old-style
+    keyword arguments are used (backward compatibility).
+
     Combines:
     1. BoxAgent runtime info (bot name, node, backend, model, etc.)
     2. {config_dir}/BOXAGENT.md (if exists)
     3. {workspace}/BOXAGENT.md (if exists, and different from config)
     4. Workgroup agent info (if this bot is an admin with specialists)
     """
+    # Resolve parameters — prefer env when available
+    if env is not None:
+        bot_name = env.bot_name
+        display_name = env.display_name
+        node_id = env.node_id
+        ai_backend = env.ai_backend
+        model = env.model
+        workspace = env.workspace
+        config_dir = env.config_dir
+        workgroup_agents = list(env.workgroup_agents) if env.workgroup_agents else None
+        running_tasks = list(env.running_tasks) if env.running_tasks else None
+
     lines = [
         "[BoxAgent Context]",
         f"bot: {bot_name}",
