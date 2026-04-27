@@ -8,6 +8,7 @@ BoxAgent, abbreviated as BA, is a self-hosted AI agent gateway: receive commands
 - Claude setup: `docs/claude-setup.md`
 - Codex setup: `docs/codex-setup.md`
 - Maintainer-oriented codebase guide: `docs/codebase-guide.md`
+- Workgroup (multi-agent) design: `docs/workgroup-design.md`
 - Product vision: `docs/vision.md`
 - Design decisions log: `docs/decisions.md`
 
