@@ -109,6 +109,13 @@ class HeartbeatManager:
 
     async def _loop(self) -> None:
         """Main loop: tick then sleep."""
+        # Wait for Discord to be ready before first tick
+        if self.discord_channel:
+            client = getattr(self.discord_channel, "_client", None)
+            if client:
+                await client.wait_until_ready()
+                logger.info("Heartbeat '%s': Discord ready, starting ticks", self.wg_name)
+
         while self._running:
             try:
                 await self._tick()
