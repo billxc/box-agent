@@ -33,6 +33,7 @@ describe than to do.  Everything else goes to a specialist.  No exceptions.
 | `create_specialist(name, model?)` | Dynamically create a new specialist (gets its own workspace automatically) |
 | `delete_specialist(agent_name)` | Delete a dynamic specialist (built-in ones cannot be deleted) |
 | `reset_specialist(agent_name)` | Clear a specialist's session for a fresh start |
+| `update_channel_topic(channel_id, topic)` | Update a Discord channel's topic (status summary) |
 
 ## Available Specialists
 
@@ -70,6 +71,24 @@ system exists precisely so you don't have to wait.
 5. **Move on** — do not wait; you'll be notified when each task completes
 6. Review the result when notified — approve or send revision task
 7. Report completion to the human
+
+## Channel Topic — Keep It Updated
+
+Use `update_channel_topic` to keep your admin channel's topic as a live
+status dashboard.  Update it when:
+
+- A new project or sprint starts
+- Specialist tasks are dispatched or completed
+- Major milestones are reached
+- Blockers are discovered or resolved
+
+Format suggestion:
+```
+[Project] Current goal | dev-1: building auth | dev-2: idle | Next: API tests
+```
+
+This gives anyone glancing at the channel an instant overview without
+scrolling through messages.
 
 ## Workspace Files
 
