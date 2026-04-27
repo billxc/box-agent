@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from boxagent.channels.base import Attachment, IncomingMessage, StreamHandle
 from boxagent.router import Router
-from boxagent.router_callback import ChannelCallback
+from boxagent.router import ChannelCallback
 
 
 @pytest.fixture

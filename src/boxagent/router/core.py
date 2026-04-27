@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from boxagent.channels.base import IncomingMessage
-from boxagent.router_callback import ChannelCallback, TextCollector, log_turn
-from boxagent.router_commands import (
+from boxagent.router.callback import ChannelCallback, TextCollector, log_turn
+from boxagent.router.commands import (
     cmd_exec,
     cmd_help,
     cmd_schedule,
@@ -224,7 +224,7 @@ class Router:
         arg = msg.text.strip().partition(" ")[2].strip()
 
         # Use unified 3-source loader (Claude CLI + BoxAgent + Codex)
-        from boxagent.sessions_cli import _load_all_unified_sessions
+        from boxagent.sessions.cli import _load_all_unified_sessions
 
         all_sessions = _load_all_unified_sessions(
             storage=self.storage, workspace=self.workspace,
@@ -754,7 +754,7 @@ class Router:
 
     def _build_session_context(self, chat_id: str = "") -> str:
         """Build a one-time context block for the first message of a session."""
-        from boxagent.context import build_session_context
+        from boxagent.router.context import build_session_context
 
         if self.pool and chat_id:
             model = self.pool.get_model(chat_id) or "default"

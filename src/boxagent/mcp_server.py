@@ -26,7 +26,7 @@ def schedule_list() -> str:
     """List all configured scheduled tasks with their cron, mode, and prompt."""
     if not CONFIG_DIR:
         return "BOXAGENT_CONFIG_DIR not set."
-    from boxagent.schedule_cli import format_schedule_list
+    from boxagent.scheduler.cli import format_schedule_list
 
     return format_schedule_list(CONFIG_DIR, NODE_ID)
 
@@ -54,7 +54,7 @@ def schedule_add(
     """
     if not CONFIG_DIR:
         return "BOXAGENT_CONFIG_DIR not set."
-    from boxagent.schedule_cli import add_schedule as _add
+    from boxagent.scheduler.cli import add_schedule as _add
 
     return _add(
         config_dir=CONFIG_DIR,
@@ -77,7 +77,7 @@ def schedule_logs(task_id: str = "") -> str:
     """
     if not LOCAL_DIR:
         return "BOXAGENT_LOCAL_DIR not set."
-    from boxagent.schedule_cli import format_schedule_logs
+    from boxagent.scheduler.cli import format_schedule_logs
 
     return format_schedule_logs(LOCAL_DIR, task_id=task_id)
 
@@ -91,7 +91,7 @@ def schedule_show(task_id: str) -> str:
     """
     if not CONFIG_DIR:
         return "BOXAGENT_CONFIG_DIR not set."
-    from boxagent.schedule_cli import format_schedule_show
+    from boxagent.scheduler.cli import format_schedule_show
 
     return format_schedule_show(CONFIG_DIR, NODE_ID, task_id)
 
@@ -105,7 +105,7 @@ def schedule_run(task_id: str) -> str:
     """
     if not LOCAL_DIR:
         return "BOXAGENT_LOCAL_DIR not set."
-    from boxagent.schedule_cli import trigger_schedule_run
+    from boxagent.scheduler.cli import trigger_schedule_run
 
     return trigger_schedule_run(LOCAL_DIR, task_id)
 
@@ -120,7 +120,7 @@ def schedule_run_detail(task_id: str, run_index: int = 1) -> str:
     """
     if not LOCAL_DIR:
         return "BOXAGENT_LOCAL_DIR not set."
-    from boxagent.schedule_cli import format_schedule_run_detail
+    from boxagent.scheduler.cli import format_schedule_run_detail
 
     return format_schedule_run_detail(LOCAL_DIR, task_id, run_index)
 
@@ -156,8 +156,8 @@ def sessions_list(query: str = "", workspace: str = "") -> str:
         query: Search query string (see syntax above)
         workspace: Project directory path to scope results (default: all projects)
     """
-    from boxagent.sessions_cli import format_sessions_list
-    from boxagent.storage import Storage
+    from boxagent.sessions.cli import format_sessions_list
+    from boxagent.sessions import Storage
 
     storage = Storage(LOCAL_DIR) if LOCAL_DIR else None
     return format_sessions_list(query=query, storage=storage, workspace=workspace)

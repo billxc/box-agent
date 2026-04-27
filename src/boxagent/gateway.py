@@ -14,9 +14,9 @@ from boxagent.channels.telegram import TelegramChannel
 from boxagent.config import AppConfig, BotConfig, WorkgroupConfig, node_matches
 from boxagent.paths import default_config_dir, default_local_dir, default_workspace_dir
 from boxagent.router import Router
-from boxagent.session_pool import SessionPool
+from boxagent.sessions import SessionPool
 from boxagent.scheduler import BotRef, Scheduler, load_schedules
-from boxagent.storage import Storage
+from boxagent.sessions import Storage
 from boxagent.watchdog import Watchdog
 from boxagent.workgroup import WorkgroupManager
 

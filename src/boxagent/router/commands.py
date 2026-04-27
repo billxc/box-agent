@@ -328,7 +328,7 @@ async def cmd_schedule(
     node_id: str = "",
 ) -> None:
     """Dispatch /schedule subcommands: list, logs, show, run, add."""
-    from boxagent.schedule_cli import (
+    from boxagent.scheduler.cli import (
         add_schedule,
         format_schedule_list,
         format_schedule_logs,
@@ -433,7 +433,7 @@ async def cmd_sessions(
     workspace: str = "",
 ) -> None:
     """List unified sessions (Claude CLI + BoxAgent history + Codex)."""
-    from boxagent.sessions_cli import format_sessions_list
+    from boxagent.sessions.cli import format_sessions_list
 
     arg = msg.text.strip().partition(" ")[2].strip()
     text = format_sessions_list(query=arg, storage=storage, workspace=workspace)

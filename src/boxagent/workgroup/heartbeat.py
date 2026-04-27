@@ -233,7 +233,7 @@ class HeartbeatManager:
         session IDs and raw response for logging.
         """
         from boxagent.agent.claude_process import ClaudeProcess
-        from boxagent.router_callback import TextCollector
+        from boxagent.router.callback import TextCollector
 
         source_session_id = self._find_fork_session_id()
 

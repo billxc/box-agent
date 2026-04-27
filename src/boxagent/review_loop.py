@@ -5,7 +5,7 @@ import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
-from boxagent.router_callback import TextCollector
+from boxagent.router.callback import TextCollector
 
 logger = logging.getLogger(__name__)
 

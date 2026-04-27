@@ -15,7 +15,7 @@ from croniter import croniter
 
 from boxagent.config import node_matches
 from boxagent.utils import deep_merge_dicts
-from boxagent.context import build_schedule_context
+from boxagent.router.context import build_schedule_context
 
 logger = logging.getLogger(__name__)
 

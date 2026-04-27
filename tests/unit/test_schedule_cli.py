@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from boxagent.scheduler import DEFAULT_ISOLATE_TIMEOUT_SECONDS
-from boxagent.schedule_cli import (
+from boxagent.scheduler.engine import DEFAULT_ISOLATE_TIMEOUT_SECONDS
+from boxagent.scheduler.cli import (
     _load_run_logs,
     _safe_print,
     _save_all,

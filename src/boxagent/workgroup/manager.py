@@ -12,7 +12,7 @@ import yaml
 from boxagent.config import BotConfig, SpecialistConfig, WorkgroupConfig
 from boxagent.workgroup.heartbeat import HeartbeatManager
 from boxagent.router import Router
-from boxagent.session_pool import SessionPool
+from boxagent.sessions import SessionPool
 from boxagent.workgroup.workspace_templates import seed_admin_workspace, seed_specialist_workspace
 
 logger = logging.getLogger(__name__)

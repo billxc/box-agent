@@ -9,7 +9,7 @@ from boxagent.utils import safe_print as _safe_print
 import yaml
 from croniter import croniter
 from boxagent.paths import default_config_dir, default_local_dir
-from boxagent.scheduler import (
+from boxagent.scheduler.engine import (
     DEFAULT_ISOLATE_TIMEOUT_SECONDS,
     SCHEDULE_NODE_OVERRIDES_KEY,
     load_schedule_entries,

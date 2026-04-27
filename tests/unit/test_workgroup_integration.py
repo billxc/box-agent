@@ -401,7 +401,7 @@ class TestHeartbeatTick:
         dc._ensure_webhook.assert_called()
 
     async def test_find_fork_session_from_pool(self, tmp_path):
-        from boxagent.session_pool import SessionPool, ChatContext
+        from boxagent.sessions.pool import SessionPool, ChatContext
 
         pool = MagicMock(spec=SessionPool)
         ctx = ChatContext(session_id="sess-123")

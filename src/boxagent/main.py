@@ -64,11 +64,11 @@ def main():
     subparsers = parser.add_subparsers(dest="command")
 
     # Register schedule subcommands
-    from boxagent.schedule_cli import build_schedule_parser
+    from boxagent.scheduler.cli import build_schedule_parser
     build_schedule_parser(subparsers)
 
     # Register sessions subcommands
-    from boxagent.sessions_cli import build_sessions_parser
+    from boxagent.sessions.cli import build_sessions_parser
     build_sessions_parser(subparsers)
 
     # Top-level doctor

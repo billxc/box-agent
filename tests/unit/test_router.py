@@ -8,7 +8,7 @@ import pytest
 
 from boxagent.channels.base import IncomingMessage
 from boxagent.router import Router
-from boxagent.router_callback import ChannelCallback
+from boxagent.router import ChannelCallback
 
 
 @pytest.fixture

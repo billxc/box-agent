@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import yaml
 
-from boxagent.scheduler import (
+from boxagent.scheduler.engine import (
     BotRef,
     DEFAULT_ISOLATE_TIMEOUT_SECONDS,
     Scheduler,
@@ -466,7 +466,7 @@ async def test_stop_exits_loop(tmp_path):
         if call_count >= 1:
             sched.stop()
 
-    with patch("boxagent.scheduler.asyncio.sleep", side_effect=fake_sleep):
+    with patch("boxagent.scheduler.engine.asyncio.sleep", side_effect=fake_sleep):
         await sched.run_forever()
 
     assert not sched._running
@@ -494,8 +494,8 @@ async def test_run_forever_fires_matching_task(tmp_path):
         if call_count >= 2:
             sched.stop()
 
-    with patch("boxagent.scheduler.asyncio.sleep", side_effect=fake_sleep), \
-         patch("boxagent.scheduler.croniter.match", return_value=True):
+    with patch("boxagent.scheduler.engine.asyncio.sleep", side_effect=fake_sleep), \
+         patch("boxagent.scheduler.engine.croniter.match", return_value=True):
         await sched.run_forever()
 
     # Let created tasks run
@@ -523,8 +523,8 @@ async def test_run_forever_skips_disabled(tmp_path):
         if call_count >= 2:
             sched.stop()
 
-    with patch("boxagent.scheduler.asyncio.sleep", side_effect=fake_sleep), \
-         patch("boxagent.scheduler.croniter.match", return_value=True):
+    with patch("boxagent.scheduler.engine.asyncio.sleep", side_effect=fake_sleep), \
+         patch("boxagent.scheduler.engine.croniter.match", return_value=True):
         await sched.run_forever()
 
     mock_cli.send.assert_not_called()
@@ -550,8 +550,8 @@ async def test_run_forever_skips_non_matching_cron(tmp_path):
         if call_count >= 2:
             sched.stop()
 
-    with patch("boxagent.scheduler.asyncio.sleep", side_effect=fake_sleep), \
-         patch("boxagent.scheduler.croniter.match", return_value=False):
+    with patch("boxagent.scheduler.engine.asyncio.sleep", side_effect=fake_sleep), \
+         patch("boxagent.scheduler.engine.croniter.match", return_value=False):
         await sched.run_forever()
 
     mock_cli.send.assert_not_called()
@@ -577,8 +577,8 @@ async def test_run_forever_skips_wrong_node(tmp_path):
         if call_count >= 2:
             sched.stop()
 
-    with patch("boxagent.scheduler.asyncio.sleep", side_effect=fake_sleep), \
-         patch("boxagent.scheduler.croniter.match", return_value=True):
+    with patch("boxagent.scheduler.engine.asyncio.sleep", side_effect=fake_sleep), \
+         patch("boxagent.scheduler.engine.croniter.match", return_value=True):
         await sched.run_forever()
 
     mock_cli.send.assert_not_called()
@@ -604,8 +604,8 @@ async def test_run_forever_skips_wrong_node_filter(tmp_path):
         if call_count >= 2:
             sched.stop()
 
-    with patch("boxagent.scheduler.asyncio.sleep", side_effect=fake_sleep), \
-         patch("boxagent.scheduler.croniter.match", return_value=True):
+    with patch("boxagent.scheduler.engine.asyncio.sleep", side_effect=fake_sleep), \
+         patch("boxagent.scheduler.engine.croniter.match", return_value=True):
         await sched.run_forever()
 
     mock_cli.send.assert_not_called()
@@ -633,8 +633,8 @@ async def test_run_forever_fires_matching_node(tmp_path):
         if call_count >= 2:
             sched.stop()
 
-    with patch("boxagent.scheduler.asyncio.sleep", side_effect=fake_sleep), \
-         patch("boxagent.scheduler.croniter.match", return_value=True):
+    with patch("boxagent.scheduler.engine.asyncio.sleep", side_effect=fake_sleep), \
+         patch("boxagent.scheduler.engine.croniter.match", return_value=True):
         await sched.run_forever()
 
     await asyncio.sleep(0.05)
@@ -669,8 +669,8 @@ async def test_run_forever_skips_already_executing(tmp_path):
         if call_count >= 4:
             sched.stop()
 
-    with patch("boxagent.scheduler.asyncio.sleep", side_effect=fake_sleep), \
-         patch("boxagent.scheduler.croniter.match", return_value=True):
+    with patch("boxagent.scheduler.engine.asyncio.sleep", side_effect=fake_sleep), \
+         patch("boxagent.scheduler.engine.croniter.match", return_value=True):
         await sched.run_forever()
 
     hang_event.set()
@@ -707,8 +707,8 @@ async def test_run_forever_hot_reload(tmp_path):
         if call_count >= 3:
             sched.stop()
 
-    with patch("boxagent.scheduler.asyncio.sleep", side_effect=fake_sleep), \
-         patch("boxagent.scheduler.croniter.match", return_value=True):
+    with patch("boxagent.scheduler.engine.asyncio.sleep", side_effect=fake_sleep), \
+         patch("boxagent.scheduler.engine.croniter.match", return_value=True):
         await sched.run_forever()
 
     # Let created tasks run
@@ -786,7 +786,7 @@ async def test_catchup_fires_missed_task(tmp_path):
         if call_count >= 2:
             sched.stop()
 
-    with patch("boxagent.scheduler.asyncio.sleep", side_effect=fake_sleep):
+    with patch("boxagent.scheduler.engine.asyncio.sleep", side_effect=fake_sleep):
         await sched.run_forever()
 
     await asyncio.sleep(0.05)
@@ -1141,7 +1141,7 @@ async def test_execute_once_isolate_timeout_stops_process_and_logs_error(tmp_pat
     )
 
     with patch("boxagent.agent.codex_process.CodexProcess", FakeCodex), \
-         patch("boxagent.scheduler.asyncio.wait_for", side_effect=fast_wait_for):
+         patch("boxagent.scheduler.engine.asyncio.wait_for", side_effect=fast_wait_for):
         with pytest.raises(TimeoutError, match="timed out after 1s"):
             await sched.execute_once(task)
 

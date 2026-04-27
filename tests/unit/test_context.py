@@ -3,7 +3,7 @@
 import textwrap
 from pathlib import Path
 
-from boxagent.context import build_session_context, _read_boxagent_md
+from boxagent.router.context import build_session_context, _read_boxagent_md
 
 
 class TestBuildSessionContext:

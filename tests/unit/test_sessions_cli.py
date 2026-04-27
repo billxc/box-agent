@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from boxagent.sessions_cli import (
+from boxagent.sessions.cli import (
     _load_claude_sessions,
     _load_all_unified_sessions,
     _parse_jsonl_metadata,
@@ -112,16 +112,16 @@ class TestParseJsonlMetadata:
 
 class TestLoadClaudeSessions:
     def test_empty_when_no_projects(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         assert _load_claude_sessions() == []
 
     def test_empty_when_no_index_files(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         (tmp_path / "projects" / "some-project").mkdir(parents=True)
         assert _load_claude_sessions() == []
 
     def test_loads_entries_from_index(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _make_index(projects_dir, "proj-a", [_sample_entry("id-1")])
         result = _load_claude_sessions()
@@ -129,7 +129,7 @@ class TestLoadClaudeSessions:
         assert result[0]["sessionId"] == "id-1"
 
     def test_loads_unindexed_jsonl(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _write_jsonl(projects_dir, "proj", "sess-unindexed", [
             _make_user_message("unindexed prompt", cwd="/Users/test/proj"),
@@ -140,7 +140,7 @@ class TestLoadClaudeSessions:
         assert result[0]["sessionId"] == "sess-unindexed"
 
     def test_skips_indexed_jsonl(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _make_index(projects_dir, "proj-a", [_sample_entry("id-1")])
         _write_jsonl(projects_dir, "proj-a", "id-1", [
@@ -389,7 +389,7 @@ class TestFindByIdPrefix:
 
 class TestGrepSessions:
     def test_match_in_content(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _write_jsonl(projects_dir, "proj", "sess-1", [
             _make_user_message("please fix the pineapple bug"),
@@ -400,7 +400,7 @@ class TestGrepSessions:
         assert len(result) == 1
 
     def test_no_match_in_content(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _write_jsonl(projects_dir, "proj", "sess-1", [
             _make_user_message("hello world"),
@@ -411,7 +411,7 @@ class TestGrepSessions:
         assert len(result) == 0
 
     def test_case_insensitive(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _write_jsonl(projects_dir, "proj", "sess-1", [
             _make_user_message("Fix the Discord bot"),
@@ -464,12 +464,12 @@ class TestTruncate:
 
 class TestFormatSessionsList:
     def test_no_sessions(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         result = format_sessions_list()
         assert "No sessions found" in result
 
     def test_basic_list(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _make_index(projects_dir, "proj-a", [_sample_entry("id-1")])
         result = format_sessions_list()
@@ -478,7 +478,7 @@ class TestFormatSessionsList:
         assert "my-project" in result
 
     def test_search_filter(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _make_index(projects_dir, "proj-a", [
             _sample_entry("id-1", summary="Discord fix"),
@@ -489,7 +489,7 @@ class TestFormatSessionsList:
         assert "/resume id-2" not in result
 
     def test_pagination(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         entries = [
             _sample_entry(f"id-{i}", modified=f"2026-04-{i+1:02d}T11:00:00.000Z")
@@ -500,14 +500,14 @@ class TestFormatSessionsList:
         assert "6-8 / 8" in result
 
     def test_no_results_with_filter(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _make_index(projects_dir, "proj-a", [_sample_entry("id-1")])
         result = format_sessions_list(query="nonexistent")
         assert "No sessions matching" in result
 
     def test_hex_prefix_match(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _make_index(projects_dir, "proj-a", [
             _sample_entry("abcdef1234567890"),
@@ -516,7 +516,7 @@ class TestFormatSessionsList:
         assert "/resume abcdef1234567890" in result
 
     def test_days_filter(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         # Entry from 2026-04-01 is old enough to be filtered out by 1d
         _make_index(projects_dir, "proj-a", [_sample_entry("id-1")])
@@ -526,7 +526,7 @@ class TestFormatSessionsList:
 
     def test_cwd_filter_default(self, tmp_path, monkeypatch):
         """With workspace set, only sessions matching that path are shown."""
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _make_index(projects_dir, "proj-a", [
             _sample_entry("id-1", projectPath="/Users/test/proj-a"),
@@ -542,7 +542,7 @@ class TestFormatSessionsList:
 
     def test_cwd_all_flag(self, tmp_path, monkeypatch):
         """--all bypasses cwd filter, showing sessions from all projects."""
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _make_index(projects_dir, "proj-a", [
             _sample_entry("id-1", projectPath="/Users/test/proj-a"),
@@ -558,7 +558,7 @@ class TestFormatSessionsList:
 
     def test_cwd_no_match_hint(self, tmp_path, monkeypatch):
         """When cwd filter yields no results, hint about --all."""
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _make_index(projects_dir, "proj-a", [
             _sample_entry("id-1", projectPath="/Users/test/proj-a"),
@@ -568,7 +568,7 @@ class TestFormatSessionsList:
 
     def test_cwd_search_filter(self, tmp_path, monkeypatch):
         """cwd:xxx does substring search on projectPath, bypassing default cwd."""
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _make_index(projects_dir, "proj-a", [
             _sample_entry("id-1", projectPath="/Users/test/proj-a"),
@@ -584,7 +584,7 @@ class TestFormatSessionsList:
 
     def test_grep_filter(self, tmp_path, monkeypatch):
         """grep:xxx does full-text search on JSONL content."""
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         # Create two sessions with different content
         _make_index(projects_dir, "proj-a", [
@@ -605,7 +605,7 @@ class TestFormatSessionsList:
         assert "/resume sess-2" not in result
 
     def test_grep_no_match(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _make_index(projects_dir, "proj-a", [
             _sample_entry("sess-1", projectPath="/Users/test/proj-a"),
@@ -619,13 +619,13 @@ class TestFormatSessionsList:
 
 class TestSessionsList:
     def test_no_sessions(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         args = Namespace(query=[], output_json=False, workspace="")
         sessions_list(args)
         assert "No sessions found" in capsys.readouterr().out
 
     def test_formatted_output(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _make_index(projects_dir, "proj-a", [_sample_entry("id-1")])
         args = Namespace(query=[], output_json=False, workspace="")
@@ -635,7 +635,7 @@ class TestSessionsList:
         assert "Sessions" in out
 
     def test_json_output(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _make_index(projects_dir, "proj-a", [_sample_entry("id-1")])
         args = Namespace(query=[], output_json=True, workspace="")
@@ -646,7 +646,7 @@ class TestSessionsList:
         assert data[0]["sessionId"] == "id-1"
 
     def test_query_filter(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _make_index(projects_dir, "proj-a", [
             _sample_entry("id-1", projectPath="/Users/test/proj-a", summary="Discord fix"),
@@ -662,7 +662,7 @@ class TestSessionsList:
         assert data[0]["sessionId"] == "id-1"
 
     def test_workspace_filter(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr("boxagent.sessions_cli.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.cli.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _make_index(projects_dir, "proj-a", [
             _sample_entry("id-1", projectPath="/Users/test/proj-a"),

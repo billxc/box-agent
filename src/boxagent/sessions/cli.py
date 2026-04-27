@@ -733,7 +733,7 @@ def sessions_list(args) -> None:
         cfg = load_config()
         local_dir = cfg.get("local_dir", "")
         if local_dir:
-            from boxagent.storage import Storage
+            from boxagent.sessions.storage import Storage
             storage = Storage(local_dir)
     except Exception:
         pass

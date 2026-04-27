@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from boxagent.storage import Storage
+from boxagent.sessions import Storage
 
 
 @pytest.fixture
