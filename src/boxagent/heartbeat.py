@@ -164,15 +164,23 @@ class HeartbeatManager:
 
         Uses _ensure_webhook (NOT ensure_allowed_webhook) so the message
         is filtered out by _handle_incoming and never reaches the admin router.
+        Falls back to send_text for DM channels (which don't support webhooks);
+        bot's own messages are filtered by the is_self check in _handle_incoming.
         """
         try:
+            # Try webhook first (guild channels)
             wh = await self.discord_channel._ensure_webhook("Heartbeat", self.discord_chat_id)
             if wh:
                 from boxagent.channels.splitter import split_message
                 for chunk in split_message(text, 2000):
                     await wh.send(chunk, wait=True)
-            else:
-                await self.discord_channel.send_text(self.discord_chat_id, text)
+                return
+        except Exception:
+            pass
+        # Fallback: send as bot (DM or webhook unavailable)
+        # Bot's own messages are filtered by is_self check in _handle_incoming
+        try:
+            await self.discord_channel.send_text(self.discord_chat_id, text)
         except Exception as e:
             logger.warning("Heartbeat '%s': failed to send display: %s", self.wg_name, e)
 
