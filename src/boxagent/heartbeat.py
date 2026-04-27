@@ -31,6 +31,8 @@ def _build_heartbeat_prompt(
     uptime_seconds: float = 0,
     running_tasks: list[dict] | None = None,
 ) -> str:
+    from boxagent.context import format_running_tasks
+
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
     # Format uptime
@@ -43,20 +45,7 @@ def _build_heartbeat_prompt(
         else:
             uptime_str = f"{minutes}m {secs}s"
 
-    # Format running tasks
-    tasks_block = ""
-    if running_tasks:
-        lines = []
-        for t in running_tasks:
-            elapsed = ""
-            if t.get("started_at"):
-                elapsed_s = time.time() - t["started_at"]
-                em, es = divmod(int(elapsed_s), 60)
-                elapsed = f" (running {em}m {es}s)"
-            lines.append(f"  - {t.get('task_id', '?')}: {t.get('target', '?')}{elapsed}")
-        tasks_block = "\nCurrently running specialist tasks:\n" + "\n".join(lines) + "\n"
-    else:
-        tasks_block = "\nNo specialist tasks currently running.\n"
+    tasks_block = format_running_tasks(running_tasks)
 
     return (
         "[HEARTBEAT CHECK]\n"

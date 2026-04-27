@@ -8,6 +8,23 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def format_running_tasks(running_tasks: list[dict] | None) -> str:
+    """Format running tasks into a display block. Shared by context and heartbeat."""
+    if not running_tasks:
+        return "No specialist tasks currently running."
+    lines = ["Currently running specialist tasks:"]
+    for t in running_tasks:
+        elapsed = ""
+        started = t.get("started_at", 0)
+        if started:
+            secs = int(_time.time() - started)
+            mins, s = divmod(secs, 60)
+            elapsed = f" (running {mins}m {s}s)"
+        active = " [active]" if t.get("active") else " [queued]"
+        lines.append(f"  - {t.get('task_id', '?')}: {t.get('target', '?')}{elapsed}{active}")
+    return "\n".join(lines)
+
+
 def build_session_context(
     *,
     bot_name: str = "",
@@ -56,21 +73,8 @@ def build_session_context(
             lines.append(f"- {agent_name}")
 
         # Running tasks status
-        if running_tasks:
-            lines.append("")
-            lines.append("Currently running specialist tasks:")
-            for t in running_tasks:
-                elapsed = ""
-                started = t.get("started_at", 0)
-                if started:
-                    secs = int(_time.time() - started)
-                    mins, s = divmod(secs, 60)
-                    elapsed = f" (running {mins}m {s}s)"
-                active = " [active]" if t.get("active") else " [queued]"
-                lines.append(f"  - {t.get('task_id', '?')}: {t.get('target', '?')}{elapsed}{active}")
-        else:
-            lines.append("")
-            lines.append("No specialist tasks currently running.")
+        lines.append("")
+        lines.append(format_running_tasks(running_tasks))
 
         lines.append("")
         lines.append(
