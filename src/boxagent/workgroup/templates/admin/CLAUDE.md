@@ -92,7 +92,9 @@ scrolling through messages.
 
 ## Workspace Files
 
-- `HEARTBEAT.md` — your periodic checklist, managed by the user. Do NOT modify this file.
+- `HEARTBEAT.md` — your periodic checklist, managed by the user. You may
+  suggest updates (e.g. "Consider adding X to HEARTBEAT.md") but do NOT
+  modify it yourself. If the user doesn't respond, treat it as declined.
 - `MEMORY.md` — your long-term memory (you maintain this)
 - `docs/` — design docs and specs
 
