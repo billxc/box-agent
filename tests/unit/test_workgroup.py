@@ -207,16 +207,33 @@ class TestSeedAdminWorkspace:
         assert "my-workgroup" in content
         assert "dev-1" in content
 
-    def test_no_overwrite(self, tmp_path):
+    def test_system_layer_overwrites(self, tmp_path):
         ws = str(tmp_path / "admin")
         seed_admin_workspace(ws, "wg", ["s1"])
-        # Write custom content
+        # Modify system file
         claude_md = tmp_path / "admin" / ".claude" / "CLAUDE.md"
         claude_md.write_text("custom content")
-        # Re-seed should not overwrite
-        created = seed_admin_workspace(ws, "wg", ["s1"])
-        assert ".claude/CLAUDE.md" not in created
-        assert claude_md.read_text() == "custom content"
+        # Re-seed should overwrite system files
+        written = seed_admin_workspace(ws, "wg", ["s1"])
+        assert ".claude/CLAUDE.md" in written
+        assert claude_md.read_text() != "custom content"
+
+    def test_user_layer_not_overwritten(self, tmp_path):
+        ws = str(tmp_path / "admin")
+        seed_admin_workspace(ws, "wg", ["s1"])
+        # Modify user file
+        heartbeat = tmp_path / "admin" / "HEARTBEAT.md"
+        heartbeat.write_text("my custom checklist")
+        # Re-seed should NOT overwrite user files
+        seed_admin_workspace(ws, "wg", ["s1"])
+        assert heartbeat.read_text() == "my custom checklist"
+
+    def test_system_layer_skip_if_unchanged(self, tmp_path):
+        ws = str(tmp_path / "admin")
+        seed_admin_workspace(ws, "wg", ["s1"])
+        # Re-seed with same content should report nothing changed
+        written = seed_admin_workspace(ws, "wg", ["s1"])
+        assert ".claude/CLAUDE.md" not in written
 
     def test_empty_workspace_returns_empty(self):
         assert seed_admin_workspace("", "wg", []) == []
