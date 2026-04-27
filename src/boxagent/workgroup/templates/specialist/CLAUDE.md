@@ -73,10 +73,17 @@ is a fully independent checkout on its own branch.
 
 ## Issue Tracker (YAIT)
 
-This workgroup uses YAIT to track issues.  Every command requires
-`-P` since no global env var is set.
+This workgroup uses YAIT to track issues.  Install if not available:
+```bash
+uv tool install git+https://github.com/billxc/yait
+```
+
+Every command requires `-P` since no global env var is set.
 
 ```bash
+# Initialize project (first time only)
+yait -P {wg_name} init
+
 # List issues
 yait -P {wg_name} list
 
