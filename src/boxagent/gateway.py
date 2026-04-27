@@ -520,6 +520,7 @@ class Gateway:
         app.router.add_post("/api/workgroup/create_specialist", self._handle_create_specialist)
         app.router.add_post("/api/workgroup/reset_specialist", self._handle_reset_specialist)
         app.router.add_post("/api/workgroup/delete_specialist", self._handle_delete_specialist)
+        app.router.add_post("/api/workgroup/update_topic", self._handle_update_topic)
         runner = web.AppRunner(app)
         await runner.setup()
         self._http_runner = runner
@@ -705,6 +706,33 @@ class Gateway:
         result = await self._workgroup_mgr.delete_specialist(target)
         status = 200 if result.get("ok") else 400
         return web.json_response(result, status=status)
+
+    async def _handle_update_topic(self, request: web.Request) -> web.Response:
+        """Handle POST /api/workgroup/update_topic — update a Discord channel's topic."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+
+        channel_id = body.get("channel_id", "")
+        topic = body.get("topic", "")
+        if not channel_id:
+            return web.json_response({"ok": False, "error": "missing 'channel_id'"}, status=400)
+
+        # Find the Discord channel object from any workgroup
+        dc_channel = None
+        if self._workgroup_mgr:
+            for dc in self._workgroup_mgr.discord_channels.values():
+                dc_channel = dc
+                break
+        if dc_channel is None:
+            return web.json_response({"ok": False, "error": "no Discord channel available"}, status=400)
+
+        try:
+            await dc_channel.update_channel_topic(int(channel_id), topic)
+            return web.json_response({"ok": True})
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
 
     async def stop(self) -> None:
         logger.info("Gateway shutting down...")

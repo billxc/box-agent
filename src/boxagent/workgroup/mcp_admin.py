@@ -227,5 +227,35 @@ def delete_specialist(agent_name: str) -> str:
         return f"Error: {e}"
 
 
+@mcp.tool()
+def update_channel_topic(channel_id: str, topic: str) -> str:
+    """Update the topic of a Discord channel.
+
+    Use this to set status summaries on your admin or specialist channels,
+    e.g. current sprint goal, active tasks, or project status.
+
+    Args:
+        channel_id: Discord channel ID to update
+        topic: New topic text (max 1024 chars)
+    """
+    try:
+        client, base_url = _get_gateway_client()
+    except RuntimeError as e:
+        return f"Error: {e}"
+
+    try:
+        resp = client.post(
+            f"{base_url}/api/workgroup/update_topic",
+            json={"channel_id": channel_id, "topic": topic[:1024]},
+            timeout=10,
+        )
+        data = resp.json()
+        if data.get("ok"):
+            return f"Channel topic updated."
+        return f"Error: {data.get('error', 'unknown error')}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

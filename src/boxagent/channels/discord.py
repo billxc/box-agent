@@ -192,6 +192,19 @@ class DiscordChannel:
         logger.info("Deleted Discord channel #%s (ID: %d)", channel.name, channel_id)
         return True
 
+    async def update_channel_topic(self, channel_id: int, topic: str) -> bool:
+        """Update a text channel's topic. Returns True if updated."""
+        channel = self._client.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await self._client.fetch_channel(channel_id)
+            except Exception:
+                logger.warning("Discord channel %d not found, skipping topic update", channel_id)
+                return False
+        await channel.edit(topic=topic)
+        logger.info("Updated topic for Discord channel #%s (ID: %d)", channel.name, channel_id)
+        return True
+
     async def send_via_webhook(
         self, channel_id: int, webhook_name: str, text: str,
     ) -> str:
