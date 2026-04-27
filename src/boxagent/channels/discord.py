@@ -219,10 +219,13 @@ class DiscordChannel:
         intents = discord.Intents.default()
         intents.message_content = True
         self._client = discord.Client(intents=intents)
+        tree = discord.app_commands.CommandTree(self._client)
 
         @self._client.event
         async def on_ready():
-            logger.info("Discord channel ready as %s", self._client.user)
+            # Sync empty command tree to clear any previously registered slash commands
+            await tree.sync()
+            logger.info("Discord channel ready as %s (cleared slash commands)", self._client.user)
 
         @self._client.event
         async def on_message(message: discord.Message):
