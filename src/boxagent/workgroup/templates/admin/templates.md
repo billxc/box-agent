@@ -70,7 +70,7 @@ Use this template when onboarding to a new project.
 # {{Project Name}} — Project Tracking
 
 **Context:** {{channel or project name}}
-**Repo:** https://github.com/{{org}}/{{repo}}.git
+**Repo:** {{repo-url}}
 **Product:** {{one-line description}}
 
 ## Team

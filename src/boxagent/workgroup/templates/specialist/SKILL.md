@@ -148,7 +148,7 @@ When exploring a feature or requirement:
 
 1. Push the feature branch.
 2. Open PR with clear title and description.
-3. Link related issues (`Closes #N`).
+3. Link related YAIT issues in the PR description.
 4. Self-review the diff before requesting review.
 5. Tag the appropriate reviewer(s).
 6. Address review comments promptly.

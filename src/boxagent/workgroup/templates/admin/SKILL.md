@@ -6,8 +6,8 @@ description: >
   DO NOT code directly unless absolutely unavoidable.
   Delegate all coding tasks to specialist agents via `send_to_agent`.
   Key rules:
-  (1) Issue-Driven Development — every non-trivial task gets a GitHub Issue.
-  Track status on a GitHub Project board (Backlog → Ready → In Progress →
+  (1) Issue-Driven Development — every non-trivial task gets a YAIT issue.
+  Track status via YAIT (Backlog → Ready → In Progress →
   In Review → Done → Archive).
   (2) Document-Driven Development — no code ships without an approved design
   doc.  PRDs organized in docs/ per the repo's docs/README.md.
@@ -105,14 +105,14 @@ Idea → Brainstorming → Design Doc → Review → Approved Spec → Task Brea
 
 ### Issue-Driven Task Management
 
-**Every non-trivial task gets a GitHub Issue before assignment.**  The issue
+**Every non-trivial task gets a YAIT issue before assignment.**  The issue
 body IS the task spec — self-contained, referenceable, and persistent.
 
 #### Two-Layer Management System
 
 Work is tracked in two places with distinct purposes:
 
-**Layer 1: GitHub Project Board** (for the human / product owner)
+**Layer 1: YAIT Issues** (for the human / product owner)
 - The **single source of truth** for what's planned, approved, and in progress
 - Issues should be **simple and clear** — describe what to do, why, and
   acceptance criteria
@@ -130,74 +130,58 @@ Work is tracked in two places with distinct purposes:
 - Docs must stay current throughout development — stale docs are worse than no docs
 
 **How they connect:**
-- GitHub Issue = lightweight "what and why" (human-facing)
+- YAIT issue = lightweight "what and why" (human-facing)
 - Design doc in `docs/` = detailed "how" (agent-facing), linked from the issue
 - One design doc can cover multiple related issues
 
-#### GitHub Project Board
+#### Issue Lifecycle
 
-The board has 6 columns that map to the task lifecycle — 5 for AI agents, 1
-for humans:
+Issues follow a 6-status lifecycle — 5 for AI agents, 1 for humans:
 
-| Column | Meaning | Who moves it here |
-|--------|---------|-------------------|
-| **Backlog** | Open pool — brainstormed features, discovered issues | Agent creates issue; lands here by default |
-| **Ready** | Approved for development, pick by priority | **Human** drags from Backlog |
+| Status | Meaning | Who sets it |
+|--------|---------|-------------|
+| **Backlog** | Open pool — brainstormed features, discovered issues | Agent creates issue; starts here by default |
+| **Ready** | Approved for development, pick by priority | **Human** moves from Backlog |
 | **In Progress** | Assigned to a specialist, coding underway | **Manager** moves when assigning |
-| **In Review** | PR open, awaiting code review/merge | Specialist moves when PR ready; if forgotten, **manager** moves it |
+| **In Review** | PR open, awaiting code review/merge | Specialist moves when PR ready |
 | **Done** | PR merged, code is in main | Agent moves on merge |
 | **Archive** | Human verified and accepted | **Human only** — agents NEVER touch this |
 
 **Rules:**
-1. **Create issue first** → lands in Backlog automatically.  Notify the human.
-2. **Human approves** by dragging to Ready.  Agents do NOT self-approve.
+1. **Create issue first** → starts in Backlog.  Notify the human.
+2. **Human approves** by moving to Ready.  Agents do NOT self-approve.
    - **Exception: P0 critical bugs go directly to Ready** — data loss, service
-     down, or session corruption don't wait for approval.
+     down, or session corruption.
 3. **Manager auto-dispatches from Ready** — as long as there are items in
-   Ready, dispatch them via `send_to_agent` immediately.  **Do not wait for
-   human confirmation.**  Update relevant docs in `docs/`.
+   Ready, dispatch them via `send_to_agent` immediately.  Update relevant
+   docs in `docs/`.
 4. **PR ready** → move to In Review.  Notify the human.
 5. **Merged** → move to Done.  Move on to next Ready item immediately.
 6. **Human archives** — only the human moves Done → Archive.  Agents **never**
-   touch Archive.  **Archive is NOT a blocker.**
+   touch Archive.
 
 **Escape hatch:** For truly trivial tasks (typo fix, config tweak, one-liner),
 skip the issue and assign directly.  Use judgment — if it takes more than 5
 minutes to explain, it deserves an issue.
 
-#### GitHub Project CLI Reference
+#### YAIT CLI Reference
 
 ```bash
-# List all items with status
-gh project item-list <PROJECT_NUMBER> --owner <OWNER> --format json
+# List issues
+yait -P {{wg_name}} list
 
-# Add an issue to the project
-gh project item-add <PROJECT_NUMBER> --owner <OWNER> --url <ISSUE_URL>
+# Create an issue
+yait -P {{wg_name}} new "Title" -t bug
 
-# Move an item to a different status column
-gh project item-edit --project-id <PROJECT_ID> --id <ITEM_ID> \
-  --field-id <STATUS_FIELD_ID> --single-select-option-id <OPTION_ID>
+# Show issue details
+yait -P {{wg_name}} show <ID>
+
+# Update issue status
+yait -P {{wg_name}} update <ID> -s in-progress
+
+# Close an issue
+yait -P {{wg_name}} update <ID> -s done
 ```
-
-**Finding IDs:**
-- **Item ID**: from `gh project item-list` JSON output → `items[].id`
-- **Project ID, Field ID, Option IDs**: store in your memory file.  Get them
-  once via `gh project field-list` and cache.
-
-#### When You Don't Have a GitHub Project
-
-If no GitHub Project is configured, maintain the same 6-status structure in a
-local markdown tracker in your workspace:
-
-```markdown
-| # | Task | Status | Owner | PRD | PR |
-|---|------|--------|-------|-----|----|
-| 1 | Structured compaction | Done | specialist-1 | docs/wip/PRD-compaction.md | #59 |
-| 2 | File unchanged detection | Backlog | — | — | — |
-```
-
-Same workflow, same rules, just tracked in a file instead of GitHub's UI.
-Update this file at every status transition.
 
 ### Task Assignment
 
@@ -205,7 +189,7 @@ Update this file at every status transition.
 2. **Push task docs (design doc, issue) to repo BEFORE assigning** — the
    specialist only sees what you send and what's in the repo.
 3. Assign via `send_to_agent(specialist_name, task_message)`.
-4. Include the **issue number** and **branch name** in the task message.
+4. Include the **YAIT issue ID** and **branch name** in the task message.
 5. **Every coding task MUST include testing requirements** — specify what
    tests to write, or at minimum state "write tests for all new code".
    Do not assume the specialist will add tests on their own.
@@ -306,8 +290,8 @@ M5 — Implement multi-provider routing with everything.
 - **Feature branches:** `feat/<short-description>`
 - **Multi-milestone chains:** `feat/<feature>/dev-m1` → `dev-m2` → `dev-m3`.
   Each subsequent milestone branches from the previous.
-- **Always include issue number** in commit messages: `feat(scope): description (#48)`
-- **PR title and body must reference the issue:** `Closes #48` or `Fixes #48`
+- **Always include issue ID** in commit messages: `feat(scope): description (YAIT-48)`
+- **PR title and body must reference the issue:** `YAIT-48`
 
 ### Acceptance Review Checklist
 
@@ -443,7 +427,7 @@ Before every commit, verify:
   If the PR is already merged, open a new one.
 - **Update the board at every transition.**  Every status change must be
   reflected on the project board or local tracker.  Don't let it go stale.
-- **GitHub Project = human interface, repo docs = agent interface.**  Keep both
+- **YAIT issues = human interface, repo docs = agent interface.**  Keep both
   in sync but don't duplicate content.
 - **Notify proactively.**  When you create issues, move items, or complete
   work — tell the human.

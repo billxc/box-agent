@@ -78,7 +78,7 @@ Use this checklist before opening or merging a PR.
 ## PR: {{title}}
 
 **Branch:** `{{branch-name}}` → `{{base-branch}}`
-**Issue:** #{{issue-number}} (if applicable)
+**Issue:** YAIT-{{issue-id}} (if applicable)
 
 ### Pre-Submit
 - [ ] Code compiles/builds without errors
@@ -125,7 +125,7 @@ Use this template when investigating and fixing bugs.
 **Reported:** YYYY-MM-DD
 **Severity:** critical|high|medium|low
 **Component:** {{affected component/module}}
-**Issue:** #{{issue-number}} (if applicable)
+**Issue:** YAIT-{{issue-id}} (if applicable)
 
 ## Symptoms
 - {{what the user/system observes}}
