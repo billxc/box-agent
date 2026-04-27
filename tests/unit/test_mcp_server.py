@@ -115,7 +115,7 @@ class TestMCPServerTools:
             "BOXAGENT_BOT_NAME": "test-admin",
         }):
             import importlib
-            import boxagent.mcp_admin as mod
+            import boxagent.workgroup.mcp_admin as mod
             importlib.reload(mod)
 
             for name in ["send_to_agent", "create_specialist"]:
