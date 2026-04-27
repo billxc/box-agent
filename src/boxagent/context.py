@@ -2,6 +2,7 @@
 
 import datetime
 import logging
+import time as _time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ def build_session_context(
     workspace: str = "",
     config_dir: str = "",
     workgroup_agents: list[str] | None = None,
+    running_tasks: list[dict] | None = None,
 ) -> str:
     """Build a one-time context block for the first message of a session.
 
@@ -52,6 +54,24 @@ def build_session_context(
         lines.append("You are the admin of a workgroup. Available specialist agents:")
         for agent_name in workgroup_agents:
             lines.append(f"- {agent_name}")
+
+        # Running tasks status
+        if running_tasks:
+            lines.append("")
+            lines.append("Currently running specialist tasks:")
+            for t in running_tasks:
+                elapsed = ""
+                started = t.get("started_at", 0)
+                if started:
+                    secs = int(_time.time() - started)
+                    mins, s = divmod(secs, 60)
+                    elapsed = f" (running {mins}m {s}s)"
+                active = " [active]" if t.get("active") else " [queued]"
+                lines.append(f"  - {t.get('task_id', '?')}: {t.get('target', '?')}{elapsed}{active}")
+        else:
+            lines.append("")
+            lines.append("No specialist tasks currently running.")
+
         lines.append("")
         lines.append(
             "Use the send_to_agent MCP tool to delegate tasks to specialists. "

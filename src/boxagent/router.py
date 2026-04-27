@@ -44,6 +44,7 @@ class Router:
     ai_backend: str = "claude-cli"
     on_backend_switched: object = None  # async callback(bot_name, new_cli, new_backend)
     workgroup_agents: list[str] = field(default_factory=list)  # specialist names for context
+    get_running_tasks: object = None  # Callable[[], list[dict]]
     _compact_summaries: dict[str, str] = field(default_factory=dict, repr=False)
     _resume_contexts: dict[str, str] = field(default_factory=dict, repr=False)
     _channels: dict[str, object] = field(default_factory=dict, repr=False)
@@ -761,6 +762,7 @@ class Router:
         else:
             model = getattr(self.cli_process, "model", "") or "default"
             workspace = self.workspace
+        running_tasks = self.get_running_tasks() if callable(self.get_running_tasks) else []
         return build_session_context(
             bot_name=self.bot_name,
             display_name=self.display_name,
@@ -770,4 +772,5 @@ class Router:
             workspace=workspace,
             config_dir=self.config_dir,
             workgroup_agents=self.workgroup_agents,
+            running_tasks=running_tasks,
         )

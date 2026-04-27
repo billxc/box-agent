@@ -225,8 +225,10 @@ class WorkgroupManager:
             node_id=self.node_id,
             local_dir=self.local_dir,
             start_time=self.start_time,
-            workspace=admin_ws,            extra_skill_dirs=wg_cfg.extra_skill_dirs,
+            workspace=admin_ws,
+            extra_skill_dirs=wg_cfg.extra_skill_dirs,
             ai_backend=wg_cfg.ai_backend,
+            get_running_tasks=lambda wg=wg_name: self._get_running_tasks(wg),
         )
         self.routers[wg_name] = admin_router
 
@@ -465,10 +467,19 @@ class WorkgroupManager:
             # Check if target belongs to this workgroup
             wg_cfg = self.config.get(wg_name)
             if wg_cfg and target in wg_cfg.specialists:
+                # Check if the specialist's process is actively busy
+                pool = self.pools.get(target)
+                active = False
+                if pool:
+                    for proc in pool._active.values():
+                        if getattr(proc, "state", "idle") == "busy":
+                            active = True
+                            break
                 result.append({
                     "task_id": tid,
                     "target": target,
                     "started_at": info.get("started_at", 0),
+                    "active": active,
                 })
         return result
 
