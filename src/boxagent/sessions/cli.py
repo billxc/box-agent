@@ -93,7 +93,7 @@ def _parse_jsonl_metadata(jsonl_file: Path) -> dict | None:
     message_count = 0
 
     try:
-        with open(jsonl_file, encoding="utf-8") as f:
+        with open(jsonl_file, encoding="utf-8", errors="replace") as f:
             for line in f:
                 try:
                     record = json.loads(line)

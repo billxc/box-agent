@@ -260,7 +260,7 @@ class Storage:
         saw_aborted_turn = False
 
         try:
-            with open(path, encoding="utf-8") as f:
+            with open(path, encoding="utf-8", errors="replace") as f:
                 for line in f:
                     try:
                         item = json.loads(line)
@@ -367,7 +367,7 @@ class Storage:
         saved_at = int(path.stat().st_mtime)
 
         try:
-            with open(path, encoding="utf-8") as f:
+            with open(path, encoding="utf-8", errors="replace") as f:
                 for line in f:
                     try:
                         item = json.loads(line)

@@ -407,7 +407,7 @@ def _load_run_logs(local_dir: Path, task_id: str = "") -> list[dict]:
         if not f.is_file():
             continue
         try:
-            with open(f, encoding="utf-8") as fh:
+            with open(f, encoding="utf-8", errors="replace") as fh:
                 for line in fh:
                     line = line.strip()
                     if not line:
