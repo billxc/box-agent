@@ -257,7 +257,7 @@ class ACPProcess:
         env=None,
     ) -> None:
         done = asyncio.Event()
-        await self._queue.put((message, callback, done, model, chat_id, append_system_prompt))
+        await self._queue.put((message, callback, done, model, chat_id, append_system_prompt, env))
         await done.wait()
 
     async def wait_idle(self) -> None:
@@ -296,18 +296,19 @@ class ACPProcess:
         await self._disconnect()
         self.state = "dead"
 
-    async def _ensure_connected(self, chat_id: str = "") -> None:
+    async def _ensure_connected(self, chat_id: str = "", env=None) -> None:
         if self._conn is not None:
             return
 
         # Build extra args for MCP injection
-        extra_args: list[str] = build_mcp_args(self.bot_token, chat_id)
+        token = env.telegram_token if env else self.bot_token
+        extra_args: list[str] = build_mcp_args(token, chat_id)
         extra_env: dict[str, str] | None = None
-        if self.bot_token and chat_id:
+        if token and chat_id:
             import os
             extra_env = {
                 **os.environ,
-                "BOXAGENT_BOT_TOKEN": self.bot_token,
+                "BOXAGENT_BOT_TOKEN": token,
                 "BOXAGENT_CHAT_ID": chat_id,
             }
 
@@ -382,7 +383,7 @@ class ACPProcess:
     async def _process_queue(self) -> None:
         while True:
             try:
-                message, callback, done, model, chat_id, append_system_prompt = await self._queue.get()
+                message, callback, done, model, chat_id, append_system_prompt, env = await self._queue.get()
             except asyncio.CancelledError:
                 return
 
@@ -407,7 +408,7 @@ class ACPProcess:
 
             stop_reason = None
             try:
-                await self._ensure_connected(chat_id=chat_id)
+                await self._ensure_connected(chat_id=chat_id, env=env)
                 response = await self._conn.prompt(
                     session_id=self._acp_session_id,
                     prompt=[text_block(message)],

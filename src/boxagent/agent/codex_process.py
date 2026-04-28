@@ -70,21 +70,24 @@ class CodexProcess(BaseCLIProcess):
     def _backend_label(self) -> str:
         return "Codex CLI"
 
-    def _mcp_args(self, chat_id: str) -> list[str]:
+    def _mcp_args(self, chat_id: str, env=None) -> list[str]:
         """Build -c flags to inject Telegram MCP server for this turn."""
-        return build_mcp_args(self.bot_token, chat_id)
+        token = env.telegram_token if env else self.bot_token
+        return build_mcp_args(token, chat_id)
 
-    def _extra_env(self, chat_id: str) -> dict[str, str] | None:
+    def _extra_env(self, chat_id: str, env=None) -> dict[str, str] | None:
         """Environment variables for the MCP server subprocess."""
         if not chat_id:
             return None
-        env = {}
-        if self.bot_token:
-            env["BOXAGENT_BOT_TOKEN"] = self.bot_token
-            env["BOXAGENT_CHAT_ID"] = chat_id
-        if self.bot_name:
-            env["BOXAGENT_BOT_NAME"] = self.bot_name
-        return env or None
+        token = env.telegram_token if env else self.bot_token
+        name = env.bot_name if env else self.bot_name
+        result = {}
+        if token:
+            result["BOXAGENT_BOT_TOKEN"] = token
+            result["BOXAGENT_CHAT_ID"] = chat_id
+        if name:
+            result["BOXAGENT_BOT_NAME"] = name
+        return result or None
 
     def _build_args(self, message: str, model: str, chat_id: str, append_system_prompt: str = "", env=None) -> list[str]:
         # Inject system-level context via Codex's developer_instructions config
@@ -106,7 +109,7 @@ class CodexProcess(BaseCLIProcess):
             ]
             if self.yolo:
                 args.append("--dangerously-bypass-approvals-and-sandbox")
-            args += self._mcp_args(chat_id)
+            args += self._mcp_args(chat_id, env=env)
             args += dev_instr_args
             if model:
                 args += ["--model", model]
@@ -122,7 +125,7 @@ class CodexProcess(BaseCLIProcess):
             ]
             if self.yolo:
                 args.append("--dangerously-bypass-approvals-and-sandbox")
-            args += self._mcp_args(chat_id)
+            args += self._mcp_args(chat_id, env=env)
             args += dev_instr_args
             if model:
                 args += ["--model", model]
