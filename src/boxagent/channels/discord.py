@@ -215,13 +215,16 @@ class DiscordChannel:
         Returns the message ID.
         """
         chat_id = str(channel_id)
+        chunks = split_message(text, DISCORD_LIMIT)
         webhook = await self._ensure_webhook(webhook_name, chat_id)
         if not webhook:
-            # Fallback to normal send
+            # Fallback to normal send — with splitting
             channel = await self._resolve_channel(chat_id)
-            result = await channel.send(text)
-            return str(result.id)
-        chunks = split_message(text, DISCORD_LIMIT)
+            last_msg_id = ""
+            for chunk in chunks:
+                result = await channel.send(chunk)
+                last_msg_id = str(result.id)
+            return last_msg_id
         last_msg_id = ""
         for chunk in chunks:
             result = await webhook.send(chunk, wait=True)
@@ -359,8 +362,15 @@ class DiscordChannel:
             btn.callback = _callback
             view.add_item(btn)
 
-        result = await channel.send(md_to_discord(text), view=view)
-        return str(result.id)
+        chunks = split_message(md_to_discord(text), DISCORD_LIMIT)
+        last_msg_id = ""
+        for i, chunk in enumerate(chunks):
+            if i == len(chunks) - 1:
+                result = await channel.send(chunk, view=view)
+            else:
+                result = await channel.send(chunk)
+            last_msg_id = str(result.id)
+        return last_msg_id
 
     async def stream_start(self, chat_id: str, webhook_name: str = "") -> StreamHandle:
         """Send initial placeholder message for streaming.
@@ -535,7 +545,11 @@ class DiscordChannel:
         self._stream_timers.pop(mid, None)
 
     async def _split_stream(self, handle: StreamHandle) -> None:
-        """Finalize current message at a safe split point and start a new one."""
+        """Finalize current message at a safe split point and start a new one.
+
+        If carry text exceeds Discord limit, splits into multiple frozen
+        messages with only the last one becoming the new editable handle.
+        """
         old_mid = handle.message_id
         full_text = self._stream_buffers.get(old_mid, "")
 
@@ -544,7 +558,7 @@ class DiscordChannel:
         keep = full_text[:split_at].rstrip()
         carry = full_text[split_at:].lstrip("\n")
 
-        # Edit old message with the 'keep' portion (converted for Discord)
+        # Edit old message with the 'keep' portion
         try:
             if handle.webhook_name:
                 cache_key = f"{handle.webhook_name.lower()}:{handle.chat_id}"
@@ -563,23 +577,41 @@ class DiscordChannel:
         self._stream_last_sent.pop(old_mid, None)
         self._cancel_stream_timer(old_mid)
 
-        # Send new message and update handle in-place
+        # Split carry into chunks if it exceeds Discord limit
+        chunks = split_message(carry or "...", STREAM_SPLIT_THRESHOLD)
+
+        # Send frozen chunks (all but last)
+        for chunk in chunks[:-1]:
+            if handle.webhook_name:
+                webhook = await self._ensure_webhook(handle.webhook_name, handle.chat_id)
+                if webhook:
+                    await webhook.send(chunk, wait=True)
+                else:
+                    channel = await self._resolve_channel(handle.chat_id)
+                    await channel.send(chunk)
+            else:
+                channel = await self._resolve_channel(handle.chat_id)
+                await channel.send(chunk)
+
+        # Send last chunk as the new editable message
+        last_chunk = chunks[-1]
         if handle.webhook_name:
             webhook = await self._ensure_webhook(handle.webhook_name, handle.chat_id)
             if webhook:
-                result = await webhook.send(carry or "...", wait=True)
+                result = await webhook.send(last_chunk, wait=True)
             else:
                 channel = await self._resolve_channel(handle.chat_id)
-                result = await channel.send(carry or "...")
+                result = await channel.send(last_chunk)
         else:
             channel = await self._resolve_channel(handle.chat_id)
-            result = await channel.send(carry or "...")
+            result = await channel.send(last_chunk)
+
         new_mid = str(result.id)
         handle.message_id = new_mid
 
         # Initialize new message state
-        self._stream_buffers[new_mid] = carry
-        self._stream_last_sent[new_mid] = carry if carry else ""
+        self._stream_buffers[new_mid] = last_chunk
+        self._stream_last_sent[new_mid] = last_chunk
 
     async def _fetch_message(
         self, chat_id: str, message_id: int
