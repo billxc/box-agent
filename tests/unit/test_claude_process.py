@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from boxagent.agent_env import AgentEnv
+
 
 def make_stream_lines(*events: dict) -> bytes:
     """Create NDJSON byte stream from event dicts."""
@@ -350,7 +352,7 @@ class TestMCPConfig:
     """Test MCP server config generation."""
 
     async def test_mcp_config_added_when_bot_token_and_chat_id(self, callback):
-        """--mcp-config is added to args when telegram_token is set via env."""
+        """--mcp-config is added to args when telegram_token and chat_id are set."""
         from boxagent.agent.claude_process import ClaudeProcess
         from boxagent.agent_env import AgentEnv
 
@@ -358,7 +360,7 @@ class TestMCPConfig:
         fake_proc = FakeProcess(make_stream_lines(*events))
 
         cli = ClaudeProcess(workspace="/tmp/test")
-        env = AgentEnv(bot_name="test-bot", telegram_token="test-token")
+        env = AgentEnv(telegram_token="test-token")
 
         captured_args = []
 
@@ -376,7 +378,7 @@ class TestMCPConfig:
         assert "boxagent-telegram" in args_str
 
     async def test_no_telegram_mcp_without_bot_token(self, callback):
-        """boxagent-telegram MCP is NOT added when bot_token is empty,
+        """boxagent-telegram MCP is NOT added when telegram_token is empty,
         but boxagent MCP is still present."""
         from boxagent.agent.claude_process import ClaudeProcess
 
@@ -384,6 +386,7 @@ class TestMCPConfig:
         fake_proc = FakeProcess(make_stream_lines(*events))
 
         cli = ClaudeProcess(workspace="/tmp/test")
+        env = AgentEnv()  # no telegram_token
 
         captured_args = []
 
@@ -392,7 +395,7 @@ class TestMCPConfig:
             return fake_proc
 
         with patch("asyncio.create_subprocess_exec", side_effect=capture_exec):
-            await cli._execute_turn("test", callback, chat_id="12345")
+            await cli._execute_turn("test", callback, chat_id="12345", env=env)
 
         args_str = " ".join(str(a) for a in captured_args)
         assert "--mcp-config" in args_str
@@ -406,7 +409,8 @@ class TestMCPConfig:
         events = [result_event()]
         fake_proc = FakeProcess(make_stream_lines(*events))
 
-        cli = ClaudeProcess(workspace="/tmp/test", bot_token="test-token")
+        cli = ClaudeProcess(workspace="/tmp/test")
+        env = AgentEnv(telegram_token="test-token")
 
         captured_args = []
 
@@ -415,7 +419,7 @@ class TestMCPConfig:
             return fake_proc
 
         with patch("asyncio.create_subprocess_exec", side_effect=capture_exec):
-            await cli._execute_turn("test", callback)
+            await cli._execute_turn("test", callback, env=env)
 
         args_str = " ".join(str(a) for a in captured_args)
         assert "--mcp-config" not in args_str
@@ -429,7 +433,7 @@ class TestMCPConfig:
         fake_proc = FakeProcess(make_stream_lines(*events))
 
         cli = ClaudeProcess(workspace="/tmp/test")
-        env = AgentEnv(bot_name="test-bot", telegram_token="tok")
+        env = AgentEnv(telegram_token="tok")
 
         captured_args = []
 

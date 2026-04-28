@@ -56,7 +56,6 @@ def _create_backend(bot_cfg: BotConfig, session_id: str | None) -> object:
             session_id=session_id,
             model=bot_cfg.model,
             agent=bot_cfg.agent,
-            bot_token=bot_cfg.telegram_token,
             bot_name=bot_cfg.name,
         )
     if bot_cfg.ai_backend == "codex-cli":
@@ -67,7 +66,6 @@ def _create_backend(bot_cfg: BotConfig, session_id: str | None) -> object:
             session_id=session_id,
             model=bot_cfg.model,
             agent=bot_cfg.agent,
-            bot_token=bot_cfg.telegram_token,
             bot_name=bot_cfg.name,
             yolo=bot_cfg.yolo,
         )
@@ -76,7 +74,6 @@ def _create_backend(bot_cfg: BotConfig, session_id: str | None) -> object:
         session_id=session_id,
         model=bot_cfg.model,
         agent=bot_cfg.agent,
-        bot_token=bot_cfg.telegram_token,
         bot_name=bot_cfg.name,
         yolo=bot_cfg.yolo,
     )
@@ -346,6 +343,7 @@ class Gateway:
             ai_backend=bot_cfg.ai_backend,
             on_backend_switched=self._on_backend_switched,
             has_peer_channel=bool(bot_cfg.discord_peer_channel),
+            telegram_token=bot_cfg.telegram_token,
         )
 
         # Wire Telegram channel to router

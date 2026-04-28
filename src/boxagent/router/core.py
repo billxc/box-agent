@@ -52,6 +52,8 @@ class Router:
     workgroup_agents: list[str] = field(default_factory=list)  # specialist names for context
     get_running_tasks: object = None  # Callable[[], list[dict]]
     has_peer_channel: bool = False
+    telegram_token: str = ""      # from BotConfig at startup
+    workgroup_role: str = ""      # "admin" / "specialist" / ""
     _compact_summaries: dict[str, str] = field(default_factory=dict, repr=False)
     _resume_contexts: dict[str, str] = field(default_factory=dict, repr=False)
     _channels: dict[str, object] = field(default_factory=dict, repr=False)
@@ -405,7 +407,6 @@ class Router:
         workspace = getattr(old_proc, "workspace", self.workspace)
         model = getattr(old_proc, "model", "")
         agent = getattr(old_proc, "agent", "")
-        bot_token = getattr(old_proc, "bot_token", "")
         yolo = getattr(old_proc, "yolo", False)
 
         await old_proc.stop()
@@ -417,7 +418,6 @@ class Router:
                 workspace=workspace,
                 model=model,
                 agent=agent,
-                bot_token=bot_token,
             )
         elif new_backend == "codex-cli":
             from boxagent.agent.codex_process import CodexProcess
@@ -426,7 +426,6 @@ class Router:
                 workspace=workspace,
                 model=model,
                 agent=agent,
-                bot_token=bot_token,
                 yolo=yolo,
             )
         else:
@@ -436,7 +435,6 @@ class Router:
                 workspace=workspace,
                 model=model,
                 agent=agent,
-                bot_token=bot_token,
                 yolo=yolo,
             )
 
@@ -491,7 +489,8 @@ class Router:
         collector = TextCollector()
         await ch.show_typing(chat_id)
         try:
-            await proc.send(summary_prompt, collector)
+            env = self._build_env(msg)
+            await proc.send(summary_prompt, collector, env=env)
         except Exception as e:
             if use_pool:
                 self.pool.release(chat_id, proc)
@@ -742,10 +741,8 @@ class Router:
             model = getattr(self.cli_process, "model", "") or ""
             workspace = self.workspace
 
-        telegram_token = getattr(self.cli_process, "bot_token", "")
-        workgroup_role = ""
-        if getattr(self.cli_process, "is_workgroup_admin", False):
-            workgroup_role = "admin"
+        telegram_token = self.telegram_token
+        workgroup_role = self.workgroup_role
 
         running_tasks = self.get_running_tasks() if callable(self.get_running_tasks) else []
 

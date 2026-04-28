@@ -89,8 +89,8 @@ class ClaudeProcess(BaseCLIProcess):
 
         # Resolve MCP parameters from env
         if env is None:
-            from boxagent.agent_env import AgentEnv
-            env = AgentEnv(bot_name=self.bot_name)
+            from boxagent.agent_env import AgentEnv as _AE
+            env = _AE(bot_name=self.bot_name)
         mcp_bot_name = env.bot_name
         mcp_telegram_token = env.telegram_token
         mcp_server_names = env.mcp_server_names() if chat_id else []
