@@ -72,6 +72,7 @@ class WorkgroupConfig:
     discord_token: str = ""         # resolved token
     admin_discord_category: int = 0 # admin listens on this Discord category
     admin_discord_channel: int = 0  # text channel for heartbeat/notifications
+    discord_peer_channel: int = 0   # shared channel for peer messaging between admins
     # Agent config
     allowed_users: list[int] = field(default_factory=list)
     model: str = ""
@@ -559,6 +560,7 @@ def _parse_workgroup(
     admin_raw = raw.get("admin", {})
     admin_discord_category = int(admin_raw.get("discord_category", 0))
     admin_discord_channel = int(admin_raw.get("discord_admin_channel", 0))
+    discord_peer_channel = int(raw.get("discord_peer_channel", 0))
 
     # Agent config
     ai_backend = raw.get("ai_backend", "claude-cli")
@@ -620,6 +622,7 @@ def _parse_workgroup(
         discord_token=discord_token,
         admin_discord_category=admin_discord_category,
         admin_discord_channel=admin_discord_channel,
+        discord_peer_channel=discord_peer_channel,
         allowed_users=allowed_users,
         model=model,
         ai_backend=ai_backend,

@@ -280,6 +280,48 @@ class WorkgroupManager:
                     wg_name, wg_cfg.admin_discord_channel,
                 )
 
+        # Register peer channel route for cross-admin messaging
+        if dc_channel and wg_cfg.discord_peer_channel:
+            from boxagent.channels.base import IncomingMessage
+            from boxagent.gateway import _parse_peer_message
+
+            peer_ch_id = wg_cfg.discord_peer_channel
+            comm_ch_id = str(wg_cfg.admin_discord_channel)
+            _wg_name = wg_name
+
+            async def _peer_handler(msg, _name=_wg_name, _comm=comm_ch_id, _router=admin_router):
+                target, sender, body = _parse_peer_message(msg.text)
+                if target != _name:
+                    return
+                msg = IncomingMessage(
+                    channel=msg.channel,
+                    chat_id=_comm,
+                    user_id=msg.user_id,
+                    text=(
+                        f"[Peer message from {sender}]\n"
+                        f"{body}\n\n"
+                        f"---\n"
+                        f'Reply with: send_to_peer("{sender}", "your reply")'
+                    ),
+                    attachments=msg.attachments,
+                    trusted=True,
+                    channel_info=msg.channel_info,
+                )
+                await _router.handle_message(msg)
+
+            try:
+                dc_channel.register_channel_route(_peer_handler, peer_ch_id)
+                admin_router.has_peer_channel = True
+                logger.info(
+                    "Workgroup '%s': peer channel %d registered (comm → %s)",
+                    wg_name, peer_ch_id, comm_ch_id,
+                )
+            except ValueError:
+                logger.debug(
+                    "Workgroup '%s': peer channel %d already registered, skipping",
+                    wg_name, peer_ch_id,
+                )
+
         # --- Create specialists (config + saved dynamic ones) ---
         self._builtin_specialists[wg_name] = set(wg_cfg.specialists.keys())
         saved = self._load_saved_specialists(wg_name)

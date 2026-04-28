@@ -822,15 +822,26 @@ class Gateway:
                 status=400,
             )
 
-        # Find sender bot's Discord channel and peer channel ID
+        # Find sender's Discord channel and peer channel ID
+        # Check regular bots first, then workgroups
+        peer_channel_id = 0
+        dc_key = None
         bot_cfg = self.config.bots.get(from_bot)
-        if not bot_cfg or not bot_cfg.discord_peer_channel:
+        if bot_cfg and bot_cfg.discord_peer_channel:
+            peer_channel_id = bot_cfg.discord_peer_channel
+            dc_key = self._bot_discord_key.get(from_bot)
+        else:
+            wg_cfg = self.config.workgroups.get(from_bot)
+            if wg_cfg and wg_cfg.discord_peer_channel:
+                peer_channel_id = wg_cfg.discord_peer_channel
+                dc_key = wg_cfg.discord_bot_id
+
+        if not peer_channel_id:
             return web.json_response(
                 {"ok": False, "error": f"bot '{from_bot}' has no peer channel configured"},
                 status=400,
             )
 
-        dc_key = self._bot_discord_key.get(from_bot)
         dc_channel = self._discord_channels.get(dc_key) if dc_key else None
         if dc_channel is None:
             return web.json_response(
@@ -838,7 +849,7 @@ class Gateway:
                 status=400,
             )
 
-        peer_chat_id = str(bot_cfg.discord_peer_channel)
+        peer_chat_id = str(peer_channel_id)
         formatted = f"[To: {target}] [From: {from_bot}]\n{message}"
         try:
             await dc_channel.send_text(peer_chat_id, formatted)
