@@ -352,6 +352,7 @@ class DiscordChannel:
                         chat_id=chat_id,
                         user_id=str(interaction.user.id),
                         text=d,
+                        channel_info=self._build_channel_info(interaction.channel),
                     )
                     await callback(incoming)
 
@@ -612,59 +613,32 @@ class DiscordChannel:
 
     async def _handle_incoming(self, message: discord.Message) -> None:
         """Handle incoming Discord message — route by channel or category."""
-        # Ignore messages from the bot itself
-        is_self = message.author == self._client.user
-        if is_self:
+        if message.author == self._client.user:
             return
 
-        # Ignore webhook messages — except those in the allow list
-        # (e.g. TaskNotification webhooks used for workgroup callbacks).
         is_allowed_webhook = False
         if isinstance(message.webhook_id, int):
             if message.webhook_id not in self._allowed_webhook_ids:
                 return
             is_allowed_webhook = True
 
-        # Ignore system messages (member joins, boosts, pins, etc.)
-        if message.type not in (
-            discord.MessageType.default,
-            discord.MessageType.reply,
-        ):
+        if message.type not in (discord.MessageType.default, discord.MessageType.reply):
             return
 
-        channel_info = self._build_channel_info(message.channel)
-
-        # Channel-level routing (workgroup channels)
+        # Resolve callback: channel-specific first, then category-based
         channel_id = message.channel.id
-        if channel_id in self._channel_map:
-            callback = self._channel_map[channel_id]
-            attachments = await self._collect_attachments(message)
-            incoming = IncomingMessage(
-                channel="discord",
-                chat_id=str(channel_id),
-                user_id=str(message.author.id),
-                text=message.content or "",
-                attachments=attachments,
-                trusted=is_allowed_webhook,
-                channel_info=channel_info,
-            )
-            await callback(incoming)
-            return
-
-        # Normal routing by category
-        callback = self._resolve_callback(message.channel)
+        callback = self._channel_map.get(channel_id) or self._resolve_callback(message.channel)
         if callback is None:
             return
 
-        attachments = await self._collect_attachments(message)
         incoming = IncomingMessage(
             channel="discord",
-            chat_id=str(message.channel.id),
+            chat_id=str(channel_id),
             user_id=str(message.author.id),
             text=message.content or "",
-            attachments=attachments,
+            attachments=await self._collect_attachments(message),
             trusted=is_allowed_webhook,
-            channel_info=channel_info,
+            channel_info=self._build_channel_info(message.channel),
         )
         await callback(incoming)
 
