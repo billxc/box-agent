@@ -141,6 +141,17 @@ class ClaudeProcess(BaseCLIProcess):
                 },
             }
 
+        if "boxagent-peer" in mcp_server_names:
+            peer_env = {"BOXAGENT_BOT_NAME": mcp_bot_name}
+            local_dir = os.environ.get("BOXAGENT_LOCAL_DIR", "")
+            if local_dir:
+                peer_env["BOXAGENT_LOCAL_DIR"] = local_dir
+            mcp_servers["boxagent-peer"] = {
+                "command": sys.executable,
+                "args": [str(mcp_pkg / "mcp_peer.py")],
+                "env": peer_env,
+            }
+
         if mcp_servers:
             args += ["--mcp-config", json.dumps({"mcpServers": mcp_servers})]
 

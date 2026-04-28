@@ -32,6 +32,8 @@ class BotConfig:
     discord_allowed_users: list[int] = field(default_factory=list)
     discord_allowed_categories: list[int] = field(default_factory=list)
     discord_dm: bool = False
+    discord_peer_channel: int = 0
+    discord_comm_channel: int = 0
     model: str = ""
     agent: str = ""
     extra_skill_dirs: list[str] = field(default_factory=list)
@@ -450,6 +452,14 @@ def _parse_bot(
         discord_allowed_categories = discord.get("allowed_categories", [])
         discord_dm = discord.get("dm", False)
 
+    discord_peer_channel = int(discord.get("peer_channel", 0)) if discord else 0
+    discord_comm_channel = int(discord.get("comm_channel", 0)) if discord else 0
+
+    if discord_peer_channel and not discord_comm_channel:
+        raise ConfigError(
+            f"Bot '{name}': discord.peer_channel requires discord.comm_channel"
+        )
+
     # At least one channel must be configured
     if not telegram_token and not discord_token:
         raise ConfigError(
@@ -503,6 +513,8 @@ def _parse_bot(
         discord_allowed_users=discord_allowed_users,
         discord_allowed_categories=discord_allowed_categories,
         discord_dm=discord_dm,
+        discord_peer_channel=discord_peer_channel,
+        discord_comm_channel=discord_comm_channel,
         model=raw.get("model", ""),
         agent=raw.get("agent", ""),
         extra_skill_dirs=extra_skill_dirs,

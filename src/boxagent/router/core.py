@@ -51,6 +51,7 @@ class Router:
     on_backend_switched: object = None  # async callback(bot_name, new_cli, new_backend)
     workgroup_agents: list[str] = field(default_factory=list)  # specialist names for context
     get_running_tasks: object = None  # Callable[[], list[dict]]
+    has_peer_channel: bool = False
     _compact_summaries: dict[str, str] = field(default_factory=dict, repr=False)
     _resume_contexts: dict[str, str] = field(default_factory=dict, repr=False)
     _channels: dict[str, object] = field(default_factory=dict, repr=False)
@@ -758,6 +759,7 @@ class Router:
             workspace=workspace,
             config_dir=self.config_dir,
             telegram_token=telegram_token,
+            has_peer_channel=self.has_peer_channel,
             workgroup_role=workgroup_role,
             workgroup_agents=tuple(self.workgroup_agents),
             running_tasks=tuple(running_tasks),

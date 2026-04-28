@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass, field
@@ -23,6 +24,21 @@ from boxagent.workgroup import WorkgroupManager
 from aiohttp import web
 
 logger = logging.getLogger(__name__)
+
+_PEER_HEADER_RE = re.compile(
+    r"^\[To:\s*(?P<target>[^\]]+)\]\s*\[From:\s*(?P<sender>[^\]]+)\]\s*\n?",
+)
+
+
+def _parse_peer_message(text: str) -> tuple[str, str, str]:
+    """Parse ``[To: x] [From: y]\nbody`` → (target, sender, body).
+
+    Returns ("", "", text) if the header is missing.
+    """
+    m = _PEER_HEADER_RE.match(text)
+    if not m:
+        return "", "", text
+    return m.group("target").strip(), m.group("sender").strip(), text[m.end():]
 
 
 def _supports_persistent_session(ai_backend: str) -> bool:
@@ -329,6 +345,7 @@ class Gateway:
             extra_skill_dirs=bot_cfg.extra_skill_dirs,
             ai_backend=bot_cfg.ai_backend,
             on_backend_switched=self._on_backend_switched,
+            has_peer_channel=bool(bot_cfg.discord_peer_channel),
         )
 
         # Wire Telegram channel to router
@@ -347,6 +364,35 @@ class Gateway:
             if categories:
                 dc_channel.register_route(router.handle_message, categories)
             router._channels["discord"] = dc_channel
+
+        # Register peer channel route (separate from category routing)
+        if bot_cfg.discord_peer_channel and dc_channel is not None:
+            peer_ch_id = bot_cfg.discord_peer_channel
+            comm_ch_id = str(bot_cfg.discord_comm_channel)
+            _bot_name = name
+
+            async def _peer_handler(msg, _name=_bot_name, _comm=comm_ch_id, _router=router):
+                target, sender, body = _parse_peer_message(msg.text)
+                if target != _name:
+                    return
+                # Rewrite chat_id to comm_channel so the response streams there
+                msg = IncomingMessage(
+                    channel=msg.channel,
+                    chat_id=_comm,
+                    user_id=msg.user_id,
+                    text=(
+                        f"[Peer message from {sender}]\n"
+                        f"{body}\n\n"
+                        f"---\n"
+                        f'Reply with: send_to_peer("{sender}", "your reply")'
+                    ),
+                    attachments=msg.attachments,
+                    trusted=True,
+                    channel_info=msg.channel_info,
+                )
+                await _router.handle_message(msg)
+
+            dc_channel.register_channel_route(_peer_handler, peer_ch_id)
 
         self._routers[name] = router
 
@@ -523,6 +569,7 @@ class Gateway:
         app.router.add_post("/api/workgroup/delete_specialist", self._handle_delete_specialist)
         app.router.add_post("/api/workgroup/update_topic", self._handle_update_topic)
         app.router.add_post("/api/workgroup/cancel_task", self._handle_cancel_task)
+        app.router.add_post("/api/peer/send", self._handle_peer_send)
         runner = web.AppRunner(app)
         await runner.setup()
         self._http_runner = runner
@@ -758,6 +805,48 @@ class Gateway:
         result = await self._workgroup_mgr.cancel_task(task_id)
         status = 200 if result.get("ok") else 400
         return web.json_response(result, status=status)
+
+    async def _handle_peer_send(self, request: web.Request) -> web.Response:
+        """Handle POST /api/peer/send — send a message to the peer channel."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+
+        target = body.get("target", "")
+        message = body.get("message", "")
+        from_bot = body.get("from", "")
+        if not target or not message or not from_bot:
+            return web.json_response(
+                {"ok": False, "error": "missing 'target', 'message', or 'from'"},
+                status=400,
+            )
+
+        # Find sender bot's Discord channel and peer channel ID
+        bot_cfg = self.config.bots.get(from_bot)
+        if not bot_cfg or not bot_cfg.discord_peer_channel:
+            return web.json_response(
+                {"ok": False, "error": f"bot '{from_bot}' has no peer channel configured"},
+                status=400,
+            )
+
+        dc_key = self._bot_discord_key.get(from_bot)
+        dc_channel = self._discord_channels.get(dc_key) if dc_key else None
+        if dc_channel is None:
+            return web.json_response(
+                {"ok": False, "error": f"no Discord channel for bot '{from_bot}'"},
+                status=400,
+            )
+
+        peer_chat_id = str(bot_cfg.discord_peer_channel)
+        formatted = f"[To: {target}] [From: {from_bot}]\n{message}"
+        try:
+            await dc_channel.send_text(peer_chat_id, formatted)
+        except Exception as e:
+            logger.error("Failed to send peer message: %s", e)
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+        return web.json_response({"ok": True})
 
     async def stop(self) -> None:
         logger.info("Gateway shutting down...")

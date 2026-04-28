@@ -151,6 +151,7 @@ class AgentEnv:
 
     # ── Credentials ──
     telegram_token: str = ""  # non-empty = can use telegram MCP
+    has_peer_channel: bool = False  # True = can use peer MCP
 
     # ── Workgroup ──
     workgroup_role: str = ""  # "" / "admin" / "specialist"
@@ -183,6 +184,8 @@ class AgentEnv:
             servers.append("boxagent-admin")
         if self.has_telegram:
             servers.append("boxagent-telegram")
+        if self.has_peer_channel:
+            servers.append("boxagent-peer")
         return servers
 
     def callback_webhook_name(self) -> str:
