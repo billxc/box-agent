@@ -211,13 +211,11 @@ class WorkgroupManager:
         seed_admin_workspace(admin_ws, wg_name, list(wg_cfg.specialists.keys()))
 
         admin_cli = self._make_backend(admin_bot_cfg)
-        admin_cli.is_workgroup_admin = True
         admin_cli.start()
         self.procs[wg_name] = admin_cli
 
         def _admin_factory(cfg=admin_bot_cfg):
             proc = self._make_backend(cfg)
-            proc.is_workgroup_admin = True
             return proc
 
         admin_pool = SessionPool(
@@ -246,6 +244,7 @@ class WorkgroupManager:
             extra_skill_dirs=wg_cfg.extra_skill_dirs,
             ai_backend=wg_cfg.ai_backend,
             get_running_tasks=lambda wg=wg_name: self._get_running_tasks(wg),
+            workgroup_role="admin",
         )
         self.routers[wg_name] = admin_router
 

@@ -87,23 +87,14 @@ class ClaudeProcess(BaseCLIProcess):
         mcp_pkg = Path(__file__).parent.parent
         mcp_servers = {}
 
-        # Resolve MCP parameters — prefer env, fall back to instance attrs
-        if env is not None:
-            mcp_bot_name = env.bot_name
-            mcp_is_admin = env.is_workgroup_admin
-            mcp_telegram_token = env.telegram_token
-            mcp_server_names = env.mcp_server_names() if chat_id else []
-        else:
-            mcp_bot_name = self.bot_name
-            mcp_is_admin = self.is_workgroup_admin
-            mcp_telegram_token = self.bot_token
-            mcp_server_names = []
-            if chat_id:
-                mcp_server_names.append("boxagent")
-                if mcp_is_admin:
-                    mcp_server_names.append("boxagent-admin")
-                if mcp_telegram_token:
-                    mcp_server_names.append("boxagent-telegram")
+        # Resolve MCP parameters from env
+        if env is None:
+            from boxagent.agent_env import AgentEnv as _AE
+            env = _AE(bot_name=self.bot_name)
+        mcp_bot_name = env.bot_name
+        mcp_is_admin = env.is_workgroup_admin
+        mcp_telegram_token = env.telegram_token
+        mcp_server_names = env.mcp_server_names() if chat_id else []
 
         if "boxagent" in mcp_server_names:
             agent_env = {"BOXAGENT_BOT_NAME": mcp_bot_name}

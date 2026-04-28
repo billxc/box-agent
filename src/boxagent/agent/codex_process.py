@@ -25,18 +25,18 @@ def _toml_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-def build_mcp_args(bot_token: str, chat_id: str) -> list[str]:
+def build_mcp_args(token: str, chat_id: str) -> list[str]:
     """Build -c flags to inject Telegram MCP server for a Codex backend.
 
     Shared by CodexProcess and ACPProcess.
     """
-    if not bot_token or not chat_id:
+    if not token or not chat_id:
         return []
     python = sys.executable.replace('\\', '/')
     mcp_path = _MCP_SERVER_PATH.replace('\\', '/')
     args_toml = "[" + ",".join([
         _toml_literal(mcp_path),
-        _toml_literal(bot_token),
+        _toml_literal(token),
         _toml_literal(chat_id),
     ]) + "]"
     return [
@@ -72,21 +72,18 @@ class CodexProcess(BaseCLIProcess):
 
     def _mcp_args(self, chat_id: str, env=None) -> list[str]:
         """Build -c flags to inject Telegram MCP server for this turn."""
-        token = env.telegram_token if env else self.bot_token
-        return build_mcp_args(token, chat_id)
+        return build_mcp_args(env.telegram_token, chat_id) if env else []
 
     def _extra_env(self, chat_id: str, env=None) -> dict[str, str] | None:
         """Environment variables for the MCP server subprocess."""
-        if not chat_id:
+        if not env or not chat_id:
             return None
-        token = env.telegram_token if env else self.bot_token
-        name = env.bot_name if env else self.bot_name
         result = {}
-        if token:
-            result["BOXAGENT_BOT_TOKEN"] = token
+        if env.telegram_token:
+            result["BOXAGENT_BOT_TOKEN"] = env.telegram_token
             result["BOXAGENT_CHAT_ID"] = chat_id
-        if name:
-            result["BOXAGENT_BOT_NAME"] = name
+        if env.bot_name:
+            result["BOXAGENT_BOT_NAME"] = env.bot_name
         return result or None
 
     def _build_args(self, message: str, model: str, chat_id: str, append_system_prompt: str = "", env=None) -> list[str]:

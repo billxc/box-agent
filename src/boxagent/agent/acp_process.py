@@ -216,7 +216,6 @@ class ACPProcess:
     session_id: str | None = None
     model: str = ""
     agent: str = ""
-    bot_token: str = ""
     acp_command: str = DEFAULT_ACP_COMMAND
     state: Literal["idle", "busy", "dead"] = "idle"
     supports_session_persistence: bool = field(
@@ -301,8 +300,8 @@ class ACPProcess:
             return
 
         # Build extra args for MCP injection
-        token = env.telegram_token if env else self.bot_token
-        extra_args: list[str] = build_mcp_args(token, chat_id)
+        token = env.telegram_token if env else ""
+        extra_args = build_mcp_args(token, chat_id)
         extra_env: dict[str, str] | None = None
         if token and chat_id:
             import os

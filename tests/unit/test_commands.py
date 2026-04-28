@@ -985,7 +985,6 @@ class TestBackendCommand:
         mock_cli.workspace = router.workspace
         mock_cli.model = "opus"
         mock_cli.agent = ""
-        mock_cli.bot_token = ""
         mock_cli.yolo = False
         mock_cli.stop = AsyncMock()
 
