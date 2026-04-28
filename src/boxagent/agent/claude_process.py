@@ -87,44 +87,33 @@ class ClaudeProcess(BaseCLIProcess):
         mcp_pkg = Path(__file__).parent.parent
         mcp_servers = {}
 
-        # Resolve MCP parameters — prefer env, fall back to instance attrs
-        if env is not None:
-            mcp_bot_name = env.bot_name
-            mcp_is_admin = env.is_workgroup_admin
-            mcp_telegram_token = env.telegram_token
-            mcp_server_names = env.mcp_server_names() if chat_id else []
-        else:
-            mcp_bot_name = self.bot_name
-            mcp_is_admin = self.is_workgroup_admin
-            mcp_telegram_token = self.bot_token
-            mcp_server_names = []
-            if chat_id:
-                mcp_server_names.append("boxagent")
-                if mcp_is_admin:
-                    mcp_server_names.append("boxagent-admin")
-                if mcp_telegram_token:
-                    mcp_server_names.append("boxagent-telegram")
+        # Resolve MCP parameters from env
+        if env is None:
+            from boxagent.agent_env import AgentEnv
+            env = AgentEnv(bot_name=self.bot_name)
+        mcp_bot_name = env.bot_name
+        mcp_telegram_token = env.telegram_token
+        mcp_server_names = env.mcp_server_names() if chat_id else []
+
+        # Build base env vars shared by all MCP servers
+        mcp_base_env = {"BOXAGENT_BOT_NAME": mcp_bot_name}
+        if env.config_dir:
+            mcp_base_env["BOXAGENT_CONFIG_DIR"] = env.config_dir
+        if env.local_dir:
+            mcp_base_env["BOXAGENT_LOCAL_DIR"] = env.local_dir
+        if env.node_id:
+            mcp_base_env["BOXAGENT_NODE_ID"] = env.node_id
 
         if "boxagent" in mcp_server_names:
-            agent_env = {"BOXAGENT_BOT_NAME": mcp_bot_name}
-            for key in ("BOXAGENT_CONFIG_DIR", "BOXAGENT_LOCAL_DIR", "BOXAGENT_NODE_ID"):
-                val = os.environ.get(key, "")
-                if val:
-                    agent_env[key] = val
             mcp_servers["boxagent"] = {
                 "command": sys.executable,
                 "args": [str(mcp_pkg / "mcp_server.py")],
-                "env": agent_env,
+                "env": dict(mcp_base_env),
             }
 
         if "boxagent-admin" in mcp_server_names:
-            admin_env = {
-                "BOXAGENT_BOT_NAME": mcp_bot_name,
-                "BOXAGENT_CHAT_ID": chat_id,
-            }
-            local_dir = os.environ.get("BOXAGENT_LOCAL_DIR", "")
-            if local_dir:
-                admin_env["BOXAGENT_LOCAL_DIR"] = local_dir
+            admin_env = dict(mcp_base_env)
+            admin_env["BOXAGENT_CHAT_ID"] = chat_id
             mcp_servers["boxagent-admin"] = {
                 "command": sys.executable,
                 "args": [str(mcp_pkg / "workgroup" / "mcp_admin.py")],
@@ -142,10 +131,7 @@ class ClaudeProcess(BaseCLIProcess):
             }
 
         if "boxagent-peer" in mcp_server_names:
-            peer_env = {"BOXAGENT_BOT_NAME": mcp_bot_name}
-            local_dir = os.environ.get("BOXAGENT_LOCAL_DIR", "")
-            if local_dir:
-                peer_env["BOXAGENT_LOCAL_DIR"] = local_dir
+            peer_env = dict(mcp_base_env)
             mcp_servers["boxagent-peer"] = {
                 "command": sys.executable,
                 "args": [str(mcp_pkg / "mcp_peer.py")],

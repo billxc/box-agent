@@ -148,6 +148,7 @@ class AgentEnv:
     node_id: str = ""
     workspace: str = ""
     config_dir: str = ""
+    local_dir: str = ""
 
     # ── Credentials ──
     telegram_token: str = ""  # non-empty = can use telegram MCP

@@ -759,6 +759,7 @@ class Router:
             node_id=self.node_id,
             workspace=workspace,
             config_dir=self.config_dir,
+            local_dir=str(self.local_dir) if self.local_dir else "",
             telegram_token=telegram_token,
             has_peer_channel=self.has_peer_channel,
             workgroup_role=workgroup_role,

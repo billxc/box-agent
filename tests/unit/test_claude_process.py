@@ -350,13 +350,15 @@ class TestMCPConfig:
     """Test MCP server config generation."""
 
     async def test_mcp_config_added_when_bot_token_and_chat_id(self, callback):
-        """--mcp-config is added to args when bot_token and chat_id are set."""
+        """--mcp-config is added to args when telegram_token is set via env."""
         from boxagent.agent.claude_process import ClaudeProcess
+        from boxagent.agent_env import AgentEnv
 
         events = [result_event()]
         fake_proc = FakeProcess(make_stream_lines(*events))
 
-        cli = ClaudeProcess(workspace="/tmp/test", bot_token="test-token")
+        cli = ClaudeProcess(workspace="/tmp/test")
+        env = AgentEnv(bot_name="test-bot", telegram_token="test-token")
 
         captured_args = []
 
@@ -365,7 +367,7 @@ class TestMCPConfig:
             return fake_proc
 
         with patch("asyncio.create_subprocess_exec", side_effect=capture_exec):
-            await cli._execute_turn("test", callback, chat_id="12345")
+            await cli._execute_turn("test", callback, chat_id="12345", env=env)
 
         args_str = " ".join(str(a) for a in captured_args)
         assert "--mcp-config" in args_str
@@ -421,11 +423,13 @@ class TestMCPConfig:
     async def test_mcp_config_contains_both_servers(self, callback):
         """MCP config has both boxagent and boxagent-telegram servers."""
         from boxagent.agent.claude_process import ClaudeProcess
+        from boxagent.agent_env import AgentEnv
 
         events = [result_event()]
         fake_proc = FakeProcess(make_stream_lines(*events))
 
-        cli = ClaudeProcess(workspace="/tmp/test", bot_token="tok")
+        cli = ClaudeProcess(workspace="/tmp/test")
+        env = AgentEnv(bot_name="test-bot", telegram_token="tok")
 
         captured_args = []
 
@@ -434,7 +438,7 @@ class TestMCPConfig:
             return fake_proc
 
         with patch("asyncio.create_subprocess_exec", side_effect=capture_exec):
-            await cli._execute_turn("test", callback, chat_id="999")
+            await cli._execute_turn("test", callback, chat_id="999", env=env)
 
         # Find the --mcp-config value
         args_list = list(captured_args)
