@@ -87,86 +87,59 @@ class ClaudeProcess(BaseCLIProcess):
         mcp_pkg = Path(__file__).parent.parent
         mcp_servers = {}
 
-        if env is not None and chat_id:
-            # ── New path: derive MCP config from AgentEnv ──
-            server_names = env.mcp_server_names()
-
-            if "boxagent" in server_names:
-                agent_env = {"BOXAGENT_BOT_NAME": env.bot_name}
-                for key in ("BOXAGENT_CONFIG_DIR", "BOXAGENT_LOCAL_DIR", "BOXAGENT_NODE_ID"):
-                    val = os.environ.get(key, "")
-                    if val:
-                        agent_env[key] = val
-                mcp_servers["boxagent"] = {
-                    "command": sys.executable,
-                    "args": [str(mcp_pkg / "mcp_server.py")],
-                    "env": agent_env,
-                }
-
-            if "boxagent-admin" in server_names:
-                admin_env = {
-                    "BOXAGENT_BOT_NAME": env.bot_name,
-                    "BOXAGENT_CHAT_ID": chat_id,
-                }
-                local_dir = os.environ.get("BOXAGENT_LOCAL_DIR", "")
-                if local_dir:
-                    admin_env["BOXAGENT_LOCAL_DIR"] = local_dir
-                mcp_servers["boxagent-admin"] = {
-                    "command": sys.executable,
-                    "args": [str(mcp_pkg / "workgroup" / "mcp_admin.py")],
-                    "env": admin_env,
-                }
-
-            if "boxagent-telegram" in server_names:
-                mcp_servers["boxagent-telegram"] = {
-                    "command": sys.executable,
-                    "args": [str(mcp_pkg / "mcp_telegram.py")],
-                    "env": {
-                        "BOXAGENT_BOT_TOKEN": env.telegram_token,
-                        "BOXAGENT_CHAT_ID": chat_id,
-                    },
-                }
+        # Resolve MCP parameters — prefer env, fall back to instance attrs
+        if env is not None:
+            mcp_bot_name = env.bot_name
+            mcp_is_admin = env.is_workgroup_admin
+            mcp_telegram_token = env.telegram_token
+            mcp_server_names = env.mcp_server_names() if chat_id else []
         else:
-            # ── Legacy path: derive MCP config from instance attributes ──
-
-            # boxagent — schedule + session tools (always available)
+            mcp_bot_name = self.bot_name
+            mcp_is_admin = self.is_workgroup_admin
+            mcp_telegram_token = self.bot_token
+            mcp_server_names = []
             if chat_id:
-                agent_env = {"BOXAGENT_BOT_NAME": self.bot_name}
-                for key in ("BOXAGENT_CONFIG_DIR", "BOXAGENT_LOCAL_DIR", "BOXAGENT_NODE_ID"):
-                    val = os.environ.get(key, "")
-                    if val:
-                        agent_env[key] = val
-                mcp_servers["boxagent"] = {
-                    "command": sys.executable,
-                    "args": [str(mcp_pkg / "mcp_server.py")],
-                    "env": agent_env,
-                }
+                mcp_server_names.append("boxagent")
+                if mcp_is_admin:
+                    mcp_server_names.append("boxagent-admin")
+                if mcp_telegram_token:
+                    mcp_server_names.append("boxagent-telegram")
 
-            # boxagent-admin — send_to_agent + create_specialist (admin only)
-            if chat_id and self.is_workgroup_admin:
-                admin_env = {
-                    "BOXAGENT_BOT_NAME": self.bot_name,
+        if "boxagent" in mcp_server_names:
+            agent_env = {"BOXAGENT_BOT_NAME": mcp_bot_name}
+            for key in ("BOXAGENT_CONFIG_DIR", "BOXAGENT_LOCAL_DIR", "BOXAGENT_NODE_ID"):
+                val = os.environ.get(key, "")
+                if val:
+                    agent_env[key] = val
+            mcp_servers["boxagent"] = {
+                "command": sys.executable,
+                "args": [str(mcp_pkg / "mcp_server.py")],
+                "env": agent_env,
+            }
+
+        if "boxagent-admin" in mcp_server_names:
+            admin_env = {
+                "BOXAGENT_BOT_NAME": mcp_bot_name,
+                "BOXAGENT_CHAT_ID": chat_id,
+            }
+            local_dir = os.environ.get("BOXAGENT_LOCAL_DIR", "")
+            if local_dir:
+                admin_env["BOXAGENT_LOCAL_DIR"] = local_dir
+            mcp_servers["boxagent-admin"] = {
+                "command": sys.executable,
+                "args": [str(mcp_pkg / "workgroup" / "mcp_admin.py")],
+                "env": admin_env,
+            }
+
+        if "boxagent-telegram" in mcp_server_names:
+            mcp_servers["boxagent-telegram"] = {
+                "command": sys.executable,
+                "args": [str(mcp_pkg / "mcp_telegram.py")],
+                "env": {
+                    "BOXAGENT_BOT_TOKEN": mcp_telegram_token,
                     "BOXAGENT_CHAT_ID": chat_id,
-                }
-                local_dir = os.environ.get("BOXAGENT_LOCAL_DIR", "")
-                if local_dir:
-                    admin_env["BOXAGENT_LOCAL_DIR"] = local_dir
-                mcp_servers["boxagent-admin"] = {
-                    "command": sys.executable,
-                    "args": [str(mcp_pkg / "workgroup" / "mcp_admin.py")],
-                    "env": admin_env,
-                }
-
-            # boxagent-telegram — media tools (only when Telegram token available)
-            if self.bot_token and chat_id:
-                mcp_servers["boxagent-telegram"] = {
-                    "command": sys.executable,
-                    "args": [str(mcp_pkg / "mcp_telegram.py")],
-                    "env": {
-                        "BOXAGENT_BOT_TOKEN": self.bot_token,
-                        "BOXAGENT_CHAT_ID": chat_id,
-                    },
-                }
+                },
+            }
 
         if mcp_servers:
             args += ["--mcp-config", json.dumps({"mcpServers": mcp_servers})]

@@ -807,20 +807,13 @@ class Router:
         if env is not None:
             return build_session_context(env=env)
 
-        if self.pool and chat_id:
-            model = self.pool.get_model(chat_id) or "default"
-            workspace = self.pool.get_workspace(chat_id) or self.workspace
-        else:
-            model = getattr(self.cli_process, "model", "") or "default"
-            workspace = self.workspace
+        # Fallback for callers that don't have env yet
         running_tasks = self.get_running_tasks() if callable(self.get_running_tasks) else []
         return build_session_context(
             bot_name=self.bot_name,
             display_name=self.display_name,
             node_id=self.node_id,
-            ai_backend=self.ai_backend,
-            model=model,
-            workspace=workspace,
+            workspace=self.workspace,
             config_dir=self.config_dir,
             workgroup_agents=self.workgroup_agents,
             running_tasks=running_tasks,
