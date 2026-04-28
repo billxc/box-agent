@@ -564,6 +564,7 @@ class Router:
                 text=combined_text,
                 via_workgroup=msg.via_workgroup,
                 trusted=msg.trusted,
+                channel_info=msg.channel_info,
             )
 
         return last_collected
@@ -709,7 +710,7 @@ class Router:
         Used by workgroup delegation — skips auth and command handling.
         """
         msg = IncomingMessage(
-            channel="discord",
+            channel="internal",
             chat_id=chat_id,
             user_id=from_bot or "workgroup",
             text=text,

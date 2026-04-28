@@ -418,7 +418,7 @@ class WorkgroupManager:
                 if admin_router:
                     from boxagent.channels.base import IncomingMessage
                     callback_msg = IncomingMessage(
-                        channel="discord",
+                        channel="internal",
                         chat_id=reply_chat_id,
                         user_id="workgroup",
                         text=f"[TaskResult from {target}]\n{result}",
