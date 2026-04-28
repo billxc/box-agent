@@ -863,7 +863,7 @@ async def test_execute_once_isolate_uses_requested_backend_and_model(tmp_path):
             }
         def start(self):
             captured["started"] = True
-        async def send(self, message, callback, model="", chat_id="", append_system_prompt=""):
+        async def send(self, message, callback, model="", chat_id="", append_system_prompt="", env=None):
             captured["send"] = {
                 "message": message,
                 "model": model,
@@ -907,7 +907,7 @@ async def test_isolate_prefers_telegram_bots_mapping_over_bot_name(tmp_path):
             captured["workspace"] = workspace
         def start(self):
             pass
-        async def send(self, message, callback, model="", chat_id="", append_system_prompt=""):
+        async def send(self, message, callback, model="", chat_id="", append_system_prompt="", env=None):
             await callback.on_stream("ok")
         async def stop(self):
             pass
@@ -1032,7 +1032,7 @@ async def test_isolate_run_logs_output_to_local_dir(tmp_path):
             pass
         def start(self):
             pass
-        async def send(self, message, callback, model="", chat_id="", append_system_prompt=""):
+        async def send(self, message, callback, model="", chat_id="", append_system_prompt="", env=None):
             await callback.on_stream("logged output")
         async def stop(self):
             pass
@@ -1064,7 +1064,7 @@ async def test_spawn_isolate_passes_yolo_to_claude(tmp_path):
             captured["yolo"] = kwargs.get("yolo", False)
         def start(self):
             pass
-        async def send(self, message, callback, model="", chat_id="", append_system_prompt=""):
+        async def send(self, message, callback, model="", chat_id="", append_system_prompt="", env=None):
             await callback.on_stream("ok")
         async def stop(self):
             pass
@@ -1089,7 +1089,7 @@ async def test_spawn_isolate_passes_yolo_to_codex(tmp_path):
             captured["yolo"] = kwargs.get("yolo", False)
         def start(self):
             pass
-        async def send(self, message, callback, model="", chat_id="", append_system_prompt=""):
+        async def send(self, message, callback, model="", chat_id="", append_system_prompt="", env=None):
             await callback.on_stream("ok")
         async def stop(self):
             pass
@@ -1117,7 +1117,7 @@ async def test_execute_once_isolate_timeout_stops_process_and_logs_error(tmp_pat
         def start(self):
             captured["started"] = True
 
-        async def send(self, message, callback, model="", chat_id="", append_system_prompt=""):
+        async def send(self, message, callback, model="", chat_id="", append_system_prompt="", env=None):
             captured["message"] = message
             captured["send_model"] = model
             captured["append_system_prompt"] = append_system_prompt

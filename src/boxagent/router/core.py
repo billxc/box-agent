@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_COMMANDS = {"/status", "/new", "/cancel", "/resume", "/start", "/help", "/verbose", "/sync_skills", "/compact", "/model", "/exec", "/version", "/trust_workspace", "/review_loop", "/cd", "/backend", "/sessions", "/schedule"}
+SYSTEM_COMMANDS = {"/status", "/new", "/cancel", "/resume", "/start", "/help", "/verbose", "/sync_skills", "/compact", "/model", "/exec", "/version", "/trust_workspace", "/cd", "/backend", "/sessions", "/schedule"}
 
 
 @dataclass
@@ -142,8 +142,6 @@ class Router:
             await cmd_version(msg, channel=ch)
         elif command == "/trust_workspace":
             await cmd_trust_workspace(msg, channel=ch, workspace=self.workspace)
-        elif command == "/review_loop":
-            await self._cmd_review_loop(msg)
         elif command == "/cd":
             await self._cmd_cd(msg)
         elif command == "/backend":
@@ -157,38 +155,6 @@ class Router:
             )
 
     # ---- Core session commands ----
-
-    async def _cmd_review_loop(self, msg: IncomingMessage):
-        """Start a multi-agent review loop."""
-        ch = self._resolve_channel(msg)
-        parts = msg.text.split(maxsplit=1)
-        topic = parts[1] if len(parts) > 1 else ""
-        if not topic:
-            await ch.send_text(
-                msg.chat_id,
-                "Usage: /review_loop <topic>\n"
-                "Example: /review_loop write a thread-safe LRU cache",
-            )
-            return
-
-        if self.ai_backend != "claude-cli":
-            await ch.send_text(
-                msg.chat_id,
-                f"Review loop requires claude-cli backend (current: {self.ai_backend}). "
-                "Fork session is not supported by other backends yet.",
-            )
-            return
-
-        from boxagent.review_loop import ReviewLoopRunner
-
-        runner = ReviewLoopRunner(
-            cli_process=self.cli_process,
-            channel=ch,
-            chat_id=msg.chat_id,
-            workspace=self.workspace,
-            model=getattr(self.cli_process, "model", ""),
-        )
-        await runner.run(topic)
 
     async def _cmd_new(self, msg: IncomingMessage):
         ch = self._resolve_channel(msg)

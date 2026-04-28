@@ -444,9 +444,19 @@ class Scheduler:
 
     async def _spawn_isolate(self, task: ScheduleTask, prompt: str, append_system_prompt: str = "") -> tuple[str, "_SchedulerCallback"]:
         """Spawn an isolated backend process and return (output_text, callback)."""
+        from boxagent.agent_env import AgentEnv
+
         backend = task.ai_backend
         workspace = self._get_workspace(task)
         callback = _SchedulerCallback(channel=None, chat_id="", task_id=task.id)
+
+        env = AgentEnv(
+            bot_name=task.bot or task.id,
+            workspace=workspace,
+            ai_backend=backend,
+            model=task.model,
+            yolo=task.yolo,
+        )
 
         if backend == "claude-cli":
             from boxagent.agent.claude_process import ClaudeProcess
@@ -483,6 +493,7 @@ class Scheduler:
                         callback,
                         model=task.model,
                         append_system_prompt=append_system_prompt,
+                        env=env,
                     ),
                     timeout=task.timeout_seconds,
                 )

@@ -233,6 +233,7 @@ class HeartbeatManager:
         session IDs and raw response for logging.
         """
         from boxagent.agent.claude_process import ClaudeProcess
+        from boxagent.agent_env import AgentEnv
         from boxagent.router.callback import TextCollector
 
         source_session_id = self._find_fork_session_id()
@@ -245,6 +246,15 @@ class HeartbeatManager:
             running_tasks=running_tasks,
         )
 
+        env = AgentEnv(
+            bot_name=self.wg_name,
+            workspace=self.workspace,
+            ai_backend=self.ai_backend,
+            model=self.model,
+            yolo=self.yolo,
+            workgroup_role="admin",
+        )
+
         proc = ClaudeProcess(
             workspace=self.workspace,
             session_id=source_session_id,
@@ -255,7 +265,7 @@ class HeartbeatManager:
 
         try:
             collector = TextCollector()
-            await proc.send(prompt, collector, model=self.model)
+            await proc.send(prompt, collector, model=self.model, env=env)
             raw = collector.text.strip()
             action = _extract_action(raw)
             return action, {
