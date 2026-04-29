@@ -258,6 +258,8 @@ class Gateway:
 
         # Ensure workgroup Discord identities are also created
         for wg_name, wg_cfg in self.config.workgroups.items():
+            if not node_matches(wg_cfg.enabled_on_nodes, self.config.node_id):
+                continue
             key = wg_cfg.discord_bot_id
             if key and key not in self._discord_channels:
                 self._discord_channels[key] = DiscordChannel(
