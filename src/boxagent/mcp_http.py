@@ -294,7 +294,7 @@ def _register_admin_tools(mcp: FastMCP) -> None:
         try:
             result = await _gateway._workgroup_mgr.send_to_specialist(
                 target=agent_name,
-                message=message,
+                text=message,
                 from_bot=bot_name,
                 reply_chat_id=chat_id,
             )
