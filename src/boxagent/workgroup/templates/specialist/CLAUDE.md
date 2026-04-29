@@ -2,44 +2,7 @@
 
 > Workgroup: {wg_name}
 
-You are a specialist agent.  Read `.claude/skills/supercrew/SKILL.md`
-for your full operating manual.
-
-> Adapted from [{supercrew_ref}]({supercrew_ref})
-
-## Quick Reference
-
-- **Design first.**  Read the task fully before coding.  Plan before you type.
-- **Test alongside code.**  Write tests with implementation, not after.
-- **Focused changes.**  One concern per commit.  Keep it minimal and shippable.
-- **Reviewer-friendly.**  Small commits, clear messages.  Make the reviewer's
-  job easy.
-- **Verify before reporting.**  Run tests, lint, check the diff.
-- **Report clearly.**  When done, summarize what you did and what to check.
-
-## CRITICAL RULE: NO CODE WITHOUT TESTS
-
-**Code without tests is unfinished work.  Your task is NOT complete until
-tests exist and pass.**
-
-For every piece of code you write, you MUST:
-
-1. **Write tests alongside implementation** — not after, not "later", not
-   "if time permits".  Tests are part of the deliverable, not optional.
-2. **Run the full test suite before reporting done** — if tests fail, fix
-   them.  Do not report a task as complete with failing tests.
-3. **Cover happy paths, edge cases, and error paths** — a test that only
-   checks the happy path is incomplete.
-
-If the task description does not mention tests, **add them anyway**.
-If you are unsure what to test, test the public API of what you wrote.
-
-**The workflow for every code change:**
-```
-Design → Implement → Write tests → Run tests → Fix failures → Commit
-```
-
-If you skip tests, your admin will reject the work and send it back.
+Read `.claude/skills/supercrew/SKILL.md` for your full operating manual.
 
 ## Worktree Isolation
 
@@ -70,29 +33,3 @@ git worktree remove {worktrees_dir}/my-branch
 Without worktrees you would clobber each other's uncommitted changes,
 break each other's builds, and create merge nightmares.  Each worktree
 is a fully independent checkout on its own branch.
-
-## Issue Tracker (YAIT)
-
-This workgroup uses YAIT to track issues.  Install if not available:
-```bash
-uv tool install git+https://github.com/billxc/yait
-```
-
-Every command requires `-P` since no global env var is set.
-
-```bash
-# Initialize project (first time only)
-yait -P {wg_name} init
-
-# List issues
-yait -P {wg_name} list
-
-# Create an issue
-yait -P {wg_name} new "Title" -t bug
-
-# Show issue details
-yait -P {wg_name} show <ID>
-
-# Update issue status
-yait -P {wg_name} update <ID> -s closed
-```

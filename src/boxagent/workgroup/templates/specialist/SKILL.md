@@ -395,6 +395,32 @@ Before every commit, verify:
 - [ ] Commit message is clear
 - [ ] Diff reviewed as if you were the reviewer
 
+## Issue Tracker (YAIT)
+
+This workgroup uses YAIT to track issues.  Install if not available:
+```bash
+uv tool install git+https://github.com/billxc/yait
+```
+
+Every command requires `-P` since no global env var is set.
+
+```bash
+# Initialize project (first time only)
+yait -P {wg_name} init
+
+# List issues
+yait -P {wg_name} list
+
+# Create an issue
+yait -P {wg_name} new "Title" -t bug
+
+# Show issue details
+yait -P {wg_name} show <ID>
+
+# Update issue status
+yait -P {wg_name} update <ID> -s closed
+```
+
 ## Security
 
 - Never hardcode credentials or secrets.
