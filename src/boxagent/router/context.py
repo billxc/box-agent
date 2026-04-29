@@ -63,16 +63,21 @@ def build_session_context(
     lines.append(f"workspace: {workspace}")
     lines.append(f"time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
-    # Read BOXAGENT.md — deduplicate if config and workspace point to same file
-    config_content = _read_boxagent_md(config_dir)
-    workspace_content = _read_boxagent_md(workspace)
+    # Read BOXAGENT.md and BOXAGENT-{node_id}.md — deduplicate across dirs
+    seen: set[str] = set()
 
-    if config_content:
-        lines.append(f"\n# BOXAGENT.md")
-        lines.append(config_content)
-    if workspace_content and workspace_content != config_content:
-        lines.append(f"\n# Workspace BOXAGENT.md")
-        lines.append(workspace_content)
+    for label, base_dir in [("BOXAGENT.md", config_dir), ("Workspace BOXAGENT.md", workspace)]:
+        content = _read_boxagent_md(base_dir)
+        if content and content not in seen:
+            lines.append(f"\n# {label}")
+            lines.append(content)
+            seen.add(content)
+
+    node_content = _read_boxagent_node_md(config_dir, node_id)
+    if node_content and node_content not in seen:
+        lines.append(f"\n# BOXAGENT (node)")
+        lines.append(node_content)
+        seen.add(node_content)
 
     # Workgroup agent delegation info
     if workgroup_agents:
@@ -156,6 +161,20 @@ def _read_boxagent_md(base_dir: str) -> str:
     if not base_dir:
         return ""
     md_path = Path(base_dir) / "BOXAGENT.md"
+    if not md_path.is_file():
+        return ""
+    try:
+        return md_path.read_text(encoding="utf-8").strip()
+    except Exception as e:
+        logger.warning("Failed to read %s: %s", md_path, e)
+        return ""
+
+
+def _read_boxagent_node_md(base_dir: str, node_id: str) -> str:
+    """Read BOXAGENT-{node_id}.md from a directory. Returns empty string if not found."""
+    if not base_dir or not node_id:
+        return ""
+    md_path = Path(base_dir) / f"BOXAGENT-{node_id}.md"
     if not md_path.is_file():
         return ""
     try:

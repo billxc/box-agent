@@ -203,6 +203,15 @@ class WorkgroupManager:
             extra_skill_dirs=wg_cfg.extra_skill_dirs,
         )
 
+        # Merge saved dynamic specialists BEFORE seeding workspace so
+        # CLAUDE.md lists all specialists (not just config-defined ones).
+        self._builtin_specialists[wg_name] = set(wg_cfg.specialists.keys())
+        saved = self._load_saved_specialists(wg_name)
+        for sp_name, sp_cfg in saved.items():
+            if sp_name not in wg_cfg.specialists:
+                wg_cfg.specialists[sp_name] = sp_cfg
+                logger.info("Workgroup '%s': restored saved specialist '%s'", wg_name, sp_name)
+
         # Prepare admin workspace BEFORE starting backend
         if admin_ws and self._ensure_git_repo:
             self._ensure_git_repo(Path(admin_ws))
@@ -321,14 +330,7 @@ class WorkgroupManager:
                     wg_name, peer_ch_id,
                 )
 
-        # --- Create specialists (config + saved dynamic ones) ---
-        self._builtin_specialists[wg_name] = set(wg_cfg.specialists.keys())
-        saved = self._load_saved_specialists(wg_name)
-        for sp_name, sp_cfg in saved.items():
-            if sp_name not in wg_cfg.specialists:
-                wg_cfg.specialists[sp_name] = sp_cfg
-                logger.info("Workgroup '%s': restored saved specialist '%s'", wg_name, sp_name)
-
+        # --- Create specialists (already merged above) ---
         specialist_names = []
         for sp_name, sp_cfg in wg_cfg.specialists.items():
             self._create_specialist_agent(sp_name, sp_cfg, wg_cfg, dc_channel)
