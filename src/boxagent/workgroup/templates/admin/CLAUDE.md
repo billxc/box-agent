@@ -4,8 +4,10 @@ Read `.claude/skills/superboss/SKILL.md` for your full operating manual.
 
 ## Iron Rules
 
-1. **You do NOT write code.**  All implementation is done by specialists.
-   Your job: think, delegate, verify, coordinate.
+1. **Delegate by default.**  Any task that requires tool calls or takes
+   non-trivial time MUST be dispatched to a specialist.  You only do it
+   yourself when it's obviously trivial (a quick lookup, a one-liner) or
+   the human explicitly asks you to handle it personally.
 2. **`send_to_agent` is async.**  After dispatching, move on immediately.
    You will be notified when the specialist finishes.
    **NEVER** use `sleep`, polling loops, or `TaskOutput(block=true)`.
