@@ -349,18 +349,20 @@ class TestMessageQueue:
 
 
 class TestMCPConfig:
-    """Test MCP server config generation."""
+    """Test MCP server config generation (HTTP-based, multi-endpoint)."""
 
-    async def test_mcp_config_added_when_bot_token_and_chat_id(self, callback):
-        """--mcp-config is added to args when telegram_token and chat_id are set."""
+    async def test_base_mcp_always_added(self, callback, tmp_path):
+        """boxagent (base) MCP is always added when port file exists."""
         from boxagent.agent.claude_process import ClaudeProcess
-        from boxagent.agent_env import AgentEnv
+
+        port_file = tmp_path / "mcp-port.txt"
+        port_file.write_text("9999\n")
 
         events = [result_event()]
         fake_proc = FakeProcess(make_stream_lines(*events))
 
         cli = ClaudeProcess(workspace="/tmp/test")
-        env = AgentEnv(telegram_token="test-token")
+        env = AgentEnv(bot_name="test-bot", local_dir=str(tmp_path))
 
         captured_args = []
 
@@ -371,22 +373,32 @@ class TestMCPConfig:
         with patch("asyncio.create_subprocess_exec", side_effect=capture_exec):
             await cli._execute_turn("test", callback, chat_id="12345", env=env)
 
-        args_str = " ".join(str(a) for a in captured_args)
-        assert "--mcp-config" in args_str
-        assert "test-token" in args_str
-        assert "12345" in args_str
-        assert "boxagent-telegram" in args_str
+        args_list = list(captured_args)
+        idx = args_list.index("--mcp-config")
+        config_json = json.loads(args_list[idx + 1])
 
-    async def test_no_telegram_mcp_without_bot_token(self, callback):
-        """boxagent-telegram MCP is NOT added when telegram_token is empty,
-        but boxagent MCP is still present."""
+        server = config_json["mcpServers"]["boxagent"]
+        assert server["type"] == "http"
+        assert server["url"] == "http://127.0.0.1:9999/mcp/base"
+        assert server["headers"]["X-BoxAgent-Bot-Name"] == "test-bot"
+        assert server["headers"]["X-BoxAgent-Chat-Id"] == "12345"
+        # No admin/telegram/peer by default
+        assert "boxagent-admin" not in config_json["mcpServers"]
+        assert "boxagent-telegram" not in config_json["mcpServers"]
+        assert "boxagent-peer" not in config_json["mcpServers"]
+
+    async def test_admin_mcp_added_for_workgroup_admin(self, callback, tmp_path):
+        """boxagent-admin MCP is added when bot is a workgroup admin."""
         from boxagent.agent.claude_process import ClaudeProcess
+
+        port_file = tmp_path / "mcp-port.txt"
+        port_file.write_text("9999\n")
 
         events = [result_event()]
         fake_proc = FakeProcess(make_stream_lines(*events))
 
         cli = ClaudeProcess(workspace="/tmp/test")
-        env = AgentEnv()  # no telegram_token
+        env = AgentEnv(bot_name="admin-bot", local_dir=str(tmp_path), workgroup_role="admin")
 
         captured_args = []
 
@@ -397,20 +409,54 @@ class TestMCPConfig:
         with patch("asyncio.create_subprocess_exec", side_effect=capture_exec):
             await cli._execute_turn("test", callback, chat_id="12345", env=env)
 
-        args_str = " ".join(str(a) for a in captured_args)
-        assert "--mcp-config" in args_str
-        assert "boxagent-telegram" not in args_str
-        assert '"boxagent"' in args_str
+        args_list = list(captured_args)
+        idx = args_list.index("--mcp-config")
+        config_json = json.loads(args_list[idx + 1])
 
-    async def test_no_mcp_config_without_chat_id(self, callback):
+        assert "boxagent-admin" in config_json["mcpServers"]
+        assert config_json["mcpServers"]["boxagent-admin"]["url"] == "http://127.0.0.1:9999/mcp/admin"
+
+    async def test_telegram_mcp_added_when_has_token(self, callback, tmp_path):
+        """boxagent-telegram MCP is added when bot has a telegram token."""
+        from boxagent.agent.claude_process import ClaudeProcess
+
+        port_file = tmp_path / "mcp-port.txt"
+        port_file.write_text("9999\n")
+
+        events = [result_event()]
+        fake_proc = FakeProcess(make_stream_lines(*events))
+
+        cli = ClaudeProcess(workspace="/tmp/test")
+        env = AgentEnv(bot_name="tg-bot", local_dir=str(tmp_path), telegram_token="tok123")
+
+        captured_args = []
+
+        async def capture_exec(*args, **kwargs):
+            captured_args.extend(args)
+            return fake_proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=capture_exec):
+            await cli._execute_turn("test", callback, chat_id="999", env=env)
+
+        args_list = list(captured_args)
+        idx = args_list.index("--mcp-config")
+        config_json = json.loads(args_list[idx + 1])
+
+        assert "boxagent-telegram" in config_json["mcpServers"]
+        assert config_json["mcpServers"]["boxagent-telegram"]["url"] == "http://127.0.0.1:9999/mcp/telegram"
+
+    async def test_no_mcp_config_without_chat_id(self, callback, tmp_path):
         """--mcp-config is NOT added when chat_id is empty."""
         from boxagent.agent.claude_process import ClaudeProcess
 
+        port_file = tmp_path / "mcp-port.txt"
+        port_file.write_text("9999\n")
+
         events = [result_event()]
         fake_proc = FakeProcess(make_stream_lines(*events))
 
         cli = ClaudeProcess(workspace="/tmp/test")
-        env = AgentEnv(telegram_token="test-token")
+        env = AgentEnv(local_dir=str(tmp_path))
 
         captured_args = []
 
@@ -424,16 +470,15 @@ class TestMCPConfig:
         args_str = " ".join(str(a) for a in captured_args)
         assert "--mcp-config" not in args_str
 
-    async def test_mcp_config_contains_both_servers(self, callback):
-        """MCP config has both boxagent and boxagent-telegram servers."""
+    async def test_no_mcp_config_without_port_file(self, callback, tmp_path):
+        """--mcp-config is NOT added when mcp-port.txt doesn't exist."""
         from boxagent.agent.claude_process import ClaudeProcess
-        from boxagent.agent_env import AgentEnv
 
         events = [result_event()]
         fake_proc = FakeProcess(make_stream_lines(*events))
 
         cli = ClaudeProcess(workspace="/tmp/test")
-        env = AgentEnv(telegram_token="tok")
+        env = AgentEnv(local_dir=str(tmp_path))  # no mcp-port.txt
 
         captured_args = []
 
@@ -444,20 +489,8 @@ class TestMCPConfig:
         with patch("asyncio.create_subprocess_exec", side_effect=capture_exec):
             await cli._execute_turn("test", callback, chat_id="999", env=env)
 
-        # Find the --mcp-config value
-        args_list = list(captured_args)
-        idx = args_list.index("--mcp-config")
-        config_json = json.loads(args_list[idx + 1])
-
-        # boxagent server (schedule/session/workgroup)
-        agent_server = config_json["mcpServers"]["boxagent"]
-        assert "mcp_server.py" in agent_server["args"][0]
-
-        # boxagent-telegram server (media tools)
-        tg_server = config_json["mcpServers"]["boxagent-telegram"]
-        assert "mcp_telegram.py" in tg_server["args"][0]
-        assert tg_server["env"]["BOXAGENT_BOT_TOKEN"] == "tok"
-        assert tg_server["env"]["BOXAGENT_CHAT_ID"] == "999"
+        args_str = " ".join(str(a) for a in captured_args)
+        assert "--mcp-config" not in args_str
 
 
 class TestStop:

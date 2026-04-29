@@ -274,7 +274,7 @@ class TestGateway:
         assert linked == ["demo-skill"]
         assert (workspace / ".agents" / "skills" / "demo-skill").is_symlink()
 
-    async def test_start_http_creates_unix_socket(self, tmp_path):
+    async def test_start_http_uses_tcp(self, tmp_path):
         from boxagent.gateway import Gateway
         from aiohttp import web
 
@@ -282,78 +282,7 @@ class TestGateway:
         mock_config.bots = {}
         mock_config.node_id = "test-node"
         mock_config.api_port = 0
-
-        local_dir = tmp_path / "local"
-        local_dir.mkdir()
-        gw = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
-        gw._scheduler = MagicMock()
-
-        with patch.object(web, "UnixSite") as MockUnix:
-            mock_unix = AsyncMock()
-            MockUnix.return_value = mock_unix
-            await gw._start_http()
-            MockUnix.assert_called_once()
-            assert str(local_dir / "api.sock") in str(MockUnix.call_args)
-            mock_unix.start.assert_called_once()
-
-        await gw._stop_http()
-
-    async def test_start_http_no_tcp_when_port_zero(self, tmp_path):
-        from boxagent.gateway import Gateway
-        from aiohttp import web
-
-        mock_config = MagicMock()
-        mock_config.bots = {}
-        mock_config.node_id = "test-node"
-        mock_config.api_port = 0
-
-        local_dir = tmp_path / "local"
-        local_dir.mkdir()
-        gw = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
-        gw._scheduler = MagicMock()
-
-        with patch.object(web, "UnixSite") as MockUnix, \
-             patch.object(web, "TCPSite") as MockTCP:
-            MockUnix.return_value = AsyncMock()
-            await gw._start_http()
-            MockTCP.assert_not_called()
-
-        await gw._stop_http()
-
-    async def test_start_http_with_tcp_when_port_set(self, tmp_path):
-        from boxagent.gateway import Gateway
-        from aiohttp import web
-
-        mock_config = MagicMock()
-        mock_config.bots = {}
-        mock_config.node_id = "test-node"
-        mock_config.api_port = 19876
-
-        local_dir = tmp_path / "local"
-        local_dir.mkdir()
-        gw = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
-        gw._scheduler = MagicMock()
-
-        with patch.object(web, "UnixSite") as MockUnix, \
-             patch.object(web, "TCPSite") as MockTCP:
-            MockUnix.return_value = AsyncMock()
-            mock_tcp = AsyncMock()
-            MockTCP.return_value = mock_tcp
-            await gw._start_http()
-            MockTCP.assert_called_once()
-            assert MockTCP.call_args[0][2] == 19876
-            mock_tcp.start.assert_called_once()
-
-        await gw._stop_http()
-
-    async def test_start_http_writes_windows_port_file(self, tmp_path):
-        from boxagent.gateway import Gateway
-        from aiohttp import web
-
-        mock_config = MagicMock()
-        mock_config.bots = {}
-        mock_config.node_id = "test-node"
-        mock_config.api_port = 0
+        mock_config.mcp_port = 0
 
         local_dir = tmp_path / "local"
         local_dir.mkdir()
@@ -366,8 +295,8 @@ class TestGateway:
         mock_tcp = AsyncMock()
         mock_tcp._server = mock_server
 
-        with patch("boxagent.gateway.sys.platform", "win32"), \
-             patch.object(web, "TCPSite", return_value=mock_tcp) as MockTCP:
+        with patch.object(web, "TCPSite", return_value=mock_tcp) as MockTCP, \
+             patch.object(gw, "_start_mcp_http", new_callable=AsyncMock):
             await gw._start_http()
             MockTCP.assert_called_once()
 
@@ -375,7 +304,32 @@ class TestGateway:
 
         await gw._stop_http()
 
-    async def test_stop_http_removes_socket(self, tmp_path):
+    async def test_start_http_uses_configured_port(self, tmp_path):
+        from boxagent.gateway import Gateway
+        from aiohttp import web
+
+        mock_config = MagicMock()
+        mock_config.bots = {}
+        mock_config.node_id = "test-node"
+        mock_config.api_port = 19876
+        mock_config.mcp_port = 0
+
+        local_dir = tmp_path / "local"
+        local_dir.mkdir()
+        gw = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
+        gw._scheduler = MagicMock()
+
+        with patch.object(web, "TCPSite") as MockTCP, \
+             patch.object(gw, "_start_mcp_http", new_callable=AsyncMock):
+            mock_tcp = AsyncMock()
+            MockTCP.return_value = mock_tcp
+            await gw._start_http()
+            MockTCP.assert_called_once()
+            assert MockTCP.call_args[0][2] == 19876
+
+        await gw._stop_http()
+
+    async def test_stop_http_removes_port_file(self, tmp_path):
         from boxagent.gateway import Gateway
 
         mock_config = MagicMock()
@@ -387,40 +341,34 @@ class TestGateway:
         local_dir.mkdir()
         gw = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
 
-        # Simulate endpoint artifacts left behind
+        port_file = local_dir / "api-port.txt"
+        port_file.write_text("50762\n", encoding="utf-8")
+        assert port_file.exists()
+
+        await gw._stop_http()
+        assert not port_file.exists()
+
+    async def test_clear_http_artifacts_removes_stale_sock(self, tmp_path):
+        """_clear_http_artifacts removes stale api.sock from previous runs."""
+        from boxagent.gateway import Gateway
+
+        mock_config = MagicMock()
+        mock_config.bots = {}
+        mock_config.node_id = "test-node"
+        mock_config.api_port = 0
+
+        local_dir = tmp_path / "local"
+        local_dir.mkdir()
+        gw = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
+
         sock = local_dir / "api.sock"
         sock.touch()
         port_file = local_dir / "api-port.txt"
         port_file.write_text("50762\n", encoding="utf-8")
-        assert sock.exists()
-        assert port_file.exists()
 
-        # Simulate that this gateway created the socket (record inode)
-        gw._sock_inode = sock.stat().st_ino
-
-        await gw._stop_http()
+        gw._clear_http_artifacts()
         assert not sock.exists()
         assert not port_file.exists()
-
-    async def test_stop_http_preserves_other_instance_socket(self, tmp_path):
-        """_stop_http does NOT remove a socket created by another instance."""
-        from boxagent.gateway import Gateway
-
-        mock_config = MagicMock()
-        mock_config.bots = {}
-        mock_config.node_id = "test-node"
-        mock_config.api_port = 0
-
-        local_dir = tmp_path / "local"
-        local_dir.mkdir()
-        gw = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
-
-        sock = local_dir / "api.sock"
-        sock.touch()
-
-        # gw._sock_inode not set → different instance
-        await gw._stop_http()
-        assert sock.exists()  # should NOT be deleted
 
     async def test_start_skips_bot_on_node_mismatch(self, tmp_path):
         from boxagent.gateway import Gateway

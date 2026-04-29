@@ -183,7 +183,7 @@ def seed_specialist_workspace(
         written.append(".claude/CLAUDE.md")
 
     # .claude/skills/supercrew/SKILL.md
-    skill = SPECIALIST_SKILL_MD.format(supercrew_ref=SUPERCREW_REF)
+    skill = SPECIALIST_SKILL_MD.format(supercrew_ref=SUPERCREW_REF, wg_name=wg_name)
     if _write_always(ws / ".claude" / "skills" / "supercrew" / "SKILL.md", skill):
         written.append(".claude/skills/supercrew/SKILL.md")
 

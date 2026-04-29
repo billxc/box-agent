@@ -4,46 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
 from dataclasses import dataclass
-from pathlib import Path
 
 from boxagent.agent.base_cli import BaseCLIProcess
 from boxagent.agent.callback import AgentCallback
 
 logger = logging.getLogger(__name__)
-
-_MCP_SERVER_PATH = str(Path(__file__).parent.parent / "mcp_server.py")
-
-
-def _toml_literal(value: str) -> str:
-    """Return a TOML literal string.
-
-    Uses single quotes so Windows backslashes are not treated as escape
-    sequences by Codex's TOML parser.
-    """
-    return "'" + value.replace("'", "''") + "'"
-
-
-def build_mcp_args(token: str, chat_id: str) -> list[str]:
-    """Build -c flags to inject Telegram MCP server for a Codex backend.
-
-    Shared by CodexProcess and ACPProcess.
-    """
-    if not token or not chat_id:
-        return []
-    python = sys.executable.replace('\\', '/')
-    mcp_path = _MCP_SERVER_PATH.replace('\\', '/')
-    args_toml = "[" + ",".join([
-        _toml_literal(mcp_path),
-        _toml_literal(token),
-        _toml_literal(chat_id),
-    ]) + "]"
-    return [
-        "-c", f"mcp_servers.boxagent-telegram.command={_toml_literal(python)}",
-        "-c", f"mcp_servers.boxagent-telegram.args={args_toml}",
-        "-c", 'mcp_servers.boxagent-telegram.enabled=true',
-    ]
 
 
 @dataclass
@@ -71,20 +37,12 @@ class CodexProcess(BaseCLIProcess):
         return "Codex CLI"
 
     def _mcp_args(self, chat_id: str, env=None) -> list[str]:
-        """Build -c flags to inject Telegram MCP server for this turn."""
-        return build_mcp_args(env.telegram_token, chat_id) if env else []
+        """MCP args — currently no-op (MCP is served via HTTP by Gateway)."""
+        return []
 
     def _extra_env(self, chat_id: str, env=None) -> dict[str, str] | None:
-        """Environment variables for the MCP server subprocess."""
-        if not env or not chat_id:
-            return None
-        result = {}
-        if env.telegram_token:
-            result["BOXAGENT_BOT_TOKEN"] = env.telegram_token
-            result["BOXAGENT_CHAT_ID"] = chat_id
-        if env.bot_name:
-            result["BOXAGENT_BOT_NAME"] = env.bot_name
-        return result or None
+        """Environment variables for the subprocess."""
+        return None
 
     def _build_args(self, message: str, model: str, chat_id: str, append_system_prompt: str = "", env=None) -> list[str]:
         # Inject system-level context via Codex's developer_instructions config

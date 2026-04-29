@@ -508,7 +508,7 @@ def test_run_calls_api(tmp_path, monkeypatch, capsys):
 
     local_dir = tmp_path / "local"
     local_dir.mkdir(exist_ok=True)
-    (local_dir / "api.sock").touch()
+    (local_dir / "api-port.txt").write_text("50762\n")
 
     with patch("httpx.Client", return_value=mock_client):
         schedule_run(args)
@@ -537,7 +537,7 @@ def test_run_sync_calls_api(tmp_path, monkeypatch, capsys):
 
     local_dir = tmp_path / "local"
     local_dir.mkdir(exist_ok=True)
-    (local_dir / "api.sock").touch()
+    (local_dir / "api-port.txt").write_text("50762\n")
 
     with patch("httpx.Client", return_value=mock_client):
         schedule_run(args)
@@ -586,7 +586,7 @@ def test_run_api_connection_refused_errors(tmp_path, monkeypatch):
 
     local_dir = tmp_path / "local"
     local_dir.mkdir(exist_ok=True)
-    (local_dir / "api.sock").touch()
+    (local_dir / "api-port.txt").write_text("50762\n")
 
     with patch("httpx.Client", return_value=mock_client):
         with pytest.raises(SystemExit) as exc_info:
@@ -608,7 +608,7 @@ def test_run_api_fallback_append_errors(tmp_path, monkeypatch):
 
     local_dir = tmp_path / "local"
     local_dir.mkdir(exist_ok=True)
-    (local_dir / "api.sock").touch()
+    (local_dir / "api-port.txt").write_text("50762\n")
 
     with patch("httpx.Client", return_value=mock_client):
         with pytest.raises(SystemExit):

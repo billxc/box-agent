@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import os
 import re
 import sys
 import time
@@ -187,12 +186,6 @@ class Gateway:
         self._start_time = time.time()
         self._storage = Storage(local_dir=self.local_dir)
         logger.info("Gateway starting (node=%s)", self.config.node_id or "(any)")
-
-        # Expose paths for MCP server subprocesses (schedule/session tools)
-        os.environ.setdefault("BOXAGENT_CONFIG_DIR", str(self.config_dir))
-        os.environ.setdefault("BOXAGENT_LOCAL_DIR", str(self.local_dir))
-        if self.config.node_id:
-            os.environ.setdefault("BOXAGENT_NODE_ID", self.config.node_id)
 
         # Phase 1: Create shared Discord channel instances (one per unique bot identity)
         self._create_shared_discord_channels()
@@ -543,22 +536,22 @@ class Gateway:
         logger.info("Bot '%s' backend switched to %s (refs synced)", bot_name, new_backend)
 
     @property
-    def _sock_path(self) -> Path:
-        return self.local_dir / "api.sock"
-
-    @property
     def _api_port_file(self) -> Path:
         return self.local_dir / "api-port.txt"
 
+    @property
+    def _mcp_port_file(self) -> Path:
+        return self.local_dir / "mcp-port.txt"
+
     def _clear_http_artifacts(self) -> None:
         """Remove runtime HTTP endpoint artifacts left by a previous run."""
-        if self._sock_path.exists():
-            self._sock_path.unlink()
-        if self._api_port_file.exists():
-            self._api_port_file.unlink()
+        for f in (self._api_port_file, self._mcp_port_file,
+                  self.local_dir / "api.sock"):
+            if f.exists():
+                f.unlink(missing_ok=True)
 
     async def _start_http(self) -> None:
-        """Start the internal HTTP API server (Unix socket + optional TCP)."""
+        """Start the internal HTTP API server (TCP only)."""
         app = web.Application()
         app.router.add_post("/api/schedule/run", self._handle_schedule_run)
         app.router.add_get("/api/workgroup/specialists", self._handle_list_specialists)
@@ -577,55 +570,72 @@ class Gateway:
         self.local_dir.mkdir(parents=True, exist_ok=True)
         self._clear_http_artifacts()
 
-        # Listen on Unix socket (Linux/macOS) or fallback to TCP (Windows)
-        if sys.platform != "win32":
-            sock_path = self._sock_path
-            unix_site = web.UnixSite(runner, str(sock_path))
-            await unix_site.start()
-            # Record inode so _stop_http only deletes OUR socket
-            try:
-                self._sock_inode = sock_path.stat().st_ino
-            except OSError:
-                self._sock_inode = 0
-            logger.info("HTTP API listening on unix:%s", sock_path)
-        else:
-            # Windows: no Unix sockets. If api_port is unset, ask the OS for a free port.
-            port = self.config.api_port or 0
-            tcp_site = web.TCPSite(runner, "127.0.0.1", port)
-            await tcp_site.start()
-            sockets = getattr(getattr(tcp_site, "_server", None), "sockets", None) or []
-            actual_port = sockets[0].getsockname()[1] if sockets else port
-            self._api_port_file.write_text(f"{actual_port}\n", encoding="utf-8")
-            logger.info("HTTP API listening on 127.0.0.1:%d (Windows fallback)", actual_port)
-            logger.info("HTTP API port file written to %s", self._api_port_file)
+        # Always use TCP (api_port=0 lets the OS pick a free port)
+        port = self.config.api_port or 0
+        tcp_site = web.TCPSite(runner, "127.0.0.1", port)
+        await tcp_site.start()
+        sockets = getattr(getattr(tcp_site, "_server", None), "sockets", None) or []
+        actual_port = sockets[0].getsockname()[1] if sockets else port
+        self._api_port_file.write_text(f"{actual_port}\n", encoding="utf-8")
+        logger.info("HTTP API listening on 127.0.0.1:%d", actual_port)
 
-        # Optionally also listen on TCP (additional port, Linux/macOS)
-        if self.config.api_port and sys.platform != "win32":
-            tcp_site = web.TCPSite(runner, "127.0.0.1", self.config.api_port)
-            await tcp_site.start()
-            logger.info("HTTP API also listening on 127.0.0.1:%d", self.config.api_port)
+        # Start MCP HTTP server (streamable-http)
+        await self._start_mcp_http()
 
     async def _stop_http(self) -> None:
         """Stop the HTTP API server."""
         if self._http_runner:
             await self._http_runner.cleanup()
             self._http_runner = None
-        # Only delete socket if it's the one WE created (inode match).
-        # Prevents a shutting-down instance from deleting a new instance's socket.
-        sock = self._sock_path
-        if sock.exists():
+        self._api_port_file.unlink(missing_ok=True)
+
+    async def _start_mcp_http(self) -> None:
+        """Start the MCP streamable-http server (uvicorn)."""
+        try:
+            import uvicorn
+            from boxagent.mcp_http import create_mcp_app
+
+            starlette_app = create_mcp_app(
+                config_dir=str(self.config_dir),
+                local_dir=str(self.local_dir),
+                node_id=self.config.node_id,
+                gateway=self,
+            )
+            mcp_port = getattr(self.config, "mcp_port", 0) or 0
+            config = uvicorn.Config(
+                starlette_app,
+                host="127.0.0.1",
+                port=mcp_port,
+                log_level="warning",
+            )
+            server = uvicorn.Server(config)
+            self._mcp_server = server
+            self._mcp_task = asyncio.create_task(server.serve())
+
+            # Wait for server to start and discover actual port
+            while not server.started:
+                await asyncio.sleep(0.05)
+
+            actual_port = server.servers[0].sockets[0].getsockname()[1]
+            self._mcp_port_file.write_text(f"{actual_port}\n", encoding="utf-8")
+            logger.info("MCP HTTP server listening on 127.0.0.1:%d", actual_port)
+        except Exception as e:
+            logger.error("Failed to start MCP HTTP server: %s", e)
+            self._mcp_server = None
+            self._mcp_task = None
+
+    async def _stop_mcp_http(self) -> None:
+        """Stop the MCP HTTP server."""
+        if getattr(self, "_mcp_server", None):
+            self._mcp_server.should_exit = True
+        if getattr(self, "_mcp_task", None):
             try:
-                current_inode = sock.stat().st_ino
-            except OSError:
-                current_inode = 0
-            if current_inode == getattr(self, "_sock_inode", 0) and current_inode != 0:
-                sock.unlink(missing_ok=True)
-                logger.info("Removed own socket: %s", sock)
-            else:
-                logger.info("Socket %s belongs to another instance (inode %d != %d), not removing",
-                            sock, current_inode, getattr(self, "_sock_inode", 0))
-        if self._api_port_file.exists():
-            self._api_port_file.unlink(missing_ok=True)
+                await self._mcp_task
+            except Exception:
+                pass
+            self._mcp_task = None
+        self._mcp_server = None
+        self._mcp_port_file.unlink(missing_ok=True)
 
     async def _handle_schedule_run(self, request: web.Request) -> web.Response:
         """Handle POST /api/schedule/run — execute a schedule once."""
@@ -862,8 +872,9 @@ class Gateway:
     async def stop(self) -> None:
         logger.info("Gateway shutting down...")
 
-        # Stop HTTP API
+        # Stop HTTP API and MCP server
         await self._stop_http()
+        await self._stop_mcp_http()
 
         # Stop scheduler
         if self._scheduler:

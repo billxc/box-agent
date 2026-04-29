@@ -105,6 +105,7 @@ class AppConfig:
     node_id: str = ""
     log_level: str = "info"
     api_port: int = 0
+    mcp_port: int = 0  # MCP HTTP server port (0 = auto-assign)
     bots: dict[str, BotConfig] = field(default_factory=dict)
     workgroups: dict[str, WorkgroupConfig] = field(default_factory=dict)
     telegram_bots: dict[str, str] = field(default_factory=dict)

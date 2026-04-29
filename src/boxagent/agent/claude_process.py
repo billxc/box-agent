@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -83,62 +81,46 @@ class ClaudeProcess(BaseCLIProcess):
                 args.append("--fork-session")
                 self.fork_session = False  # only fork on the first turn
 
-        # MCP servers
-        mcp_pkg = Path(__file__).parent.parent
-        mcp_servers = {}
-
-        # Resolve MCP parameters from env
+        # MCP servers — HTTP endpoints, selected by bot capabilities
         if env is None:
             from boxagent.agent_env import AgentEnv as _AE
             env = _AE(bot_name=self.bot_name)
-        mcp_bot_name = env.bot_name
-        mcp_telegram_token = env.telegram_token
-        mcp_server_names = env.mcp_server_names() if chat_id else []
 
-        # Build base env vars shared by all MCP servers
-        mcp_base_env = {"BOXAGENT_BOT_NAME": mcp_bot_name}
-        if env.config_dir:
-            mcp_base_env["BOXAGENT_CONFIG_DIR"] = env.config_dir
-        if env.local_dir:
-            mcp_base_env["BOXAGENT_LOCAL_DIR"] = env.local_dir
-        if env.node_id:
-            mcp_base_env["BOXAGENT_NODE_ID"] = env.node_id
-
-        if "boxagent" in mcp_server_names:
-            mcp_servers["boxagent"] = {
-                "command": sys.executable,
-                "args": [str(mcp_pkg / "mcp_server.py")],
-                "env": dict(mcp_base_env),
+        mcp_port_file = Path(env.local_dir) / "mcp-port.txt" if env.local_dir else None
+        if mcp_port_file and mcp_port_file.exists() and chat_id:
+            mcp_port = mcp_port_file.read_text().strip()
+            base_url = f"http://127.0.0.1:{mcp_port}"
+            headers = {
+                "X-BoxAgent-Bot-Name": env.bot_name,
+                "X-BoxAgent-Chat-Id": chat_id,
             }
 
-        if "boxagent-admin" in mcp_server_names:
-            admin_env = dict(mcp_base_env)
-            admin_env["BOXAGENT_CHAT_ID"] = chat_id
-            mcp_servers["boxagent-admin"] = {
-                "command": sys.executable,
-                "args": [str(mcp_pkg / "workgroup" / "mcp_admin.py")],
-                "env": admin_env,
-            }
-
-        if "boxagent-telegram" in mcp_server_names:
-            mcp_servers["boxagent-telegram"] = {
-                "command": sys.executable,
-                "args": [str(mcp_pkg / "mcp_telegram.py")],
-                "env": {
-                    "BOXAGENT_BOT_TOKEN": mcp_telegram_token,
-                    "BOXAGENT_CHAT_ID": chat_id,
+            mcp_servers = {
+                "boxagent": {
+                    "type": "http",
+                    "url": f"{base_url}/mcp/base",
+                    "headers": headers,
                 },
             }
+            if env.is_workgroup_admin:
+                mcp_servers["boxagent-admin"] = {
+                    "type": "http",
+                    "url": f"{base_url}/mcp/admin",
+                    "headers": headers,
+                }
+            if env.has_telegram:
+                mcp_servers["boxagent-telegram"] = {
+                    "type": "http",
+                    "url": f"{base_url}/mcp/telegram",
+                    "headers": headers,
+                }
+            if env.has_peer_channel:
+                mcp_servers["boxagent-peer"] = {
+                    "type": "http",
+                    "url": f"{base_url}/mcp/peer",
+                    "headers": headers,
+                }
 
-        if "boxagent-peer" in mcp_server_names:
-            peer_env = dict(mcp_base_env)
-            mcp_servers["boxagent-peer"] = {
-                "command": sys.executable,
-                "args": [str(mcp_pkg / "mcp_peer.py")],
-                "env": peer_env,
-            }
-
-        if mcp_servers:
             args += ["--mcp-config", json.dumps({"mcpServers": mcp_servers})]
 
         # -p (print mode) is a boolean flag; message is a positional arg.

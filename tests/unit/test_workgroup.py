@@ -297,7 +297,7 @@ class TestTemplateFormat:
         assert "dev-1" in result
 
     def test_specialist_skill_md(self):
-        result = SPECIALIST_SKILL_MD.format(supercrew_ref=SUPERCREW_REF)
+        result = SPECIALIST_SKILL_MD.format(supercrew_ref=SUPERCREW_REF, wg_name="test-wg")
         assert "Super Crew" in result
 
 

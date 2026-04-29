@@ -178,17 +178,6 @@ class AgentEnv:
     def has_telegram(self) -> bool:
         return bool(self.telegram_token)
 
-    def mcp_server_names(self) -> list[str]:
-        """Which MCP servers to inject for this turn."""
-        servers = ["boxagent"]
-        if self.is_workgroup_admin:
-            servers.append("boxagent-admin")
-        if self.has_telegram:
-            servers.append("boxagent-telegram")
-        if self.has_peer_channel:
-            servers.append("boxagent-peer")
-        return servers
-
     def callback_webhook_name(self) -> str:
         """Webhook identity for replies. Empty = send as bot itself."""
         if self.via_workgroup and self.channel.supports_webhooks:

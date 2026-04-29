@@ -34,7 +34,6 @@ from acp.schema import (
 )
 
 from boxagent.agent.callback import AgentCallback
-from boxagent.agent.codex_process import build_mcp_args
 
 logger = logging.getLogger(__name__)
 
@@ -299,17 +298,9 @@ class ACPProcess:
         if self._conn is not None:
             return
 
-        # Build extra args for MCP injection
-        token = env.telegram_token if env else ""
-        extra_args = build_mcp_args(token, chat_id)
+        # MCP is served via HTTP by Gateway — no extra args needed
+        extra_args: list[str] = []
         extra_env: dict[str, str] | None = None
-        if token and chat_id:
-            import os
-            extra_env = {
-                **os.environ,
-                "BOXAGENT_BOT_TOKEN": token,
-                "BOXAGENT_CHAT_ID": chat_id,
-            }
 
         self._ctx_manager = spawn_agent_process(
             self._client,

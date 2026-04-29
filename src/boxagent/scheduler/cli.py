@@ -331,47 +331,34 @@ def trigger_schedule_run(local_dir: str | Path, task_id: str, sync: bool = False
     import httpx
 
     local_dir = Path(local_dir)
-    sock_path = local_dir / "api.sock"
     timeout = 10.0 if not sync else 300.0
 
-    targets = []
-    if sock_path.exists():
-        targets.append(
-            (httpx.HTTPTransport(uds=str(sock_path)), "http://localhost/api/schedule/run")
-        )
     port_file = local_dir / API_PORT_FILE
-    if port_file.is_file():
-        try:
-            port = int(port_file.read_text(encoding="utf-8").strip())
-            if port:
-                targets.append(
-                    (httpx.HTTPTransport(), f"http://127.0.0.1:{port}/api/schedule/run")
-                )
-        except (OSError, ValueError):
-            pass
-
-    if not targets:
+    if not port_file.is_file():
         return "Error: gateway not running."
+    try:
+        port = int(port_file.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return "Error: gateway not running."
+
+    url = f"http://127.0.0.1:{port}/api/schedule/run"
 
     payload = {"id": task_id}
     if not sync:
         payload["async"] = True
 
-    for transport, url in targets:
-        try:
-            with httpx.Client(transport=transport, timeout=timeout) as client:
-                resp = client.post(url, json=payload)
-            data = resp.json()
-            if data.get("ok"):
-                if not sync:
-                    return f"Schedule '{task_id}' triggered (async)."
-                output = data.get("output", "")
-                return output if output else f"Schedule '{task_id}' completed (no output)."
-            return f"Error: {data.get('error', 'unknown')}"
-        except httpx.ConnectError:
-            continue
-
-    return "Error: gateway not running."
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(url, json=payload)
+        data = resp.json()
+        if data.get("ok"):
+            if not sync:
+                return f"Schedule '{task_id}' triggered (async)."
+            output = data.get("output", "")
+            return output if output else f"Schedule '{task_id}' completed (no output)."
+        return f"Error: {data.get('error', 'unknown')}"
+    except httpx.ConnectError:
+        return "Error: gateway not running."
 
 
 def schedule_run(args) -> None:
