@@ -217,7 +217,7 @@ class WorkgroupManager:
             self._ensure_git_repo(Path(admin_ws))
         if wg_cfg.extra_skill_dirs and self._sync_skills:
             self._sync_skills(admin_ws, wg_cfg.extra_skill_dirs, wg_cfg.ai_backend)
-        seed_admin_workspace(admin_ws, wg_name, list(wg_cfg.specialists.keys()))
+        seed_admin_workspace(admin_ws, wg_name)
 
         admin_cli = self._make_backend(admin_bot_cfg)
         admin_cli.start()

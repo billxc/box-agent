@@ -194,7 +194,7 @@ class TestBuildHeartbeatPrompt:
 class TestSeedAdminWorkspace:
     def test_creates_all_files(self, tmp_path):
         ws = str(tmp_path / "admin")
-        created = seed_admin_workspace(ws, "test-wg", ["spec-1", "spec-2"])
+        created = seed_admin_workspace(ws, "test-wg")
         assert ".claude/CLAUDE.md" in created
         assert ".claude/skills/superboss/SKILL.md" in created
         assert ".claude/skills/superboss/references/templates.md" in created
@@ -202,51 +202,44 @@ class TestSeedAdminWorkspace:
 
     def test_claude_md_contains_wg_name(self, tmp_path):
         ws = str(tmp_path / "admin")
-        seed_admin_workspace(ws, "my-workgroup", ["dev-1"])
+        seed_admin_workspace(ws, "my-workgroup")
         content = (tmp_path / "admin" / ".claude" / "CLAUDE.md").read_text()
         assert "my-workgroup" in content
-        assert "dev-1" in content
 
     def test_system_layer_overwrites(self, tmp_path):
         ws = str(tmp_path / "admin")
-        seed_admin_workspace(ws, "wg", ["s1"])
+        seed_admin_workspace(ws, "wg")
         # Modify system file
         claude_md = tmp_path / "admin" / ".claude" / "CLAUDE.md"
         claude_md.write_text("custom content")
         # Re-seed should overwrite system files
-        written = seed_admin_workspace(ws, "wg", ["s1"])
+        written = seed_admin_workspace(ws, "wg")
         assert ".claude/CLAUDE.md" in written
         assert claude_md.read_text() != "custom content"
 
     def test_user_layer_not_overwritten(self, tmp_path):
         ws = str(tmp_path / "admin")
-        seed_admin_workspace(ws, "wg", ["s1"])
+        seed_admin_workspace(ws, "wg")
         # Modify user file
         heartbeat = tmp_path / "admin" / "HEARTBEAT.md"
         heartbeat.write_text("my custom checklist")
         # Re-seed should NOT overwrite user files
-        seed_admin_workspace(ws, "wg", ["s1"])
+        seed_admin_workspace(ws, "wg")
         assert heartbeat.read_text() == "my custom checklist"
 
     def test_system_layer_skip_if_unchanged(self, tmp_path):
         ws = str(tmp_path / "admin")
-        seed_admin_workspace(ws, "wg", ["s1"])
+        seed_admin_workspace(ws, "wg")
         # Re-seed with same content should report nothing changed
-        written = seed_admin_workspace(ws, "wg", ["s1"])
+        written = seed_admin_workspace(ws, "wg")
         assert ".claude/CLAUDE.md" not in written
 
     def test_empty_workspace_returns_empty(self):
-        assert seed_admin_workspace("", "wg", []) == []
-
-    def test_no_specialists(self, tmp_path):
-        ws = str(tmp_path / "admin")
-        seed_admin_workspace(ws, "wg", [])
-        content = (tmp_path / "admin" / ".claude" / "CLAUDE.md").read_text()
-        assert "No specialists configured" in content
+        assert seed_admin_workspace("", "wg") == []
 
     def test_worktrees_dir_in_claude_md(self, tmp_path):
         ws = str(tmp_path / "wg" / "admin")
-        seed_admin_workspace(ws, "wg", ["s1"])
+        seed_admin_workspace(ws, "wg")
         content = (tmp_path / "wg" / "admin" / ".claude" / "CLAUDE.md").read_text()
         assert "worktrees" in content
 
@@ -280,8 +273,7 @@ class TestTemplateFormat:
 
     def test_admin_claude_md(self):
         result = ADMIN_CLAUDE_MD.format(
-            wg_name="test", specialists_block="- s1",
-            superboss_ref=SUPERBOSS_REF, worktrees_dir="/tmp/wt",
+            wg_name="test", worktrees_dir="/tmp/wt",
         )
         assert "test" in result
 

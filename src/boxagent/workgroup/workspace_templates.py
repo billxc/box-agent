@@ -91,7 +91,6 @@ def _write_exclusive(path: Path, content: str) -> bool:
 def seed_admin_workspace(
     workspace: str,
     wg_name: str,
-    specialists: list[str],
 ) -> list[str]:
     """Seed template files into admin workspace.
 
@@ -105,11 +104,6 @@ def seed_admin_workspace(
     ws = Path(workspace)
     written: list[str] = []
 
-    if specialists:
-        specialists_block = "\n".join(f"- `{name}`" for name in specialists)
-    else:
-        specialists_block = "_No specialists configured yet._"
-
     workgroup_dir = str(Path(workspace).parent)
     worktrees_dir = str(Path(workspace).parent / "worktrees")
 
@@ -118,10 +112,7 @@ def seed_admin_workspace(
     # .claude/CLAUDE.md
     content = ADMIN_CLAUDE_MD.format(
         wg_name=wg_name,
-        specialists_block=specialists_block,
-        superboss_ref=SUPERBOSS_REF,
         worktrees_dir=worktrees_dir,
-        workgroup_dir=workgroup_dir,
     )
     if _write_always(ws / ".claude" / "CLAUDE.md", content):
         written.append(".claude/CLAUDE.md")
