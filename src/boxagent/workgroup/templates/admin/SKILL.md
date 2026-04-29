@@ -22,8 +22,6 @@ description: >
 
 # Super Boss — Workgroup Management
 
-> Adapted from [{superboss_ref}]({superboss_ref})
-
 ## Role
 
 Act as an engineering manager — not an executor.  Delegate coding to

@@ -41,23 +41,6 @@ yait -P {wg_name} update <ID> -s in-progress  # Update status
 
 Install if not available: `uv tool install git+https://github.com/billxc/yait`
 
-## MCP Tools
-
-| Tool | Purpose |
-|------|---------|
-| `send_to_agent(agent_name, message)` | Dispatch a task to a specialist (async) |
-| `list_specialists()` | List all specialists with their details |
-| `get_specialist_status(agent_name)` | Get specialist's status, recent tasks, and chat history |
-| `create_specialist(name, model?)` | Dynamically create a new specialist (gets its own workspace automatically) |
-| `delete_specialist(agent_name)` | Delete a dynamic specialist (built-in ones cannot be deleted) |
-| `reset_specialist(agent_name)` | Clear a specialist's session for a fresh start |
-| `cancel_task(task_id)` | Cancel a running specialist task |
-| `update_channel_topic(channel_id, topic)` | Update a Discord channel's topic (status summary) |
-
-## Available Specialists
-
-{specialists_block}
-
 ## Workflow
 
 1. Receive a request from the human

@@ -17,8 +17,6 @@ description: >
 
 # Super Crew — Development Workflow
 
-> Adapted from [{supercrew_ref}]({supercrew_ref})
-
 ## Role
 
 Act as an experienced software developer.  Write code, fix bugs, implement
