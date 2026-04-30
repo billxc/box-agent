@@ -144,11 +144,16 @@ def seed_specialist_workspace(
     workspace: str,
     sp_name: str,
     wg_name: str,
+    template_claude_md_text: str | None = None,
 ) -> list[str]:
     """Seed template files into specialist workspace.
 
     System-layer files are overwritten to stay current.
     User-layer files are created only if they don't exist.
+    If `template_claude_md_text` is provided, it is appended to the system
+    CLAUDE.md as the template layer. Callers normally pass the result of
+    `read_template_snapshot(workspace)` so the template snapshot survives
+    restarts even if the original template source is later modified.
     Returns list of written file paths (relative to workspace).
     """
     if not workspace:
@@ -170,6 +175,8 @@ def seed_specialist_workspace(
         worktrees_dir=worktrees_dir,
         workgroup_dir=workgroup_dir,
     )
+    if template_claude_md_text:
+        content = content.rstrip() + "\n\n" + template_claude_md_text.lstrip()
     if _write_always(ws / ".claude" / "CLAUDE.md", content):
         written.append(".claude/CLAUDE.md")
 
@@ -188,3 +195,29 @@ def seed_specialist_workspace(
     if written:
         logger.info("Seeded specialist workspace %s (%s): %s", workspace, sp_name, written)
     return written
+
+
+# --- Template snapshot ---
+# A specialist's CLAUDE.md template layer is captured at create time and stored
+# inside the workspace, so subsequent edits to the template source do not
+# silently affect already-running specialists. The snapshot lives outside
+# .claude/ to avoid being picked up by Claude Code as a CLAUDE.md fragment.
+
+_TEMPLATE_SNAPSHOT_REL = ".boxagent-meta/template-snapshot.md"
+
+
+def template_snapshot_path(workspace: str | Path) -> Path:
+    return Path(workspace) / _TEMPLATE_SNAPSHOT_REL
+
+
+def write_template_snapshot(workspace: str | Path, claude_md_text: str) -> None:
+    path = template_snapshot_path(workspace)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(claude_md_text, encoding="utf-8")
+
+
+def read_template_snapshot(workspace: str | Path) -> str | None:
+    path = template_snapshot_path(workspace)
+    if not path.is_file():
+        return None
+    return path.read_text(encoding="utf-8")

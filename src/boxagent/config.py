@@ -54,6 +54,7 @@ class SpecialistConfig:
     display_name: str = ""
     discord_channel: int = 0  # optional: show activity in this Discord channel
     extra_skill_dirs: list[str] = field(default_factory=list)
+    template: str = ""  # template name used at create time (metadata only)
 
 
 @dataclass

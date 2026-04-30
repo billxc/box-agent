@@ -229,12 +229,38 @@ def _register_admin_tools(mcp: FastMCP) -> None:
             if sp.get("display_name") and sp["display_name"] != sp["name"]:
                 parts.append(f"({sp['display_name']})")
             parts.append(f"— model: {sp.get('model', 'default')}")
+            if sp.get("template"):
+                parts.append(f"| template: {sp['template']}")
             if sp.get("workspace"):
                 parts.append(f"| workspace: {sp['workspace']}")
             if sp.get("running_tasks"):
                 parts.append(f"| running: {', '.join(sp['running_tasks'])}")
             lines.append(" ".join(parts))
         return f"Specialists ({len(specialists)}):\n" + "\n".join(lines)
+
+    @mcp.tool()
+    def list_templates() -> str:
+        """List specialist templates available in your workgroup.
+
+        Templates are pre-configured roles you can pass to create_specialist
+        via the `template` argument. Each template ships a CLAUDE.md prompt
+        and may also bundle skills.
+        """
+        if not _gateway or not _gateway._workgroup_mgr:
+            return "Error: workgroup manager not available"
+        bot_name = _ctx_bot_name.get()
+        if not bot_name:
+            return "Error: bot_name not set — cannot determine workgroup"
+        result = _gateway._workgroup_mgr.list_templates(bot_name)
+        if not result.get("ok"):
+            return f"Error: {result.get('error', 'unknown error')}"
+        templates = result.get("templates", [])
+        if not templates:
+            return "No templates available."
+        lines = ["Available templates:"]
+        for t in templates:
+            lines.append(f"- {t['name']}: {t['description']}")
+        return "\n".join(lines)
 
     @mcp.tool()
     def get_specialist_status(agent_name: str) -> str:
@@ -301,7 +327,13 @@ def _register_admin_tools(mcp: FastMCP) -> None:
             return f"Error: {e}"
 
     @mcp.tool()
-    async def create_specialist(name: str, model: str = "") -> str:
+    async def create_specialist(
+        name: str,
+        model: str = "",
+        template: str = "",
+        extra_skill_dirs: list[str] | None = None,
+        display_name: str = "",
+    ) -> str:
         """Dynamically create a new specialist agent in your workgroup.
 
         Creates a Discord channel for the specialist and starts a new AI backend.
@@ -310,6 +342,12 @@ def _register_admin_tools(mcp: FastMCP) -> None:
         Args:
             name: Unique name for the specialist (used as channel name too)
             model: AI model to use (default: inherit from workgroup)
+            template: Optional template name (see list_templates). The template's
+                CLAUDE.md is appended to the system prompt and its skills are
+                symlinked into the specialist workspace.
+            extra_skill_dirs: Additional skill parent directories to symlink in.
+                Relative paths resolve against ~/.boxagent/.
+            display_name: Optional human-readable name shown in channels.
         """
         if not _gateway or not _gateway._workgroup_mgr:
             return "Error: workgroup manager not available"
@@ -319,10 +357,15 @@ def _register_admin_tools(mcp: FastMCP) -> None:
         try:
             result = await _gateway._workgroup_mgr.create_specialist(
                 bot_name, name, model=model,
+                template=template,
+                extra_skill_dirs=extra_skill_dirs,
+                display_name=display_name,
             )
             if result.get("ok"):
                 ch_id = result.get("channel_id", 0)
                 msg = f"Created specialist '{name}'"
+                if template:
+                    msg += f" from template '{template}'"
                 if ch_id:
                     msg += f" with Discord channel (ID: {ch_id})"
                 return msg

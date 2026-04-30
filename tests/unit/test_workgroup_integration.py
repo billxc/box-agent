@@ -413,3 +413,100 @@ class TestHeartbeatTick:
             workspace=str(tmp_path), interval_seconds=60,
         )
         assert hb._find_fork_session_id() is None
+
+
+# ---------------------------------------------------------------------------
+# Template system
+# ---------------------------------------------------------------------------
+
+
+def _seed_template(workgroup_dir: Path, name: str, claude_md_body: str = "TEMPLATE PROMPT") -> Path:
+    tdir = workgroup_dir / "templates" / name
+    tdir.mkdir(parents=True)
+    (tdir / "description.md").write_text(f"{name} desc")
+    (tdir / "CLAUDE.md").write_text(claude_md_body)
+    return tdir
+
+
+class TestTemplateIntegration:
+    def _wire_mocks(self, mgr):
+        mock_cli = MagicMock()
+        mock_cli.start = MagicMock()
+        mgr._create_backend = MagicMock(return_value=mock_cli)
+        mgr._ensure_git_repo = MagicMock()
+
+    async def test_create_with_template_writes_snapshot_and_appends_prompt(self, tmp_path, monkeypatch):
+        # Anchor boxagent_dir to tmp_path so relative path resolution stays inside the test sandbox.
+        monkeypatch.setenv("BOX_AGENT_DIR", str(tmp_path))
+        mgr, wg_cfg = _make_manager(tmp_path)
+        self._wire_mocks(mgr)
+        _seed_template(Path(wg_cfg.workgroup_dir), "planner", "## Planner role\nDecompose tasks.")
+
+        result = await mgr.create_specialist(
+            "test-wg", "p1", template="planner",
+        )
+        assert result["ok"] is True
+
+        sp_cfg = wg_cfg.specialists["p1"]
+        assert sp_cfg.template == "planner"
+
+        # Snapshot file written
+        snapshot = Path(sp_cfg.workspace) / ".boxagent-meta" / "template-snapshot.md"
+        assert snapshot.is_file()
+        assert "Decompose tasks" in snapshot.read_text()
+
+        # CLAUDE.md includes both system layer (specialist name marker) and template body
+        claude_md = (Path(sp_cfg.workspace) / ".claude" / "CLAUDE.md").read_text()
+        assert "Decompose tasks" in claude_md
+
+    async def test_create_with_unknown_template_fails(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BOX_AGENT_DIR", str(tmp_path))
+        mgr, wg_cfg = _make_manager(tmp_path)
+        self._wire_mocks(mgr)
+        result = await mgr.create_specialist(
+            "test-wg", "p1", template="does-not-exist",
+        )
+        assert result["ok"] is False
+        assert "not found" in result["error"]
+        assert "p1" not in mgr.routers
+
+    async def test_template_field_persisted_and_restored(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BOX_AGENT_DIR", str(tmp_path))
+        (tmp_path / "local").mkdir(exist_ok=True)
+        mgr, wg_cfg = _make_manager(tmp_path)
+        self._wire_mocks(mgr)
+        _seed_template(Path(wg_cfg.workgroup_dir), "planner")
+
+        await mgr.create_specialist(
+            "test-wg", "p1", template="planner",
+            extra_skill_dirs=["/tmp/some-skills"],
+        )
+        loaded = mgr._load_saved_specialists("test-wg")
+        assert loaded["p1"].template == "planner"
+        # Resolution preserved as-is for absolute paths
+        assert "/tmp/some-skills" in loaded["p1"].extra_skill_dirs
+
+    async def test_list_templates_returns_sorted(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BOX_AGENT_DIR", str(tmp_path))
+        mgr, wg_cfg = _make_manager(tmp_path)
+        _seed_template(Path(wg_cfg.workgroup_dir), "planner")
+        _seed_template(Path(wg_cfg.workgroup_dir), "auditor")
+
+        result = mgr.list_templates("test-wg")
+        assert result["ok"] is True
+        names = [t["name"] for t in result["templates"]]
+        assert names == ["auditor", "planner"]
+
+    async def test_delete_specialist_removes_workspace(self, tmp_path):
+        mgr, wg_cfg = _make_manager(tmp_path, ["dev-1"])
+        # Create a fake workspace so delete has something to wipe.
+        ws_path = Path(wg_cfg.specialists["dev-1"].workspace)
+        ws_path.mkdir(parents=True, exist_ok=True)
+        (ws_path / "marker").write_text("x")
+        mgr.routers["dev-1"] = _mock_router()
+        mgr.pools["dev-1"] = _mock_pool()
+        mgr.procs["dev-1"] = AsyncMock()
+
+        result = await mgr.delete_specialist("dev-1")
+        assert result["ok"] is True
+        assert not ws_path.exists()

@@ -10,12 +10,33 @@ from pathlib import Path
 import yaml
 
 from boxagent.config import BotConfig, SpecialistConfig, WorkgroupConfig
+from boxagent.paths import resolve_boxagent_dir
 from boxagent.workgroup.heartbeat import HeartbeatManager
 from boxagent.router import Router
 from boxagent.sessions import SessionPool
-from boxagent.workgroup.workspace_templates import seed_admin_workspace, seed_specialist_workspace
+from boxagent.workgroup.template_loader import (
+    TemplateInfo,
+    discover_templates,
+    filter_skill_subdirs,
+    get_template,
+)
+from boxagent.workgroup.workspace_templates import (
+    read_template_snapshot,
+    seed_admin_workspace,
+    seed_specialist_workspace,
+    write_template_snapshot,
+)
 
 logger = logging.getLogger(__name__)
+
+
+# Builtin template root, shipped with the codebase. Empty for v1; users add
+# templates under {workgroup_dir}/templates/.
+BUILTIN_TEMPLATES_DIR = Path(__file__).parent / "templates" / "builtin_templates"
+
+
+def _workgroup_templates_dir(wg_cfg: WorkgroupConfig) -> Path:
+    return Path(wg_cfg.workgroup_dir) / "templates" if wg_cfg.workgroup_dir else Path()
 
 
 def format_running_tasks(running_tasks: list[dict] | None) -> str:
@@ -93,6 +114,8 @@ class WorkgroupManager:
                     ai_backend=sp_raw.get("ai_backend", ""),
                     display_name=sp_raw.get("display_name", sp_name),
                     discord_channel=int(sp_raw.get("discord_channel", 0)),
+                    extra_skill_dirs=list(sp_raw.get("extra_skill_dirs", []) or []),
+                    template=sp_raw.get("template", "") or "",
                 )
             return result
         except Exception as e:
@@ -115,6 +138,8 @@ class WorkgroupManager:
             "ai_backend": sp.ai_backend,
             "display_name": sp.display_name,
             "discord_channel": sp.discord_channel,
+            "extra_skill_dirs": list(sp.extra_skill_dirs),
+            "template": sp.template,
         }
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
@@ -123,8 +148,84 @@ class WorkgroupManager:
     def _make_backend(self, bot_cfg: BotConfig, session_id=None):
         return self._create_backend(bot_cfg, session_id)
 
+    def _apply_template_skills(
+        self,
+        workspace: str,
+        template_info: TemplateInfo,
+        ai_backend: str,
+    ) -> None:
+        """Symlink template-provided skills into specialist workspace.
+
+        Two sources, both routed through `_sync_skills` (parent-of-skills convention):
+          1. template/skills/    — not subject to allow/block filter
+          2. template/extra_skill_dirs.txt entries — filtered by allow/block
+
+        Filtering happens by name. We enumerate matching subdirs into a
+        per-skill temp set of parent paths so existing sync_skills behavior
+        (each subdir of each parent → one symlink) does the right thing.
+        """
+        if not self._sync_skills:
+            return
+        # 1. Inline template skills (symlink each subdir directly).
+        if template_info.skills_dir and template_info.skills_dir.is_dir():
+            self._sync_skills(workspace, [str(template_info.skills_dir)], ai_backend)
+        # 2. External skill dirs with allow/block filter.
+        # sync_skills iterates all subdirs of each parent. To filter by name,
+        # we expand each parent into individual selected subdirs and pass
+        # the *parent of each* would re-include siblings. Instead, build a
+        # synthetic list where each entry is the selected subdir's parent
+        # but we restrict via allow set — when allow/block exist, expand
+        # each selected subdir explicitly through symlink.
+        for parent in template_info.extra_skill_dirs:
+            selected = filter_skill_subdirs(
+                parent, template_info.skill_allows, template_info.skill_blocks
+            )
+            if not selected:
+                continue
+            if (
+                template_info.skill_allows is None
+                and template_info.skill_blocks is None
+            ):
+                # No filter: pass parent through directly (symlinks every subdir).
+                self._sync_skills(workspace, [str(parent)], ai_backend)
+            else:
+                # Filtered: symlink only selected subdirs by passing each as a
+                # single-skill parent via a temporary path is awkward; instead
+                # build the symlinks here directly using the same conventions
+                # as sync_skills. We rely on Path symlinks.
+                self._symlink_template_skills(workspace, selected, ai_backend)
+
+    def _symlink_template_skills(
+        self,
+        workspace: str,
+        skill_dirs: list[Path],
+        ai_backend: str,
+    ) -> None:
+        """Symlink individual skill subdirs into the specialist's skills root."""
+        skills_root_name = ".agents/skills" if "codex" in ai_backend else ".claude/skills"
+        skills_root = Path(workspace) / skills_root_name
+        skills_root.mkdir(parents=True, exist_ok=True)
+        for src in skill_dirs:
+            target = skills_root / src.name
+            if target.is_symlink() or target.exists():
+                if target.is_symlink():
+                    try:
+                        target.unlink()
+                    except Exception:
+                        pass
+                else:
+                    # Don't overwrite a real directory.
+                    continue
+            try:
+                target.symlink_to(src.resolve(), target_is_directory=True)
+            except Exception as e:
+                logger.warning(
+                    "Failed to symlink template skill %s → %s: %s", src, target, e
+                )
+
     def _create_specialist_agent(
         self, sp_name: str, sp_cfg, wg_cfg: WorkgroupConfig, dc_channel,
+        template_info: TemplateInfo | None = None,
     ) -> Router:
         """Create backend, pool, router for a single specialist. Returns the Router."""
         syn_cfg = BotConfig(
@@ -140,9 +241,21 @@ class WorkgroupManager:
         # Prepare workspace BEFORE starting backend
         if syn_cfg.workspace and self._ensure_git_repo:
             self._ensure_git_repo(Path(syn_cfg.workspace))
+        # User-provided extra_skill_dirs (not subject to template filters).
         if syn_cfg.extra_skill_dirs and self._sync_skills:
             self._sync_skills(syn_cfg.workspace, syn_cfg.extra_skill_dirs, syn_cfg.ai_backend)
-        seed_specialist_workspace(syn_cfg.workspace, sp_name, wg_cfg.name)
+        # Template-provided skills (inline + filtered external).
+        if template_info is not None:
+            self._apply_template_skills(
+                syn_cfg.workspace, template_info, syn_cfg.ai_backend
+            )
+            # Snapshot template CLAUDE.md so future restarts replay the same
+            # template content even if the source is later modified.
+            write_template_snapshot(syn_cfg.workspace, template_info.read_claude_md())
+        seed_specialist_workspace(
+            syn_cfg.workspace, sp_name, wg_cfg.name,
+            template_claude_md_text=read_template_snapshot(syn_cfg.workspace),
+        )
 
         cli = self._make_backend(syn_cfg)
         cli.start()
@@ -504,9 +617,29 @@ class WorkgroupManager:
                     "ai_backend": sp_cfg.ai_backend,
                     "display_name": sp_cfg.display_name,
                     "discord_channel": sp_cfg.discord_channel,
+                    "template": sp_cfg.template,
                     "running_tasks": running_tasks,
                 })
         return {"ok": True, "specialists": specialists}
+
+    def list_templates(self, wg_name: str) -> dict:
+        """List available templates (builtin + workgroup) for a workgroup."""
+        wg_cfg = self.config.get(wg_name)
+        if wg_cfg is None:
+            return {"ok": False, "error": f"workgroup '{wg_name}' not found"}
+        try:
+            templates = discover_templates(
+                _workgroup_templates_dir(wg_cfg),
+                BUILTIN_TEMPLATES_DIR,
+                resolve_boxagent_dir(),
+            )
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        items = [
+            {"name": name, "description": info.description}
+            for name, info in sorted(templates.items())
+        ]
+        return {"ok": True, "templates": items}
 
     def get_task_result(self, task_id: str) -> dict:
         """Check the status/result of an async task."""
@@ -651,6 +784,9 @@ class WorkgroupManager:
     async def create_specialist(
         self, wg_name: str, sp_name: str,
         model: str = "", workspace: str = "",
+        template: str = "",
+        extra_skill_dirs: list[str] | None = None,
+        display_name: str = "",
     ) -> dict:
         """Dynamically create a specialist agent in a workgroup."""
         wg_cfg = self.config.get(wg_name)
@@ -659,6 +795,28 @@ class WorkgroupManager:
 
         if sp_name in self.routers:
             return {"ok": False, "error": f"specialist '{sp_name}' already exists"}
+
+        # Resolve template (fail loud if requested but not found).
+        template_info: TemplateInfo | None = None
+        if template:
+            try:
+                template_info = get_template(
+                    template,
+                    _workgroup_templates_dir(wg_cfg),
+                    BUILTIN_TEMPLATES_DIR,
+                    resolve_boxagent_dir(),
+                )
+            except ValueError as e:
+                return {"ok": False, "error": str(e)}
+
+        # Resolve user-provided extra_skill_dirs against the boxagent dir.
+        ba_dir = resolve_boxagent_dir()
+        resolved_user_dirs: list[str] = []
+        for raw in (extra_skill_dirs or []):
+            p = Path(raw).expanduser()
+            if not p.is_absolute():
+                p = ba_dir / p
+            resolved_user_dirs.append(str(p))
 
         # Create Discord channel (if workgroup has Discord)
         discord_channel_id = 0
@@ -678,11 +836,15 @@ class WorkgroupManager:
             model=model or wg_cfg.model,
             workspace=workspace or wg_cfg.specialist_workspace(sp_name),
             ai_backend=wg_cfg.ai_backend,
-            display_name=sp_name,
+            display_name=display_name or sp_name,
             discord_channel=discord_channel_id,
+            extra_skill_dirs=resolved_user_dirs,
+            template=template,
         )
 
-        self._create_specialist_agent(sp_name, sp_cfg, wg_cfg, dc_channel)
+        self._create_specialist_agent(
+            sp_name, sp_cfg, wg_cfg, dc_channel, template_info=template_info,
+        )
 
         # Persist
         wg_cfg.specialists[sp_name] = sp_cfg
@@ -702,7 +864,8 @@ class WorkgroupManager:
     async def delete_specialist(self, sp_name: str) -> dict:
         """Delete a specialist.
 
-        Stops its process and pool, removes from routing and persistence.
+        Stops its process and pool, removes its workspace directory,
+        deletes its Discord channel, and removes the persisted entry.
         """
         if sp_name not in self.routers:
             return {"ok": False, "error": f"specialist '{sp_name}' not found"}
@@ -710,10 +873,12 @@ class WorkgroupManager:
         # Find which workgroup owns this specialist
         wg_name = ""
         sp_discord_channel = 0
+        sp_workspace = ""
         for name, wg_cfg in self.config.items():
             if sp_name in wg_cfg.specialists:
                 wg_name = name
                 sp_discord_channel = wg_cfg.specialists[sp_name].discord_channel
+                sp_workspace = wg_cfg.specialists[sp_name].workspace
                 break
 
         # Delete Discord channel (if exists)
@@ -757,6 +922,19 @@ class WorkgroupManager:
             admin_router = self.routers.get(wg_name)
             if admin_router:
                 admin_router.workgroup_agents = list(wg_cfg.specialists.keys())
+
+        # Remove workspace directory (after process stop, after persistence cleanup).
+        if sp_workspace:
+            ws_path = Path(sp_workspace)
+            if ws_path.is_dir():
+                import shutil
+                try:
+                    shutil.rmtree(ws_path)
+                    logger.info("Removed specialist workspace: %s", ws_path)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to remove specialist workspace '%s': %s", ws_path, e
+                    )
 
         logger.info("Deleted specialist '%s' from workgroup '%s'", sp_name, wg_name)
         return {"ok": True}
