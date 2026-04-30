@@ -212,8 +212,7 @@ def _register_admin_tools(mcp: FastMCP) -> None:
     def list_specialists() -> str:
         """List all specialist agents in your workgroup with their details.
 
-        Returns each specialist's name, model, workspace, status, and whether
-        it is a built-in or dynamically created specialist.
+        Returns each specialist's name, model, workspace, and status.
         """
         if not _gateway or not _gateway._workgroup_mgr:
             return "Error: workgroup manager not available"
@@ -232,10 +231,6 @@ def _register_admin_tools(mcp: FastMCP) -> None:
             parts.append(f"— model: {sp.get('model', 'default')}")
             if sp.get("workspace"):
                 parts.append(f"| workspace: {sp['workspace']}")
-            if sp.get("builtin"):
-                parts.append("| built-in")
-            else:
-                parts.append("| dynamic")
             if sp.get("running_tasks"):
                 parts.append(f"| running: {', '.join(sp['running_tasks'])}")
             lines.append(" ".join(parts))

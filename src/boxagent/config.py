@@ -578,40 +578,6 @@ def _parse_workgroup(
             path = config_base / path
         extra_skill_dirs.append(str(path))
 
-    # Specialists
-    specialists: dict[str, SpecialistConfig] = {}
-    for sp_name, sp_raw in raw.get("specialists", {}).items():
-        sp_model = sp_raw.get("model", "") or model
-        sp_workspace = sp_raw.get("workspace", "")
-        if sp_workspace:
-            ws_path = Path(sp_workspace).expanduser()
-            if not ws_path.is_absolute():
-                ws_path = ba_dir / ws_path
-            sp_workspace = str(ws_path)
-        else:
-            sp_workspace = str(Path(workspace) / ".boxagent-workgroup" / "specialists" / sp_name)
-
-        sp_ai_backend = sp_raw.get("ai_backend", "") or ai_backend
-        sp_display_name = sp_raw.get("display_name", sp_name)
-        sp_discord_channel = int(sp_raw.get("discord_channel", 0))
-
-        sp_skill_dirs: list[str] = []
-        for d in sp_raw.get("extra_skill_dirs", []):
-            path = Path(d).expanduser()
-            if not path.is_absolute() and config_base is not None:
-                path = config_base / path
-            sp_skill_dirs.append(str(path))
-
-        specialists[sp_name] = SpecialistConfig(
-            name=sp_name,
-            model=sp_model,
-            workspace=sp_workspace,
-            ai_backend=sp_ai_backend,
-            display_name=sp_display_name,
-            discord_channel=sp_discord_channel,
-            extra_skill_dirs=sp_skill_dirs or extra_skill_dirs,
-        )
-
     heartbeat_interval_seconds = int(raw.get("heartbeat_interval_seconds", 0))
     display_heartbeat = bool(raw.get("display_heartbeat", False))
 
@@ -633,5 +599,4 @@ def _parse_workgroup(
         extra_skill_dirs=extra_skill_dirs,
         heartbeat_interval_seconds=heartbeat_interval_seconds,
         display_heartbeat=display_heartbeat,
-        specialists=specialists,
     )

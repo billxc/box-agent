@@ -66,7 +66,6 @@ class WorkgroupManager:
     _task_results: dict[str, dict] = field(default_factory=dict, repr=False)
     _task_counter: int = field(default=0, repr=False)
     _heartbeats: dict[str, HeartbeatManager] = field(default_factory=dict, repr=False)
-    _builtin_specialists: dict[str, set[str]] = field(default_factory=dict, repr=False)  # wg → names from config.yaml
 
     # Injected by Gateway
     _create_backend: object = None  # Callable[[BotConfig, str|None], object]
@@ -203,14 +202,12 @@ class WorkgroupManager:
             extra_skill_dirs=wg_cfg.extra_skill_dirs,
         )
 
-        # Merge saved dynamic specialists BEFORE seeding workspace so
-        # CLAUDE.md lists all specialists (not just config-defined ones).
-        self._builtin_specialists[wg_name] = set(wg_cfg.specialists.keys())
+        # Load saved dynamic specialists BEFORE seeding workspace so
+        # CLAUDE.md lists all specialists.
         saved = self._load_saved_specialists(wg_name)
         for sp_name, sp_cfg in saved.items():
-            if sp_name not in wg_cfg.specialists:
-                wg_cfg.specialists[sp_name] = sp_cfg
-                logger.info("Workgroup '%s': restored saved specialist '%s'", wg_name, sp_name)
+            wg_cfg.specialists[sp_name] = sp_cfg
+            logger.info("Workgroup '%s': restored saved specialist '%s'", wg_name, sp_name)
 
         # Prepare admin workspace BEFORE starting backend
         if admin_ws and self._ensure_git_repo:
@@ -493,7 +490,6 @@ class WorkgroupManager:
         for name, wg_cfg in self.config.items():
             if wg_name and name != wg_name:
                 continue
-            is_builtin_set = self._builtin_specialists.get(name, set())
             for sp_name, sp_cfg in wg_cfg.specialists.items():
                 # Check running tasks
                 running_tasks = [
@@ -508,7 +504,6 @@ class WorkgroupManager:
                     "ai_backend": sp_cfg.ai_backend,
                     "display_name": sp_cfg.display_name,
                     "discord_channel": sp_cfg.discord_channel,
-                    "builtin": sp_name in is_builtin_set,
                     "running_tasks": running_tasks,
                 })
         return {"ok": True, "specialists": specialists}
@@ -705,21 +700,12 @@ class WorkgroupManager:
         return {"ok": True, "channel_id": discord_channel_id}
 
     async def delete_specialist(self, sp_name: str) -> dict:
-        """Delete a dynamically created specialist.
+        """Delete a specialist.
 
         Stops its process and pool, removes from routing and persistence.
-        Built-in specialists (defined in config.yaml) cannot be deleted.
         """
         if sp_name not in self.routers:
             return {"ok": False, "error": f"specialist '{sp_name}' not found"}
-
-        # Check if built-in
-        for wg_name, builtin_names in self._builtin_specialists.items():
-            if sp_name in builtin_names:
-                return {
-                    "ok": False,
-                    "error": f"specialist '{sp_name}' is built-in (defined in config.yaml) and cannot be deleted",
-                }
 
         # Find which workgroup owns this specialist
         wg_name = ""

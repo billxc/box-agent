@@ -255,8 +255,6 @@ class TestDeleteSpecialist:
         mgr.routers["dev-1"] = _mock_router()
         mgr.pools["dev-1"] = _mock_pool()
         mgr.procs["dev-1"] = AsyncMock()
-        # Not a builtin
-        mgr._builtin_specialists["test-wg"] = set()
 
         result = await mgr.delete_specialist("dev-1")
         assert result["ok"] is True
@@ -264,15 +262,6 @@ class TestDeleteSpecialist:
         assert "dev-1" not in mgr.pools
         assert "dev-1" not in mgr.procs
         assert "dev-1" not in wg_cfg.specialists
-
-    async def test_rejects_builtin(self, tmp_path):
-        mgr, wg_cfg = _make_manager(tmp_path, ["dev-1"])
-        mgr.routers["dev-1"] = _mock_router()
-        mgr._builtin_specialists["test-wg"] = {"dev-1"}
-
-        result = await mgr.delete_specialist("dev-1")
-        assert result["ok"] is False
-        assert "built-in" in result["error"]
 
     async def test_rejects_unknown(self, tmp_path):
         mgr, _ = _make_manager(tmp_path)
