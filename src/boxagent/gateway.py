@@ -1233,7 +1233,7 @@ class Gateway:
             # (~/.claude/projects/<encoded-cwd>/), so the chat must run with
             # the same workspace the original session was created in.
             from boxagent.sessions import claude_native
-            workspace = claude_native._decode_cwd(encoded) if encoded else (cfg.workspace if cfg else "")
+            workspace = (claude_native.project_cwd(encoded) if encoded else "") or (cfg.workspace if cfg else "")
             self._storage.save_session(
                 bot, sid,
                 preview="(resumed via web)",
