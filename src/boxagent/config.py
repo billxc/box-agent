@@ -41,6 +41,7 @@ class BotConfig:
     display_name: str = ""
     enabled_on_nodes: str | list[str] = ""
     yolo: bool = False
+    web_enabled: bool = True
 
 
 @dataclass
@@ -107,6 +108,10 @@ class AppConfig:
     log_level: str = "info"
     api_port: int = 0
     mcp_port: int = 0  # MCP HTTP server port (0 = auto-assign)
+    web_port: int = 9292  # Web UI port (configurable; separate from api_port)
+    web_host: str = "127.0.0.1"  # Bind address for the web UI; "0.0.0.0" for LAN/phone
+    web_token: str = ""
+    web_trust_header: str = "X-BoxAgent-Trusted"
     bots: dict[str, BotConfig] = field(default_factory=dict)
     workgroups: dict[str, WorkgroupConfig] = field(default_factory=dict)
     telegram_bots: dict[str, str] = field(default_factory=dict)
@@ -209,6 +214,16 @@ def load_config(
     api_port = int(global_cfg.get("api_port", 0))
     api_port = int(os.environ.get("BOXAGENT_GLOBAL_API_PORT", api_port))
 
+    web_token = str(global_cfg.get("web_token", "") or "")
+    web_token = os.environ.get("BOXAGENT_WEB_TOKEN", web_token)
+    web_trust_header = str(
+        global_cfg.get("web_trust_header", "X-BoxAgent-Trusted") or "X-BoxAgent-Trusted"
+    )
+    web_port = int(global_cfg.get("web_port", 9292) or 9292)
+    web_port = int(os.environ.get("BOXAGENT_WEB_PORT", web_port))
+    web_host = str(global_cfg.get("web_host", "127.0.0.1") or "127.0.0.1")
+    web_host = os.environ.get("BOXAGENT_WEB_HOST", web_host)
+
     telegram_bots = _load_telegram_bots(config_dir)
     discord_bots = _load_discord_bots(config_dir)
 
@@ -246,6 +261,10 @@ def load_config(
         node_id=node_id,
         log_level=log_level,
         api_port=api_port,
+        web_token=web_token,
+        web_trust_header=web_trust_header,
+        web_port=web_port,
+        web_host=web_host,
         bots=bots,
         workgroups=workgroups,
         telegram_bots=telegram_bots,
@@ -469,6 +488,17 @@ def _parse_bot(
             f"Bot '{name}': at least one channel (telegram or discord) must be configured"
         )
 
+    # --- Web channel (default on, additive — opt out with channels.web: false) ---
+    web_cfg = channels.get("web")
+    if web_cfg is None:
+        web_enabled = bool(raw.get("web_enabled", True))
+    elif isinstance(web_cfg, bool):
+        web_enabled = web_cfg
+    elif isinstance(web_cfg, dict):
+        web_enabled = bool(web_cfg.get("enabled", True))
+    else:
+        web_enabled = True
+
     # Union of all allowed users for Router auth
     allowed_users = list(set(telegram_allowed_users + discord_allowed_users))
 
@@ -525,6 +555,7 @@ def _parse_bot(
         display_name=raw.get("display_name", ""),
         enabled_on_nodes=raw.get("enabled_on_nodes", ""),
         yolo=bool(raw.get("yolo", False)),
+        web_enabled=web_enabled,
     )
 
 

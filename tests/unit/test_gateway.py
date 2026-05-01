@@ -33,7 +33,8 @@ class TestGateway:
 
         with patch.object(gw, "_start_bot", new_callable=AsyncMock) as m:
             with patch.object(gw, "_start_scheduler"):
-                with patch.object(gw, "_start_http", new_callable=AsyncMock):
+                with patch.object(gw, "_start_http", new_callable=AsyncMock), \
+                     patch.object(gw, "_start_web_http", new_callable=AsyncMock):
                     await gw.start()
             m.assert_called_once_with(
                 "test-bot", mock_config.bots["test-bot"]
@@ -76,7 +77,8 @@ class TestGateway:
         mock_config.node_id = "test-node"
 
         gw = Gateway(config=mock_config, config_dir=tmp_path)
-        with patch.object(gw, "_start_http", new_callable=AsyncMock):
+        with patch.object(gw, "_start_http", new_callable=AsyncMock), \
+                     patch.object(gw, "_start_web_http", new_callable=AsyncMock):
             await gw.start()
 
         assert gw._scheduler is not None
@@ -99,7 +101,8 @@ class TestGateway:
         mock_config.node_id = "test-node"
 
         gw = Gateway(config=mock_config, config_dir=tmp_path)
-        with patch.object(gw, "_start_http", new_callable=AsyncMock):
+        with patch.object(gw, "_start_http", new_callable=AsyncMock), \
+                     patch.object(gw, "_start_web_http", new_callable=AsyncMock):
             await gw.start()
 
         scheduler_task = gw._scheduler_task
@@ -392,7 +395,8 @@ class TestGateway:
 
         with patch.object(gw, "_start_bot", side_effect=track_start_bot):
             with patch.object(gw, "_start_scheduler"):
-                with patch.object(gw, "_start_http", new_callable=AsyncMock):
+                with patch.object(gw, "_start_http", new_callable=AsyncMock), \
+                     patch.object(gw, "_start_web_http", new_callable=AsyncMock):
                     await gw.start()
 
         assert "bot-a" not in started
@@ -419,7 +423,8 @@ class TestGateway:
 
         with patch.object(gw, "_start_bot", side_effect=track_start_bot):
             with patch.object(gw, "_start_scheduler"):
-                with patch.object(gw, "_start_http", new_callable=AsyncMock):
+                with patch.object(gw, "_start_http", new_callable=AsyncMock), \
+                     patch.object(gw, "_start_web_http", new_callable=AsyncMock):
                     await gw.start()
 
         assert "bot-a" in started

@@ -82,6 +82,41 @@ class Storage:
         """
         return self._load_sessions().get(self._session_key(bot_id, chat_id))
 
+    def list_chat_sessions(self, bot_id: str) -> list[dict]:
+        """Enumerate every persisted chat_id for a given bot.
+
+        Reads sessions.yaml (which stores `{bot}:{chat_id}` → entry) and returns
+        one record per chat_id for this bot, regardless of which channel
+        (telegram / discord / web) created it.
+        """
+        prefix = f"{bot_id}:"
+        out: list[dict] = []
+        for key, entry in self._load_sessions().items():
+            if not isinstance(key, str) or not key.startswith(prefix):
+                continue
+            chat_id = key[len(prefix):]
+            if not chat_id:
+                continue
+            session_id = ""
+            workspace = ""
+            model = ""
+            backend = ""
+            if isinstance(entry, dict):
+                session_id = str(entry.get("session_id", "") or "")
+                workspace = str(entry.get("workspace", "") or "")
+                model = str(entry.get("model", "") or "")
+                backend = str(entry.get("backend", "") or "")
+            elif isinstance(entry, str):
+                session_id = entry
+            out.append({
+                "chat_id": chat_id,
+                "session_id": session_id,
+                "workspace": workspace,
+                "model": model,
+                "backend": backend,
+            })
+        return out
+
     def clear_session(self, bot_id: str, chat_id: str = "") -> None:
         sessions = self._load_sessions()
         sessions.pop(self._session_key(bot_id, chat_id), None)

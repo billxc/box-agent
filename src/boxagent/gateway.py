@@ -11,6 +11,7 @@ from pathlib import Path
 from boxagent.agent.claude_process import ClaudeProcess
 from boxagent.channels.base import IncomingMessage
 from boxagent.channels.telegram import TelegramChannel
+from boxagent.channels.web import WebChannel
 from boxagent.config import AppConfig, BotConfig, WorkgroupConfig, node_matches
 from boxagent.paths import default_config_dir, default_local_dir, default_workspace_dir
 from boxagent.router import Router
@@ -43,6 +44,18 @@ def _parse_peer_message(text: str) -> tuple[str, str, str]:
 def _supports_persistent_session(ai_backend: str) -> bool:
     """Whether a backend can resume a saved session after restart."""
     return ai_backend in ("claude-cli", "codex-cli", "codex-acp")
+
+
+def _infer_platform(chat_id: str) -> str:
+    """Best-effort guess for which channel a chat_id originated from."""
+    if not chat_id:
+        return "unknown"
+    if chat_id.startswith("web-"):
+        return "web"
+    if chat_id.lstrip("-").isdigit():
+        # Telegram user ids are typically <= 12 digits; Discord snowflakes are 17-19.
+        return "discord" if len(chat_id.lstrip("-")) >= 17 else "telegram"
+    return "other"
 
 
 def _create_backend(bot_cfg: BotConfig, session_id: str | None) -> object:
@@ -149,6 +162,9 @@ class Gateway:
     _channels: dict[str, object] = field(
         default_factory=dict, repr=False
     )
+    _web_channels: dict[str, WebChannel] = field(
+        default_factory=dict, repr=False
+    )
     # Shared Discord channels keyed by identity (bot_id or token).
     _discord_channels: dict[str, object] = field(
         default_factory=dict, repr=False
@@ -227,6 +243,9 @@ class Gateway:
 
         # Start HTTP API
         await self._start_http()
+
+        # Start Web UI server (separate port)
+        await self._start_web_http()
 
         logger.info(
             "Gateway ready: %d bot(s) active", len(self.config.bots)
@@ -387,6 +406,14 @@ class Gateway:
 
             dc_channel.register_channel_route(_peer_handler, peer_ch_id)
 
+        # --- Web channel (optional) ---
+        if bot_cfg.web_enabled:
+            web_ch = WebChannel(bot_name=name)
+            web_ch.on_message = router.handle_message
+            self._web_channels[name] = web_ch
+            router._channels["web"] = web_ch
+            logger.info("Bot '%s' web channel enabled", name)
+
         self._routers[name] = router
 
         # Notify user that bot is online
@@ -546,6 +573,7 @@ class Gateway:
     def _clear_http_artifacts(self) -> None:
         """Remove runtime HTTP endpoint artifacts left by a previous run."""
         for f in (self._api_port_file, self._mcp_port_file,
+                  self._web_port_file,
                   self.local_dir / "api.sock"):
             if f.exists():
                 f.unlink(missing_ok=True)
@@ -563,6 +591,7 @@ class Gateway:
         app.router.add_post("/api/workgroup/update_topic", self._handle_update_topic)
         app.router.add_post("/api/workgroup/cancel_task", self._handle_cancel_task)
         app.router.add_post("/api/peer/send", self._handle_peer_send)
+
         runner = web.AppRunner(app)
         await runner.setup()
         self._http_runner = runner
@@ -581,6 +610,49 @@ class Gateway:
 
         # Start MCP HTTP server (streamable-http)
         await self._start_mcp_http()
+
+    @property
+    def _web_port_file(self) -> Path:
+        return self.local_dir / "web-port.txt"
+
+    async def _start_web_http(self) -> None:
+        """Start a separate aiohttp server for the /web/* UI on its own port."""
+        from pathlib import Path as _Path
+
+        wapp = web.Application()
+        wapp.router.add_get("/", self._handle_web_index)
+        wapp.router.add_get("/api/bots", self._handle_web_bots)
+        wapp.router.add_get("/api/sessions", self._handle_web_sessions)
+        wapp.router.add_get("/api/history", self._handle_web_history)
+        wapp.router.add_post("/api/send", self._handle_web_send)
+        wapp.router.add_get("/api/stream", self._handle_web_stream)
+        wapp.router.add_get("/api/claude/projects", self._handle_claude_projects)
+        wapp.router.add_get("/api/claude/sessions", self._handle_claude_sessions)
+        wapp.router.add_get("/api/claude/transcript", self._handle_claude_transcript)
+        wapp.router.add_post("/api/claude/resume", self._handle_claude_resume)
+        web_static = _Path(__file__).parent / "web" / "static"
+        if web_static.is_dir():
+            wapp.router.add_static("/", path=str(web_static), show_index=False)
+
+        runner = web.AppRunner(wapp)
+        await runner.setup()
+        self._web_runner = runner
+
+        host = self.config.web_host or "127.0.0.1"
+        port = self.config.web_port if self.config.web_port is not None else 9292
+        site = web.TCPSite(runner, host, port)
+        await site.start()
+        sockets = getattr(getattr(site, "_server", None), "sockets", None) or []
+        actual_port = sockets[0].getsockname()[1] if sockets else port
+        self._web_port_file.write_text(f"{actual_port}\n", encoding="utf-8")
+        logger.info("Web UI listening on %s:%d", host, actual_port)
+
+    async def _stop_web_http(self) -> None:
+        runner = getattr(self, "_web_runner", None)
+        if runner:
+            await runner.cleanup()
+            self._web_runner = None
+        self._web_port_file.unlink(missing_ok=True)
 
     async def _stop_http(self) -> None:
         """Stop the HTTP API server."""
@@ -869,12 +941,327 @@ class Gateway:
 
         return web.json_response({"ok": True})
 
+    # ── Web chat handlers ──
+
+    def _web_authorized(self, request: web.Request) -> bool:
+        """Allow localhost, trusted-header (tunnel), or matching bearer/query token."""
+        token = (self.config.web_token or "").strip()
+        # Localhost / loopback always allowed
+        peer = request.transport.get_extra_info("peername") if request.transport else None
+        host = (peer[0] if peer else request.remote) or ""
+        if host in ("127.0.0.1", "::1", "localhost"):
+            return True
+        # Trusted header (set by tunnel/reverse proxy)
+        trust_hdr = (self.config.web_trust_header or "").strip()
+        if trust_hdr and request.headers.get(trust_hdr):
+            return True
+        # No token configured AND no localhost → deny rather than wide-open
+        if not token:
+            return False
+        # Authorization: Bearer ...
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer ") and auth[7:].strip() == token:
+            return True
+        # ?token=... (for EventSource which can't set headers)
+        if request.query.get("token", "") == token:
+            return True
+        return False
+
+    def _web_unauthorized(self) -> web.Response:
+        return web.json_response({"ok": False, "error": "unauthorized"}, status=401)
+
+    async def _handle_web_index(self, request: web.Request) -> web.Response:
+        # Always serve the index page so users can paste ?token=... to log in.
+        from pathlib import Path as _Path
+        index = _Path(__file__).parent / "web" / "static" / "index.html"
+        if not index.is_file():
+            return web.Response(text="web UI not installed", status=404)
+        return web.Response(body=index.read_bytes(), content_type="text/html")
+
+    async def _handle_web_bots(self, request: web.Request) -> web.Response:
+        if not self._web_authorized(request):
+            return self._web_unauthorized()
+        bots = []
+        for name, ch in self._web_channels.items():
+            cfg = self.config.bots.get(name)
+            if cfg is None:
+                continue
+            bots.append({
+                "name": name,
+                "display_name": cfg.display_name or name,
+                "backend": cfg.ai_backend,
+                "model": cfg.model,
+            })
+        return web.json_response({"bots": bots})
+
+    async def _handle_web_sessions(self, request: web.Request) -> web.Response:
+        """List every persisted chat session for a bot, across all channels."""
+        if not self._web_authorized(request):
+            return self._web_unauthorized()
+        bot = request.query.get("bot", "")
+        if not bot:
+            return web.json_response({"ok": False, "error": "missing bot"}, status=400)
+        if not self._storage:
+            return web.json_response({"ok": True, "sessions": []})
+
+        sessions = self._storage.list_chat_sessions(bot)
+
+        for s in sessions:
+            sid = s.get("session_id") or ""
+            s["platform"] = _infer_platform(s["chat_id"])
+            s["preview"] = ""
+            s["last_ts"] = 0
+            if not sid:
+                continue
+            tpath = self._storage.local_dir / "transcripts" / f"{sid}.jsonl"
+            if not tpath.is_file():
+                continue
+            try:
+                last_user = ""
+                last_assist = ""
+                last_ts = 0.0
+                import json as _json
+                for line in tpath.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = _json.loads(line)
+                    except Exception:
+                        continue
+                    if rec.get("chat_id") and rec.get("chat_id") != s["chat_id"]:
+                        continue
+                    ev = rec.get("event")
+                    txt = rec.get("text", "") or ""
+                    ts = float(rec.get("ts", 0) or 0)
+                    if ts > last_ts:
+                        last_ts = ts
+                    if ev == "user":
+                        last_user = txt
+                    elif ev == "assistant":
+                        last_assist = txt
+                preview = (last_assist or last_user or "").strip().replace("\n", " ")
+                s["preview"] = preview[:90] + ("..." if len(preview) > 90 else "")
+                s["last_ts"] = last_ts
+            except Exception as e:
+                logger.debug("session preview read failed for %s: %s", sid, e)
+
+        sessions.sort(key=lambda x: x.get("last_ts") or 0, reverse=True)
+        return web.json_response({"ok": True, "sessions": sessions})
+
+    async def _handle_web_history(self, request: web.Request) -> web.Response:
+        if not self._web_authorized(request):
+            return self._web_unauthorized()
+        bot = request.query.get("bot", "")
+        chat_id = request.query.get("chat_id", "")
+        if not bot or not chat_id:
+            return web.json_response({"ok": False, "error": "missing bot/chat_id"}, status=400)
+        if bot not in self._web_channels:
+            return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
+
+        history: list[dict] = []
+        if self._storage:
+            saved = self._storage.load_session(bot, chat_id)
+            session_id = ""
+            if isinstance(saved, dict):
+                session_id = saved.get("session_id", "")
+            elif isinstance(saved, str):
+                session_id = saved
+
+            # Resumed Claude native session — always read from ~/.claude/projects/.../<sid>.jsonl
+            # since claude --resume appends new turns to the same file.
+            if chat_id.startswith("claude-") and session_id:
+                from boxagent.sessions import claude_native
+                base = claude_native.default_claude_projects_dir()
+                if base.is_dir():
+                    for proj in base.iterdir():
+                        if not proj.is_dir():
+                            continue
+                        if (proj / f"{session_id}.jsonl").is_file():
+                            history = claude_native.read_messages(proj.name, session_id)
+                            break
+                return web.json_response({"ok": True, "history": history})
+
+            if session_id:
+                tpath = self._storage.local_dir / "transcripts" / f"{session_id}.jsonl"
+                if tpath.is_file():
+                    import json as _json
+                    try:
+                        for line in tpath.read_text(encoding="utf-8").splitlines():
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                rec = _json.loads(line)
+                            except Exception:
+                                continue
+                            event = rec.get("event")
+                            if event not in ("user", "assistant"):
+                                continue
+                            # Only include records for this chat_id (transcripts are
+                            # session-scoped, but a chat_id is 1:1 with session_id here).
+                            if rec.get("chat_id") and rec.get("chat_id") != chat_id:
+                                continue
+                            history.append({
+                                "role": event,
+                                "text": rec.get("text", ""),
+                                "ts": rec.get("ts", 0),
+                            })
+                    except Exception as e:
+                        logger.warning("history read failed for %s: %s", tpath, e)
+        return web.json_response({"ok": True, "history": history})
+
+    async def _handle_web_send(self, request: web.Request) -> web.Response:
+        if not self._web_authorized(request):
+            return self._web_unauthorized()
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+        bot = body.get("bot", "")
+        chat_id = body.get("chat_id", "")
+        text = body.get("text", "")
+        if not bot or not chat_id or not text:
+            return web.json_response({"ok": False, "error": "missing bot/chat_id/text"}, status=400)
+        ch = self._web_channels.get(bot)
+        if ch is None:
+            return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
+        try:
+            await ch.inject(chat_id=chat_id, text=text, user_id="web")
+        except Exception as e:
+            logger.exception("web send failed")
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return web.json_response({"ok": True})
+
+    async def _handle_web_stream(self, request: web.Request) -> web.StreamResponse:
+        if not self._web_authorized(request):
+            return self._web_unauthorized()
+        bot = request.query.get("bot", "")
+        chat_id = request.query.get("chat_id", "")
+        ch = self._web_channels.get(bot)
+        if ch is None or not chat_id:
+            return web.json_response({"ok": False, "error": "bot not web-enabled or missing chat_id"}, status=404)
+
+        resp = web.StreamResponse(
+            status=200,
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+        await resp.prepare(request)
+        queue = ch.subscribe(chat_id)
+        # Initial hello to flush headers on some proxies
+        await resp.write(b": connected\n\n")
+        import json as _json
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=20.0)
+                except asyncio.TimeoutError:
+                    await resp.write(b": ping\n\n")
+                    continue
+                if event.get("type") == "_close":
+                    break
+                payload = _json.dumps(event, ensure_ascii=False)
+                await resp.write(f"data: {payload}\n\n".encode("utf-8"))
+        except (ConnectionResetError, asyncio.CancelledError):
+            pass
+        finally:
+            ch.unsubscribe(chat_id, queue)
+        return resp
+
+    # ── Claude native session picker ──
+
+    async def _handle_claude_projects(self, request: web.Request) -> web.Response:
+        if not self._web_authorized(request):
+            return self._web_unauthorized()
+        from boxagent.sessions import claude_native
+        return web.json_response({"ok": True, "projects": claude_native.list_projects()})
+
+    async def _handle_claude_sessions(self, request: web.Request) -> web.Response:
+        if not self._web_authorized(request):
+            return self._web_unauthorized()
+        encoded = request.query.get("project", "")
+        if not encoded:
+            return web.json_response({"ok": False, "error": "missing project"}, status=400)
+        from boxagent.sessions import claude_native
+        return web.json_response({
+            "ok": True,
+            "sessions": claude_native.list_sessions(encoded),
+        })
+
+    async def _handle_claude_transcript(self, request: web.Request) -> web.Response:
+        if not self._web_authorized(request):
+            return self._web_unauthorized()
+        encoded = request.query.get("project", "")
+        sid = request.query.get("session_id", "")
+        if not encoded or not sid:
+            return web.json_response({"ok": False, "error": "missing project/session_id"}, status=400)
+        from boxagent.sessions import claude_native
+        return web.json_response({
+            "ok": True,
+            "messages": claude_native.read_messages(encoded, sid),
+        })
+
+    async def _handle_claude_resume(self, request: web.Request) -> web.Response:
+        """Persist the chosen Claude session_id under a synthetic chat_id so the
+        next message in that chat_id resumes that Claude session via ``--resume``.
+        """
+        if not self._web_authorized(request):
+            return self._web_unauthorized()
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+        bot = body.get("bot", "")
+        sid = body.get("session_id", "")
+        encoded = body.get("project", "")
+        if not bot or not sid:
+            return web.json_response({"ok": False, "error": "missing bot/session_id"}, status=400)
+        if bot not in self._web_channels:
+            return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
+
+        chat_id = f"claude-{sid}"
+        if self._storage:
+            cfg = self.config.bots.get(bot)
+            model = cfg.model if cfg else ""
+            backend = cfg.ai_backend if cfg else "claude-cli"
+            # CRITICAL: claude --resume looks under the cwd's project dir
+            # (~/.claude/projects/<encoded-cwd>/), so the chat must run with
+            # the same workspace the original session was created in.
+            from boxagent.sessions import claude_native
+            workspace = claude_native._decode_cwd(encoded) if encoded else (cfg.workspace if cfg else "")
+            self._storage.save_session(
+                bot, sid,
+                preview="(resumed via web)",
+                backend=backend,
+                chat_id=chat_id,
+                model=model,
+                workspace=workspace,
+            )
+            # Update the live pool so the very next turn uses this workspace.
+            pool = self._pools.get(bot)
+            if pool is not None and workspace:
+                pool.set_workspace(chat_id, workspace)
+                pool.set_session_id(chat_id, sid)
+        return web.json_response({
+            "ok": True,
+            "chat_id": chat_id,
+            "session_id": sid,
+            "project": encoded,
+            "workspace": workspace if self._storage else "",
+        })
+
     async def stop(self) -> None:
         logger.info("Gateway shutting down...")
 
         # Stop HTTP API and MCP server
         await self._stop_http()
         await self._stop_mcp_http()
+        await self._stop_web_http()
 
         # Stop scheduler
         if self._scheduler:
@@ -906,6 +1293,12 @@ class Gateway:
                 await ch.stop()
             except Exception as e:
                 logger.error("Error stopping discord channel %s: %s", name, e)
+
+        for name, ch in self._web_channels.items():
+            try:
+                await ch.stop()
+            except Exception as e:
+                logger.error("Error stopping web channel %s: %s", name, e)
 
         for name, cli in self._cli_processes.items():
             try:
