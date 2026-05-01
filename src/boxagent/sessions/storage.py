@@ -62,7 +62,26 @@ class Storage:
     def save_session(self, bot_id: str, session_id: str, *, preview: str = "", backend: str = "", chat_id: str = "", model: str = "", workspace: str = "") -> None:
         sessions = self._load_sessions()
         key = self._session_key(bot_id, chat_id)
-        entry: dict[str, str] = {"session_id": session_id}
+        entry: dict[str, object] = {"session_id": session_id}
+
+        # Chain old session_ids when this chat_id rotates to a new one
+        # (e.g. after /compact). The full chain lets transcript readers
+        # stitch the conversation back together across compactions.
+        old = sessions.get(key)
+        prev_chain: list[str] = []
+        old_sid = ""
+        if isinstance(old, dict):
+            old_sid = str(old.get("session_id", "") or "")
+            raw_prev = old.get("previous_session_ids") or []
+            if isinstance(raw_prev, list):
+                prev_chain = [str(s) for s in raw_prev if isinstance(s, str) and s]
+        elif isinstance(old, str):
+            old_sid = old
+        if old_sid and old_sid != session_id and old_sid not in prev_chain:
+            prev_chain.insert(0, old_sid)
+        if prev_chain:
+            entry["previous_session_ids"] = prev_chain[:20]  # cap to avoid unbounded growth
+
         if workspace:
             entry["workspace"] = workspace
         if model:

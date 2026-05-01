@@ -61,6 +61,37 @@ class TestSessionTracking:
         ]
         assert "saved_at" in history[0]
 
+    def test_save_session_chains_previous_sids_per_chat(self, storage):
+        # First two turns share sid_a → no chain
+        storage.save_session("bot", "sid_a", chat_id="c1")
+        storage.save_session("bot", "sid_a", chat_id="c1")
+        entry = storage.load_session("bot", "c1")
+        assert entry["session_id"] == "sid_a"
+        assert "previous_session_ids" not in entry
+
+        # /compact rotates to sid_b → sid_a appended to chain
+        storage.save_session("bot", "sid_b", chat_id="c1")
+        entry = storage.load_session("bot", "c1")
+        assert entry["session_id"] == "sid_b"
+        assert entry["previous_session_ids"] == ["sid_a"]
+
+        # Another rotation → sid_b at head, sid_a behind it
+        storage.save_session("bot", "sid_c", chat_id="c1")
+        entry = storage.load_session("bot", "c1")
+        assert entry["session_id"] == "sid_c"
+        assert entry["previous_session_ids"] == ["sid_b", "sid_a"]
+
+        # Same sid again → no duplicate appended
+        storage.save_session("bot", "sid_c", chat_id="c1")
+        assert storage.load_session("bot", "c1")["previous_session_ids"] == ["sid_b", "sid_a"]
+
+    def test_chain_is_per_chat_not_per_bot(self, storage):
+        storage.save_session("bot", "sid_x", chat_id="c1")
+        storage.save_session("bot", "sid_y", chat_id="c2")
+        storage.save_session("bot", "sid_x2", chat_id="c1")
+        assert storage.load_session("bot", "c1")["previous_session_ids"] == ["sid_x"]
+        assert "previous_session_ids" not in storage.load_session("bot", "c2")
+
 
 class TestCodexSessionTracking:
     def test_lists_codex_sessions_for_workspace(self, storage, tmp_path):

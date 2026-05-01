@@ -1089,52 +1089,63 @@ class Gateway:
         if self._storage:
             saved = self._storage.load_session(bot, chat_id)
             session_id = ""
+            prev_chain: list[str] = []
             if isinstance(saved, dict):
                 session_id = saved.get("session_id", "")
+                raw_prev = saved.get("previous_session_ids") or []
+                if isinstance(raw_prev, list):
+                    prev_chain = [str(s) for s in raw_prev if isinstance(s, str) and s]
             elif isinstance(saved, str):
                 session_id = saved
+            sids = ([session_id] if session_id else []) + prev_chain
 
-            # Resumed Claude native session — always read from ~/.claude/projects/.../<sid>.jsonl
-            # since claude --resume appends new turns to the same file.
-            if chat_id.startswith("claude-") and session_id:
+            # Resumed Claude native session — walk chain across ~/.claude/projects/.../<sid>.jsonl
+            if chat_id.startswith("claude-") and sids:
                 from boxagent.sessions import claude_native
                 base = claude_native.default_claude_projects_dir()
                 if base.is_dir():
+                    proj_index: dict[str, str] = {}  # session_id → encoded_project
                     for proj in base.iterdir():
                         if not proj.is_dir():
                             continue
-                        if (proj / f"{session_id}.jsonl").is_file():
-                            history = claude_native.read_messages(proj.name, session_id)
-                            break
+                        for f in proj.iterdir():
+                            if f.suffix == ".jsonl":
+                                proj_index[f.stem] = proj.name
+                    for sid in sids:
+                        encoded = proj_index.get(sid)
+                        if encoded:
+                            history.extend(claude_native.read_messages(encoded, sid))
+                history.sort(key=lambda r: r.get("ts") or 0)
                 return web.json_response({"ok": True, "history": history})
 
-            if session_id:
-                tpath = self._storage.local_dir / "transcripts" / f"{session_id}.jsonl"
-                if tpath.is_file():
-                    import json as _json
-                    try:
-                        for line in tpath.read_text(encoding="utf-8").splitlines():
-                            line = line.strip()
-                            if not line:
-                                continue
-                            try:
-                                rec = _json.loads(line)
-                            except Exception:
-                                continue
-                            event = rec.get("event")
-                            if event not in ("user", "assistant"):
-                                continue
-                            # Only include records for this chat_id (transcripts are
-                            # session-scoped, but a chat_id is 1:1 with session_id here).
-                            if rec.get("chat_id") and rec.get("chat_id") != chat_id:
-                                continue
-                            history.append({
-                                "role": event,
-                                "text": rec.get("text", ""),
-                                "ts": rec.get("ts", 0),
-                            })
-                    except Exception as e:
-                        logger.warning("history read failed for %s: %s", tpath, e)
+            # Regular bot transcripts — concat per-sid jsonl files in chain
+            import json as _json
+            for sid in sids:
+                tpath = self._storage.local_dir / "transcripts" / f"{sid}.jsonl"
+                if not tpath.is_file():
+                    continue
+                try:
+                    for line in tpath.read_text(encoding="utf-8").splitlines():
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            rec = _json.loads(line)
+                        except Exception:
+                            continue
+                        event = rec.get("event")
+                        if event not in ("user", "assistant"):
+                            continue
+                        if rec.get("chat_id") and rec.get("chat_id") != chat_id:
+                            continue
+                        history.append({
+                            "role": event,
+                            "text": rec.get("text", ""),
+                            "ts": rec.get("ts", 0),
+                        })
+                except Exception as e:
+                    logger.warning("history read failed for %s: %s", tpath, e)
+            history.sort(key=lambda r: r.get("ts") or 0)
         return web.json_response({"ok": True, "history": history})
 
     async def _handle_web_send(self, request: web.Request) -> web.Response:
