@@ -58,7 +58,7 @@
   }
 
   function platformIcon(p) {
-    return ({ telegram: "✈︎", discord: "◈", web: "◉", other: "•", unknown: "•" })[p] || "•";
+    return ({ telegram: "✈︎", discord: "◈", web: "◉", heartbeat: "♥", claude: "✦", other: "•", unknown: "•" })[p] || "•";
   }
 
   function setConn(state_) {
@@ -140,6 +140,11 @@
   }
 
   function defaultTitle(s) {
+    if (s.platform === "heartbeat") {
+      const wg = s.chat_id.startsWith("heartbeat:") ? s.chat_id.slice("heartbeat:".length) : "admin";
+      return `♥ Heartbeat · ${wg}`;
+    }
+    if (s.platform === "claude") return `✦ Resumed Claude session`;
     const tag = ({ telegram: "Telegram", discord: "Discord", web: "Web", other: "Chat" })[s.platform] || "Chat";
     return `${tag} · ${shortId(s.chat_id)}`;
   }

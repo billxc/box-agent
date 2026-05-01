@@ -50,6 +50,10 @@ def _infer_platform(chat_id: str) -> str:
     """Best-effort guess for which channel a chat_id originated from."""
     if not chat_id:
         return "unknown"
+    if chat_id.startswith("heartbeat:"):
+        return "heartbeat"
+    if chat_id.startswith("claude-"):
+        return "claude"
     if chat_id.startswith("web-"):
         return "web"
     if chat_id.lstrip("-").isdigit():
@@ -228,6 +232,7 @@ class Gateway:
                 start_time=self._start_time,
                 storage=self._storage,
                 discord_channels=self._discord_channels,
+                web_channels=self._web_channels,
                 _create_backend=_create_backend,
                 _ensure_git_repo=_ensure_git_repo,
                 _sync_skills=sync_skills,
@@ -984,14 +989,23 @@ class Gateway:
         bots = []
         for name, ch in self._web_channels.items():
             cfg = self.config.bots.get(name)
-            if cfg is None:
-                continue
-            bots.append({
-                "name": name,
-                "display_name": cfg.display_name or name,
-                "backend": cfg.ai_backend,
-                "model": cfg.model,
-            })
+            wg = self.config.workgroups.get(name)
+            if cfg is not None:
+                bots.append({
+                    "name": name,
+                    "display_name": cfg.display_name or name,
+                    "backend": cfg.ai_backend,
+                    "model": cfg.model,
+                    "kind": "bot",
+                })
+            elif wg is not None:
+                bots.append({
+                    "name": name,
+                    "display_name": (wg.display_name or name) + "  (workgroup)",
+                    "backend": wg.ai_backend,
+                    "model": wg.model,
+                    "kind": "workgroup",
+                })
         return web.json_response({"bots": bots})
 
     async def _handle_web_sessions(self, request: web.Request) -> web.Response:
@@ -1006,9 +1020,21 @@ class Gateway:
 
         sessions = self._storage.list_chat_sessions(bot)
 
+        # Workgroup heartbeat: admin uses admin_discord_channel as the chat_id
+        # for periodic ticks, so flag that one specifically.
+        wg = self.config.workgroups.get(bot)
+        heartbeat_chat_id = ""
+        if wg is not None:
+            if wg.heartbeat_interval_seconds and wg.admin_discord_channel:
+                heartbeat_chat_id = str(wg.admin_discord_channel)
+            elif wg.heartbeat_interval_seconds:
+                heartbeat_chat_id = f"heartbeat:{bot}"
+
         for s in sessions:
             sid = s.get("session_id") or ""
             s["platform"] = _infer_platform(s["chat_id"])
+            if heartbeat_chat_id and s["chat_id"] == heartbeat_chat_id:
+                s["platform"] = "heartbeat"
             s["preview"] = ""
             s["last_ts"] = 0
             if not sid:
@@ -1227,13 +1253,13 @@ class Gateway:
         chat_id = f"claude-{sid}"
         if self._storage:
             cfg = self.config.bots.get(bot)
-            model = cfg.model if cfg else ""
-            backend = cfg.ai_backend if cfg else "claude-cli"
-            # CRITICAL: claude --resume looks under the cwd's project dir
-            # (~/.claude/projects/<encoded-cwd>/), so the chat must run with
-            # the same workspace the original session was created in.
+            wg = self.config.workgroups.get(bot)
+            model = (cfg.model if cfg else None) or (wg.model if wg else "")
+            backend = (cfg.ai_backend if cfg else None) or (wg.ai_backend if wg else "claude-cli")
             from boxagent.sessions import claude_native
-            workspace = (claude_native.project_cwd(encoded) if encoded else "") or (cfg.workspace if cfg else "")
+            workspace = (claude_native.project_cwd(encoded) if encoded else "") or (
+                cfg.workspace if cfg else (wg.admin_workspace if wg else "")
+            )
             self._storage.save_session(
                 bot, sid,
                 preview="(resumed via web)",
@@ -1242,8 +1268,9 @@ class Gateway:
                 model=model,
                 workspace=workspace,
             )
-            # Update the live pool so the very next turn uses this workspace.
             pool = self._pools.get(bot)
+            if pool is None and self._workgroup_mgr is not None:
+                pool = self._workgroup_mgr.pools.get(bot)
             if pool is not None and workspace:
                 pool.set_workspace(chat_id, workspace)
                 pool.set_session_id(chat_id, sid)

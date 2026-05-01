@@ -78,6 +78,7 @@ class WorkgroupManager:
     start_time: float = 0.0
     storage: object = None
     discord_channels: dict[str, object] = field(default_factory=dict)  # bot_id → DiscordChannel
+    web_channels: dict[str, object] = field(default_factory=dict)      # name → WebChannel (shared with Gateway)
     # Internal state
     routers: dict[str, Router] = field(default_factory=dict)    # name → Router
     pools: dict[str, SessionPool] = field(default_factory=dict)  # name → Pool
@@ -366,6 +367,15 @@ class WorkgroupManager:
             workgroup_role="admin",
         )
         self.routers[wg_name] = admin_router
+
+        # --- Web channel (default on for workgroup admin) ---
+        if wg_cfg.web_enabled:
+            from boxagent.channels.web import WebChannel
+            web_ch = WebChannel(bot_name=wg_name)
+            web_ch.on_message = admin_router.handle_message
+            self.web_channels[wg_name] = web_ch
+            admin_router._channels["web"] = web_ch
+            logger.info("Workgroup '%s': web channel enabled", wg_name)
 
         # Register admin on Discord category
         if dc_channel and wg_cfg.admin_discord_category:

@@ -85,6 +85,7 @@ class WorkgroupConfig:
     extra_skill_dirs: list[str] = field(default_factory=list)
     heartbeat_interval_seconds: int = 0  # 0 = disabled
     display_heartbeat: bool = False
+    web_enabled: bool = True
     specialists: dict[str, SpecialistConfig] = field(default_factory=dict)
 
     @property
@@ -612,6 +613,7 @@ def _parse_workgroup(
 
     heartbeat_interval_seconds = int(raw.get("heartbeat_interval_seconds", 0))
     display_heartbeat = bool(raw.get("display_heartbeat", False))
+    web_enabled = bool(raw.get("web_enabled", True))
 
     return WorkgroupConfig(
         name=name,
@@ -631,4 +633,5 @@ def _parse_workgroup(
         extra_skill_dirs=extra_skill_dirs,
         heartbeat_interval_seconds=heartbeat_interval_seconds,
         display_heartbeat=display_heartbeat,
+        web_enabled=web_enabled,
     )
