@@ -14,6 +14,12 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class WebChannel:
+    """In-process pub/sub for web UI sessions.
+
+    Frontend connects via SSE on /api/stream, server fans out events from
+    bots/workgroups via _publish.
+    """
+
     """In-process channel that routes between the Router and browser clients.
 
     HTTP/SSE routes live in `gateway.py`; this object owns the per-`chat_id`
@@ -117,6 +123,54 @@ class WebChannel:
 
     async def show_typing(self, chat_id: str) -> None:
         self._publish(chat_id, {"type": "typing"})
+
+    # ── Polymorphic tool-call rendering ──
+    # ChannelCallback delegates here; WebChannel publishes structured events
+    # consumed by the frontend's renderToolCall / renderToolResult.
+
+    async def on_tool_call(
+        self, chat_id: str, tool_id: str, name: str, input: dict, result: str,
+        *, stream_handle=None, webhook_name: str = "",
+    ) -> bool:
+        """Publish a tool_call card event. If ``result`` is non-empty (Codex
+        single-shot), immediately publish the matching tool_result too."""
+        self._publish(chat_id, {
+            "type": "tool_call",
+            "tool_id": tool_id or self._allocate_id(),
+            "name": name,
+            "args": input,
+        })
+        if result:
+            self._publish(chat_id, {
+                "type": "tool_result",
+                "tool_id": tool_id,
+                "ok": True,
+                "summary": result[:200],
+            })
+        return False  # never streams into a text handle
+
+    async def on_tool_update(
+        self, chat_id: str, tool_call_id: str, title: str,
+        status: str | None = None, input: object = None, output: object = None,
+        *, stream_handle=None, webhook_name: str = "",
+    ) -> bool:
+        """Map a tool lifecycle update to a structured tool_result event."""
+        if status == "completed":
+            self._publish(chat_id, {
+                "type": "tool_result",
+                "tool_id": tool_call_id,
+                "ok": True,
+                "summary": str(output)[:200] if output else "",
+            })
+        elif status == "failed":
+            self._publish(chat_id, {
+                "type": "tool_result",
+                "tool_id": tool_call_id,
+                "ok": False,
+                "error": str(output)[:200] if output else title,
+            })
+        # pending / in_progress: nothing to render on result side.
+        return False
 
     # --- Inbound from HTTP layer ---
 

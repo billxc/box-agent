@@ -149,6 +149,14 @@ class TestChannelCallback:
         channel.send_text = AsyncMock()
         channel.format_tool_call = lambda name, inp: f"tool:{name}"
 
+        # Mimic Discord/Telegram polymorphic on_tool_call: format_tool_call →
+        # stream_update; return True so callback marks paragraph break.
+        async def _on_tool_call(chat_id, tool_id, name, inp, result, *, stream_handle=None, webhook_name=""):
+            fmt = channel.format_tool_call(name, inp)
+            await channel.stream_update(stream_handle, f"\n{fmt}\n")
+            return True
+        channel.on_tool_call = _on_tool_call
+
         cb = ChannelCallback(channel=channel, chat_id="123")
 
         await cb.on_stream("Before tool.")

@@ -72,6 +72,12 @@ class DiscordChannel:
     _webhooks: dict[str, discord.Webhook] = field(
         default_factory=dict, repr=False
     )
+    # Per-(chat_id, tool_call_id) dedup for "in_progress" status events so we
+    # only render the first one. Lives on the channel because it's purely a
+    # rendering concern.
+    _tool_started_shown: set[tuple[str, str]] = field(
+        default_factory=set, repr=False
+    )
     # Webhook IDs whose messages should be processed (not filtered).
     _allowed_webhook_ids: set[int] = field(
         default_factory=set, repr=False
@@ -517,6 +523,63 @@ class DiscordChannel:
         if detail:
             return f"{title}: {detail}"
         return title
+
+    # ── Polymorphic tool-call rendering ──
+    # Channels own how a tool call is shown. The router-side ChannelCallback
+    # just delegates here; no branching upstream.
+
+    async def on_tool_call(
+        self, chat_id: str, tool_id: str, name: str, input: dict, result: str,
+        *, stream_handle: StreamHandle | None = None, webhook_name: str = "",
+    ) -> bool:
+        """Render a tool call to Discord. Returns True iff a stream update
+        was emitted (caller may want to insert a paragraph break before
+        further text). ``tool_id`` and ``result`` are unused on Discord
+        (it renders only the call header inline)."""
+        fmt = self.format_tool_call(name, input)
+        if not fmt:
+            return False
+        if stream_handle is not None:
+            await self.stream_update(stream_handle, f"\n{fmt}\n")
+            return True
+        await self.send_text(
+            chat_id, fmt, parse_mode=None, webhook_name=webhook_name,
+        )
+        return False
+
+    async def on_tool_update(
+        self, chat_id: str, tool_call_id: str, title: str,
+        status: str | None = None, input: object = None, output: object = None,
+        *, stream_handle: StreamHandle | None = None, webhook_name: str = "",
+    ) -> bool:
+        """Render a tool lifecycle update. Returns True iff a stream update
+        was emitted. Mirrors the icon/dedup logic ChannelCallback used to do
+        inline."""
+        if status in {"pending", "in_progress"}:
+            key = (chat_id, tool_call_id)
+            if key in self._tool_started_shown:
+                return False
+            self._tool_started_shown.add(key)
+            icon = "🔧"
+        elif status == "completed":
+            icon = "✅"
+        elif status == "failed":
+            icon = "❌"
+        else:
+            return False
+        display_text = self.format_tool_update(
+            title, status=status, input=input, output=output,
+        )
+        if not display_text:
+            return False
+        fmt = f"{icon} {display_text}"
+        if stream_handle is not None:
+            await self.stream_update(stream_handle, f"\n{fmt}\n")
+            return True
+        await self.send_text(
+            chat_id, fmt, parse_mode=None, webhook_name=webhook_name,
+        )
+        return False
 
     def _cancel_stream_timer(self, message_id: str) -> None:
         timer = self._stream_timers.pop(message_id, None)

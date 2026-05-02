@@ -58,7 +58,6 @@ class ChannelCallback:
     _closed: bool = False
     collected_text: str = ""
     _stream_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    _tool_started_shown: set[str] = field(default_factory=set)
     _late_stream_warned: bool = False
     _needs_paragraph_break_after_tool: bool = False
 
@@ -130,23 +129,19 @@ class ChannelCallback:
                 )
             await self.channel.stream_update(self._handle, prefix + text)
 
-    async def on_tool_call(self, name: str, input: dict, result: str):
+    async def on_tool_call(self, name: str, input: dict, result: str, tool_id: str = ""):
         if self._closed:
             return
-        if hasattr(self.channel, "format_tool_call"):
-            fmt = self.channel.format_tool_call(name, input)
-            if fmt:
-                if self._handle:
-                    await self.channel.stream_update(
-                        self._handle, f"\n{fmt}\n"
-                    )
-                    self._needs_paragraph_break_after_tool = True
-                else:
-                    await self.channel.send_text(
-                        self.chat_id, fmt, parse_mode=None,
-                        webhook_name=self.webhook_name,
-                    )
-        # Restart typing — tool execution may take a long time
+        # Polymorphic: each channel renders tool calls its own way.
+        # Returns True iff the channel emitted a stream update; in that case
+        # we must insert a paragraph break before further assistant text.
+        used_stream = await self.channel.on_tool_call(
+            self.chat_id, tool_id, name, input, result,
+            stream_handle=self._handle, webhook_name=self.webhook_name,
+        )
+        if used_stream:
+            self._needs_paragraph_break_after_tool = True
+        # Tool execution may take a while — restart typing indicator.
         await self.start_typing()
 
     async def on_tool_update(
@@ -159,38 +154,13 @@ class ChannelCallback:
     ):
         if self._closed:
             return
-
-        if status in {"pending", "in_progress"}:
-            if tool_call_id in self._tool_started_shown:
-                return
-            self._tool_started_shown.add(tool_call_id)
-            icon = "🔧"
-        elif status == "completed":
-            icon = "✅"
-        elif status == "failed":
-            icon = "❌"
-        else:
-            return
-
-        display_text = title
-        if hasattr(self.channel, "format_tool_update"):
-            display_text = self.channel.format_tool_update(
-                title,
-                status=status,
-                input=input,
-                output=output,
-            )
-
-        if display_text:
-            fmt = f"{icon} {display_text}"
-            if self._handle:
-                await self.channel.stream_update(self._handle, f"\n{fmt}\n")
-                self._needs_paragraph_break_after_tool = True
-            else:
-                await self.channel.send_text(
-                    self.chat_id, fmt, parse_mode=None,
-                    webhook_name=self.webhook_name,
-                )
+        used_stream = await self.channel.on_tool_update(
+            self.chat_id, tool_call_id, title,
+            status=status, input=input, output=output,
+            stream_handle=self._handle, webhook_name=self.webhook_name,
+        )
+        if used_stream:
+            self._needs_paragraph_break_after_tool = True
         await self.start_typing()
 
     async def on_error(self, error: str):
