@@ -191,6 +191,50 @@ The bot connects to Telegram and starts listening. Send it a message from your a
 
 Any other text message is sent to the configured backend as a prompt. Photos and documents are downloaded to temporary files and included as local file paths. Prefix with `@model` (e.g. `@opus explain this`) to use a specific model for one message.
 
+## Web UI
+
+Every BoxAgent process exposes a browser chat at `http://127.0.0.1:9292/` by default. Vanilla HTML/CSS/JS, mobile-first, dark/light auto.
+
+- Lists every web-enabled bot/workgroup admin in a sidebar.
+- Per-chat sessions (telegram chat id, discord channel id, web uuid) are surfaced together; click a session to load its full transcript (chained across `/compact` boundaries).
+- Streaming output renders incrementally as the backend produces tokens.
+- Dedicated "Resume Claude session" picker: lists every session in `~/.claude/projects/*` grouped by project, picks a session, resumes via `claude --resume` while routing the chat through the original cwd.
+
+Token-gated for non-localhost access:
+
+```yaml
+# config.yaml
+global:
+  web_token: "shared-secret"        # required for remote / tunnel access
+  web_port: 9292                    # configurable; default 9292
+  web_host: "127.0.0.1"             # 0.0.0.0 to expose to LAN
+```
+
+Then visit `http://<host>:9292/?token=<shared-secret>` once — the token is cached in localStorage.
+
+## Cluster (hub-and-spoke, optional)
+
+For driving multiple machines from a single browser. One node is the **host** (auto-creates and hosts a [devtunnel](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/)); other nodes are **satellites** that dial the host over WebSocket.
+
+Add to the shared `config.yaml`:
+
+```yaml
+cluster:
+  host: mbp                         # node_id of the host machine
+  tunnel_name: boxagent-cluster     # devtunnel name to manage
+  token: "<shared-cluster-secret>"
+```
+
+Each machine reads the same file; whichever has `node_id == cluster.host` becomes host, the rest auto-dial. The host's `/api/bots` then federates every connected satellite's bots, and selecting a remote bot in the web UI proxies HTTP/SSE through the WebSocket transparently.
+
+**Three layers of auth**:
+
+1. Devtunnel JWT — only the same Microsoft account can mint a connect token (satellites use the locally-logged-in `devtunnel` CLI on demand).
+2. `cluster.token` — required in the satellite's hello frame; gates membership.
+3. `web_token` — gates browser/RPC HTTP calls.
+
+Satellites do not need their own public exposure (NAT-friendly outbound WS).
+
 ## Backends
 
 | `ai_backend` | Runtime | Session Continuity | Restart Behavior | Notes |

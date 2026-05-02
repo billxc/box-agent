@@ -40,7 +40,7 @@
 
 | 功能 | 原始设计 | 当前状态 | 判断 |
 |------|----------|----------|------|
-| Web UI Channel | V1 设计 | 未实现 | 冻结 — 需求不明确 |
+| Web UI Channel | V1 设计 | ✅ 已实现 | 2026-05-02 落地，独立端口 9292 + cluster 联邦 |
 | Git 同步管理 (SyncManager) | V1 设计 | 未实现 | 冻结 — 单机够用 |
 | LiteLLM / API Backend | V1 设计 | 未实现 | 冻结 — claude-cli + codex-acp 够用 |
 | 自定义 Python Backend | V1 设计 | 未实现 | 冻结 |
@@ -76,3 +76,62 @@
 **决定**: 在愿景中加入 WebView2 集成方向。
 
 **原因**: BoxAgent 可以兼做 WebView2 宿主应用——既提供桌面端 AI 对话界面（Web UI channel 的一种实现），又能验证 WebView2 功能，一石二鸟。
+
+---
+
+## 2026-05-02: 落地 Web UI channel
+
+**决定**: 实现 Web UI channel — vanilla HTML/CSS/JS（无 build step），独立 aiohttp 端口（默认 9292），mobile-first 单页应用。
+
+**原因**: Owner 显式要求，覆盖了 AGENTS.md 之前"Web UI 已冻结"的判断。Telegram/Discord 在桌面浏览不方便，需要一个跨设备的本地优先 chat 界面。
+
+**关键设计**:
+- `WebChannel` 是 Channel 协议第三种实现，per-`chat_id` 用 `asyncio.Queue` fan-out，浏览器通过 SSE 订阅。
+- Web UI server 跟内部 `/api/schedule/run` API 分两个端口（不混淆 internal vs UI）。
+- 鉴权：localhost 直放 + `web_token` (bearer/query) + `X-BoxAgent-Trusted` header（给反向代理）。
+- 默认开启（`channels.web: false` 才关），不会影响 Telegram/Discord 已有路径。
+
+---
+
+## 2026-05-02: Session ID 跨 /compact 链式保存
+
+**决定**: `Storage.save_session` 检测到 chat_id 切换 sid 时，把旧 sid append 到 `previous_session_ids`（截断 20）。`/api/history` 走链合并多份 transcript JSONL。
+
+**原因**: Claude / Codex CLI 在 `/compact` 后会发出新 session_id，原本 BoxAgent 直接覆盖 sessions.yaml 的 sid，旧 transcript 文件就成孤儿，web UI 历史显示不全。
+
+**已知遗憾**: Resume 别人之前 compact 出来的原生 Claude session 时，那段更早的历史 Claude 自己 JSONL 里没存 parent 关系，无从恢复。
+
+---
+
+## 2026-05-02: Claude 原生 session 浏览 + 恢复
+
+**决定**: 新增 `sessions/claude_native.py`，扫 `~/.claude/projects/*/`，按项目分组 + 懒加载列出全部原生 session。Web UI sidebar 提供 "Resume Claude session..." 选择器，选中后 host BoxAgent 把对应 `session_id` + 原始 cwd workspace 写到 `sessions.yaml` 下 `bot:claude-<sid>`，next turn 时 Claude CLI 用 `--resume` 接续。
+
+**原因**: 用户想从 web UI 接管以前在终端裸跑 Claude CLI 留下的对话。
+
+**关键修复**: 项目目录名 `-Users-xiaocw-code-box-agent` naive `-`→`/` 替换会得到错误路径 `/Users/xiaocw/code/box/agent`，导致 `claude --resume` 找不到 session。改成读 JSONL 里 `cwd` 字段拿到真路径。
+
+---
+
+## 2026-05-02: Hub-and-spoke 集群架构
+
+**决定**: 一台机器为 host（自动 `devtunnel create + host`），其余作为 satellite WS 主动 dial 进来；host web UI 联邦显示所有节点的 bot，用户选远端 bot 时由 host 通过 RPC over WS 转发到对应 satellite。
+
+**原因**: 替代 Discord 作为机器间互通底层；要求"一个浏览器管所有机器"。Hub-and-spoke 比 peer-to-peer 简单：只一个公开端点，satellite 在 NAT/防火墙后不需要暴露端口。
+
+**关键设计**:
+- 配置只在共享 `config.yaml` 顶层 `cluster: {host, tunnel_name, token}`，每台机器靠自己 `node_id` 自动决定角色，**不需要任何 local 配置或手动回填**。
+- Devtunnel 创建**不带 `-a`**，默认认证 → 同 Microsoft 账号才能 mint connect token。Satellite 启动时 `devtunnel token --scopes connect` 现场拿 JWT，放 `X-Tunnel-Authorization` header。
+- 三道安全门：devtunnel JWT（账号级）+ `cluster.token`（hello frame）+ `web_token`（HTTP 层）。
+- WS RPC 协议是通用 envelope（`rpc` / `rpc_resp` / `rpc_stream` / `rpc_end`），host 几乎不用维护 per-endpoint 转发逻辑；SSE 经 sat 拆 `data:` 行 → host 拼回。
+
+**未做**：specialist 跨机调度（思路未理清，已撤回未提交的初版）。
+
+---
+
+## 2026-05-02: 配置文件如何分共享 vs 本地
+
+**决定**: 跨机器共享的配置（cluster 拓扑、bots 定义、workgroup 定义）放共享 `config.yaml`；机器自身身份（`node_id`）放 `local.yaml`。机器角色（host/satellite）由共享配置 `cluster.host` 与本地 `node_id` 比对自动得出，避免角色信息散落到本地。
+
+**原因**: 早期把 `satellite_token` / `host_url` 都放共享 config 会让每台机器都觉得自己是 host；放本地 `local.yaml` 又破坏了"共享配置即真相"的原则。最终方案：拓扑共享，身份本地，角色派生。
+

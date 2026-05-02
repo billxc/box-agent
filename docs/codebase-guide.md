@@ -13,19 +13,22 @@
 
 当前 BoxAgent 的真实范围比最早设计稿收敛得多，核心是：
 
-- 单进程管理多个 Telegram bot。
+- 单进程管理多个 Telegram / Discord / Web 三种 channel 的 bot。
 - 每个 bot 绑定一个主 AI backend，当前支持 `claude-cli`、`codex-cli` 和 `codex-acp`。
-- 普通消息走 `Telegram -> Router -> backend -> Telegram`。
+- 普通消息走 `Channel -> Router -> backend -> Channel`。
 - 支持定时任务，模式分为 `append` 和 `isolate`。
 - 有 watchdog、会话存储、内部 HTTP API、Telegram 媒体 MCP 工具。
+- **Web UI**：每台机器自带 `127.0.0.1:9292`（默认）的浏览器界面，单页应用，移动端适配，支持流式输出、session 恢复、Claude 原生 session 选择恢复。
+- **Hub-and-spoke 集群**：任意一台机器可声明为 host（自动管理 devtunnel），其余机器作为 satellite 主动 dial 进来；host 的 web UI 会列出全部节点的 bot，浏览器选远端 bot 时由 host RPC 转发到对应 satellite。
 
 当前没有落地的设计稿内容主要包括：
 
-- Web UI channel
+- WebView2 桌面端
 - Git 同步管理
 - LiteLLM / 自定义 Python backend
 - 知识库与偏好系统
 - 真正意义上的多 worker backend pool
+- Specialist 跨机调度（思路未理清）
 
 ## 建议阅读顺序
 
@@ -47,7 +50,10 @@
 | `src/boxagent/` | 运行时代码 |
 | `src/boxagent/paths.py` | 路径解析集中入口（`resolve_boxagent_dir`、`default_config_dir`、`default_local_dir`、`default_workspace_dir`） |
 | `src/boxagent/agent/` | 三种 AI backend 适配层 |
-| `src/boxagent/channels/` | Channel 抽象与 Telegram/Discord 实现（含 `md_format.py` 格式转换器） |
+| `src/boxagent/channels/` | Channel 抽象与 Telegram/Discord/Web 实现（含 `md_format.py` 格式转换器） |
+| `src/boxagent/web/static/` | Web UI 前端（vanilla HTML/CSS/JS，无 build step） |
+| `src/boxagent/cluster/` | Hub-and-spoke 集群：host 端 registry / WS handler、satellite WS 客户端、devtunnel 自动管理 |
+| `src/boxagent/sessions/` | Storage、SessionPool、Claude 原生 JSONL 解析（`claude_native.py`） |
 | `tests/unit/` | 单测，覆盖绝大多数行为语义 |
 | `tests/integration/` | 真实 CLI / E2E 冒烟 |
 | `docs/` | 设计文档、使用文档、问题分析 |
@@ -76,8 +82,78 @@ Gateway
   |-- Storage
   |-- Watchdog (per bot)
   |-- Scheduler
-  `-- HTTP API (/api/schedule/run)
+  |-- HTTP API (/api/schedule/run)
+  |-- Web UI server (port 9292, /api/{bots,sessions,history,send,stream,claude/*})
+  `-- Cluster (host: /api/sat/ws + ClusterTunnel; sat: SatelliteClient)
 ```
+
+## Web UI (channels/web.py + web/static/)
+
+`WebChannel` 是 Channel 协议的第三种实现，跟 Telegram/Discord 平级。它**不主动连任何外部服务**，只在内存里维护 per-`chat_id` 的 `asyncio.Queue` 列表。每个浏览器 tab 通过 SSE (`GET /api/stream`) 订阅一个 queue，channel 的 `send_text / stream_start / stream_update / stream_end / show_typing` 都打成事件 publish 到 queue。
+
+Gateway 启动时（与 Telegram channel 平行）：
+
+- 给每个 `web_enabled=true` 的 bot 注册一个 `WebChannel`，挂到 `router._channels["web"]`，记到 `gateway._web_channels[bot_name]`。
+- 跑一个独立的 aiohttp 应用在 `127.0.0.1:9292`（端口可配 `global.web_port`），路由：
+  - `GET /` → `web/static/index.html`
+  - `GET /api/bots` → 本机所有 web-enabled bot/workgroup admin（开了 cluster 时会再 federate satellite 上的）
+  - `GET /api/sessions?bot=X` → 跨平台列出该 bot 的所有 chat（telegram chat_id / discord channel id / web uuid）
+  - `GET /api/history?bot=X&chat_id=Y` → 把对应 transcript 还原成 `[{role,text,ts}]`
+  - `POST /api/send` → `WebChannel.inject` 注入 `IncomingMessage` 给 router
+  - `GET /api/stream` → SSE，订阅 channel queue 把事件写出
+  - `GET /api/claude/projects`、`/api/claude/sessions`、`/api/claude/transcript`、`POST /api/claude/resume` → 浏览 + 恢复 `~/.claude/projects/` 下的原生 session
+
+鉴权（`_web_authorized`）：localhost 直放、`X-BoxAgent-Trusted` header（给反向代理用）、或 `Authorization: Bearer <web_token>` / `?token=<web_token>` 任一通过即可。
+
+前端是 vanilla HTML/CSS/JS（没 build step）：sidebar 列出 bot + sessions + Claude session picker；右侧聊天面板按 `stream_delta` 累积 markdown。`stream_update` 的入参是**增量 chunk**（与 Telegram 协议一致），WebChannel 内部累积 buffer，发出的事件同时带 `delta` 和累积后的 `text`，前端只重渲一次容器。
+
+### Session 链
+
+`Storage.save_session(bot, sid, chat_id=...)` 检测到同一 chat_id 切换到新 sid（典型场景：`/compact`）时，把旧 sid push 到 `previous_session_ids`（最长 20 条）。`/api/history` 走链：把当前 sid + 链上每条 sid 对应的 transcript JSONL 读出来按 `ts` 归并。Claude 原生 resume 同理走 `~/.claude/projects/<proj>/<sid>.jsonl` 链。
+
+## Cluster (cluster/)
+
+Hub-and-spoke 单 host 拓扑，专门为"一台机器开浏览器管所有机器的 BoxAgent"设计。
+
+**配置**（`config.yaml` 顶层共享）：
+
+```yaml
+cluster:
+  host: mbp                        # 哪个 node_id 是 host
+  tunnel_name: boxagent-cluster    # devtunnel 名（host 创建 + host 它；sat 用同名解析 URL）
+  token: <shared-secret>           # cluster 层共享 secret
+```
+
+每台机器读到同一份配置，根据自己 `node_id` 自动决定角色：等于 `cluster.host` 是 host，否则是 satellite。
+
+### Host (`cluster/registry.py` + `cluster/tunnel.py`)
+
+Gateway 启动时如果是 host：
+
+1. `ClusterTunnel.start()`：`devtunnel show <name>` → 不存在就 `devtunnel create <name>`（**不带 `-a`**，默认认证 tunnel，只对同 Microsoft 账号开放）→ `devtunnel host <name>` 子进程长跑 → 解析得到 `portUri`。
+2. 在 web UI aiohttp app 上挂 `GET /api/sat/ws`，由 `SatelliteRegistry.handle_ws` 接管：每条 WS 连接收 `hello { machine_id, token, bots }` → 验 `cluster.token` → 写入 `sessions[machine_id] = SatelliteSession(ws, bots)`。
+3. `/api/bots` 现在 federate：本机 web-enabled + 所有连接中的 satellite 的 bots，每条带 `machine: <id>` 字段。
+4. `/api/sessions`、`/api/history`、`/api/send`、`/api/stream` 在处理时，若 `bot` 不在本机，调 `_remote_session_for_bot(bot)` 找拥有它的 satellite，把整个 HTTP 请求打包成 `rpc` WS 帧转发；SSE 流通过 `rpc_stream` 多帧回流，host 再写 `data:` 行给浏览器。
+
+### Satellite (`cluster/sat_client.py`)
+
+如果不是 host 但配了 cluster：
+
+1. `_devtunnel_resolve_url(tunnel_name)`：`devtunnel show <name> -j` 拿 `portUri`（同账号才查得到）。
+2. `_devtunnel_connect_token(tunnel_name)`：`devtunnel token <name> --scopes connect` 拿一个 24h JWT。
+3. WS 连 `wss://<host-url>/api/sat/ws`，header 带 `X-Tunnel-Authorization: tunnel <jwt>`（**devtunnel 层认证**），第一帧发 `hello` 带 `cluster.token`（**cluster 层认证**）+ 自己的 bot 列表。
+4. 入站 `rpc` 帧 → 直接对本机 `http://127.0.0.1:<web_port>` 发同样请求（带本机 `web_token` bearer）→ 把响应包成 `rpc_resp` 回去；SSE 响应拆 `data: ` 行包成 `rpc_stream` + `rpc_end`。
+5. 断线指数退避重连（3s → 60s 上限），断后用最新的 token + URL 再尝试。
+
+### 三道安全门
+
+| 层 | 守什么 |
+|---|---|
+| Devtunnel JWT | 没同 Microsoft 账号根本到不了 host:9292 |
+| `cluster.token` (hello frame) | 同账号下其它程序也连不进我们的 cluster |
+| `web_token` (HTTP 调用) | 浏览器/RPC HTTP 都要带 |
+
+
 
 真正负责装配这些对象的是 `Gateway`，而不是 `main.py`。`main.py` 只做 CLI 参数解析、配置加载、日志初始化、信号处理和 `Gateway.start()/stop()`。
 
