@@ -70,6 +70,8 @@ class WorkgroupConfig:
     name: str
     workspace: str = ""             # root directory; admin uses {workspace}/.boxagent-workgroup/admin/
     enabled_on_nodes: str | list[str] = ""  # empty = run everywhere
+    # Channel transport: "discord" | "web" | "" (auto: discord if discord_bot_id set, else web)
+    transport: str = ""
     # Discord config (optional — omit for non-Discord workgroups)
     discord_bot_id: str = ""        # references discord_bots.yaml
     discord_token: str = ""         # resolved token
@@ -88,6 +90,19 @@ class WorkgroupConfig:
     display_heartbeat: bool = False
     web_enabled: bool = True
     specialists: dict[str, SpecialistConfig] = field(default_factory=dict)
+
+    @property
+    def is_discord_mode(self) -> bool:
+        """True if this workgroup uses Discord as its primary channel.
+
+        Explicit ``transport: discord`` wins; otherwise inferred from the
+        presence of ``discord_bot_id``.
+        """
+        if self.transport == "discord":
+            return True
+        if self.transport == "web":
+            return False
+        return bool(self.discord_bot_id)
 
     @property
     def workgroup_dir(self) -> str:
@@ -647,10 +662,29 @@ def _parse_workgroup(
     display_heartbeat = bool(raw.get("display_heartbeat", False))
     web_enabled = bool(raw.get("web_enabled", True))
 
+    # Channel transport (optional; auto-detected when omitted).
+    transport = str(raw.get("transport", "")).strip().lower()
+    if transport not in ("", "web", "discord"):
+        raise ConfigError(
+            f"Workgroup '{name}': invalid transport '{transport}' "
+            f"(allowed: 'web', 'discord', or omit for auto-detect)"
+        )
+    if transport == "web":
+        # Web transport requires the WebChannel; force-enable it so #3a's
+        # adapter has something to publish into.
+        web_enabled = True
+        if discord_bot_id:
+            logger.warning(
+                "Workgroup '%s': transport=web with discord_bot_id set — "
+                "Discord fields will be ignored.",
+                name,
+            )
+
     return WorkgroupConfig(
         name=name,
         workspace=workspace,
         enabled_on_nodes=raw.get("enabled_on_nodes", ""),
+        transport=transport,
         discord_bot_id=discord_bot_id,
         discord_token=discord_token,
         admin_discord_category=admin_discord_category,

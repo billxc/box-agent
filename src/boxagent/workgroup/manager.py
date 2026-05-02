@@ -311,7 +311,7 @@ class WorkgroupManager:
         falls back to NullWorkgroupChannelAdapter (in-process / web-only). The
         Web adapter is added in #3 (#3a).
         """
-        if wg_cfg.discord_bot_id:
+        if wg_cfg.is_discord_mode and wg_cfg.discord_bot_id:
             dc = self.discord_channels.get(wg_cfg.discord_bot_id)
             if dc is not None:
                 return DiscordWorkgroupAdapter(dc_channel=dc)
