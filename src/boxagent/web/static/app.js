@@ -433,6 +433,9 @@
     // empty/stale content while we fetch the new bot's session list and
     // history. switchChat() will keep the mask up through its own swap.
     $("messages-mask").classList.remove("hidden");
+    // Also show a loading placeholder in the sidebar's session list so the
+    // old bot's sessions don't sit there stale during the fetch.
+    sessionList.innerHTML = "<li class='muted' style='cursor:default;'>Loading sessions…</li>";
     state.bot = botName;
     state.botMachine = machineId;
     localStorage.setItem("ba.lastBot", botName);
