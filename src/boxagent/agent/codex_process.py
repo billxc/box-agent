@@ -113,6 +113,7 @@ class CodexProcess(BaseCLIProcess):
                     "shell",
                     {"command": command},
                     f"exit={exit_code}\n{output}" if output else f"exit={exit_code}",
+                    tool_id=item.get("id", ""),
                 )
 
             elif item_type == "mcp_tool_call":
@@ -126,7 +127,10 @@ class CodexProcess(BaseCLIProcess):
                         if isinstance(block, dict) and block.get("type") == "text":
                             result_text += block.get("text", "")
                 display_name = f"{server}/{tool_name}" if server else tool_name
-                await callback.on_tool_call(display_name, arguments, result_text)
+                await callback.on_tool_call(
+                    display_name, arguments, result_text,
+                    tool_id=item.get("id", ""),
+                )
 
         elif event_type == "item.started":
             item = event.get("item", {})

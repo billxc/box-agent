@@ -15,7 +15,7 @@ class AgentCallback(Protocol):
         ...
 
     async def on_tool_call(
-        self, name: str, input: dict, result: str
+        self, name: str, input: dict, result: str, tool_id: str = ""
     ) -> None:
         """Called when a tool call is detected.
 
@@ -23,6 +23,9 @@ class AgentCallback(Protocol):
             name: Tool name (e.g., "Bash", "Read")
             input: Parsed tool input dict (accumulated from deltas)
             result: Tool result (empty string during streaming, populated after)
+            tool_id: Stable per-call id from the upstream backend (used by
+                channels that render call/result as a paired card; empty when
+                the backend doesn't expose one).
         """
         ...
 

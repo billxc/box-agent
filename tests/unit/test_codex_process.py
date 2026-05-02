@@ -172,6 +172,7 @@ async def test_command_execution(callback, process_factory):
         "shell",
         {"command": "cat test.txt"},
         "exit=0\nhello\n",
+        tool_id="item_1",
     )
 
     # Two text messages streamed

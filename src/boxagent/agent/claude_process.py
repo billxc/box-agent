@@ -32,6 +32,7 @@ class ClaudeProcess(BaseCLIProcess):
     # Internal state for streaming tool input accumulation
     _tool_inputs: dict[int, list[str]] = field(default_factory=dict, repr=False)
     _tool_names: dict[int, str] = field(default_factory=dict, repr=False)
+    _tool_ids: dict[int, str] = field(default_factory=dict, repr=False)
     fork_session: bool = False
 
     def _format_result_error(self, event: dict) -> str:
@@ -147,6 +148,7 @@ class ClaudeProcess(BaseCLIProcess):
                         block.get("name", ""),
                         block.get("input", {}),
                         "",
+                        tool_id=block.get("id", ""),
                     )
             if "session_id" in event:
                 self.session_id = event["session_id"]
@@ -170,6 +172,7 @@ class ClaudeProcess(BaseCLIProcess):
             if block.get("type") == "tool_use":
                 self._tool_names[index] = block.get("name", "")
                 self._tool_inputs[index] = []
+                self._tool_ids[index] = block.get("id", "")
 
         elif event_type == "content_block_stop":
             index = event.get("index", 0)
@@ -180,10 +183,12 @@ class ClaudeProcess(BaseCLIProcess):
                 except json.JSONDecodeError:
                     parsed_input = {}
                 await callback.on_tool_call(
-                    self._tool_names[index], parsed_input, ""
+                    self._tool_names[index], parsed_input, "",
+                    tool_id=self._tool_ids.get(index, ""),
                 )
                 del self._tool_names[index]
                 self._tool_inputs.pop(index, None)
+                self._tool_ids.pop(index, None)
 
         elif event_type == "result":
             if event.get("is_error"):
