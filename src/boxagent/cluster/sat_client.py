@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
+import shutil
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -12,6 +14,72 @@ import aiohttp
 from aiohttp import ClientSession, WSMsgType
 
 logger = logging.getLogger(__name__)
+
+
+async def _devtunnel_resolve_url(tunnel_name: str, port: int = 9292) -> str:
+    """Look up the public portUri of a tunnel by name. Same Microsoft account
+    only — that's our auth model."""
+    if not shutil.which("devtunnel"):
+        raise RuntimeError("devtunnel CLI not found on PATH")
+    proc = await asyncio.create_subprocess_exec(
+        "devtunnel", "show", tunnel_name, "-j",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out, err = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"devtunnel show '{tunnel_name}' failed: "
+            + err.decode("utf-8", "replace").strip()
+        )
+    try:
+        data = json.loads(out)
+    except Exception as e:
+        raise RuntimeError(f"devtunnel show: bad JSON: {e}")
+    tunnel = data.get("tunnel") or {}
+    for p in tunnel.get("ports") or []:
+        if int(p.get("portNumber") or 0) == port:
+            url = str(p.get("portUri") or "").rstrip("/")
+            if url:
+                return url
+    raise RuntimeError(
+        f"tunnel '{tunnel_name}' has no port {port} or hasn't been hosted yet"
+    )
+
+
+async def _devtunnel_connect_token(tunnel_name: str) -> str:
+    """Use the locally-authenticated devtunnel CLI to mint a connect JWT.
+
+    The satellite host machine is expected to be logged in via `devtunnel user
+    login` against the same Microsoft account that owns the host's cluster
+    tunnel.  This is what gates membership at the devtunnel layer — without
+    this token the satellite cannot even reach the host's HTTP server.
+    """
+    if not shutil.which("devtunnel"):
+        raise RuntimeError("devtunnel CLI not found on PATH")
+    proc = await asyncio.create_subprocess_exec(
+        "devtunnel", "token", tunnel_name, "--scopes", "connect",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out, err = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"devtunnel token failed: {err.decode('utf-8', 'replace').strip()}"
+        )
+    text = out.decode("utf-8", "replace")
+    m = re.search(r"^Token:\s*(\S+)\s*$", text, re.MULTILINE)
+    if not m:
+        raise RuntimeError("devtunnel token: no token in output")
+    return m.group(1)
+
+
+def _tunnel_name_from_url(url: str) -> str:
+    """Extract tunnel id from a portUri like https://abc-9292.jpe1.devtunnels.ms/."""
+    m = re.match(r"https?://([^.-]+)(?:-\d+)?\.([^.]+)\.devtunnels\.ms/?", url)
+    if not m:
+        return ""
+    return f"{m.group(1)}.{m.group(2)}"
 
 
 @dataclass
@@ -24,8 +92,10 @@ class SatelliteClient:
     """
 
     host_url: str           # e.g. https://abc-9292.jpe1.devtunnels.ms
-    host_token: str         # satellite_token configured on host
+    host_token: str         # cluster shared token (gates WS hello)
     machine_id: str
+    local_web_port: int
+    tunnel_name: str = ""   # devtunnel id, derived from host_url if empty
     local_web_port: int
     local_web_token: str = ""
     bot_provider: Callable[[], list[dict]] = field(default=lambda: [])
@@ -71,18 +141,45 @@ class SatelliteClient:
             logger.debug("sat: bots_update failed: %s", e)
 
     async def _run_forever(self) -> None:
-        ws_url = self._derive_ws_url(self.host_url)
+        tname = self.tunnel_name or _tunnel_name_from_url(self.host_url)
+        if not tname:
+            logger.error("sat: cannot derive tunnel name from %s", self.host_url)
+            return
         backoff = self.reconnect_delay
         while not self._stop:
             try:
                 if self._session is None:
                     self._session = ClientSession()
-                logger.info("sat: connecting to host %s", ws_url)
+                # Resolve the host URL fresh each attempt — host might have
+                # rebuilt the tunnel.
+                if self.host_url:
+                    resolved_url = self.host_url
+                else:
+                    try:
+                        resolved_url = await _devtunnel_resolve_url(
+                            tname, port=self.local_web_port,
+                        )
+                    except Exception as e:
+                        logger.warning("sat: tunnel URL resolution failed: %s", e)
+                        await asyncio.sleep(min(backoff, 60.0))
+                        backoff = min(backoff * 1.5, 60.0)
+                        continue
+                ws_url = self._derive_ws_url(resolved_url)
+                # Mint a fresh devtunnel connect token each attempt.
+                try:
+                    dt_token = await _devtunnel_connect_token(tname)
+                except Exception as e:
+                    logger.warning("sat: devtunnel token mint failed: %s", e)
+                    await asyncio.sleep(min(backoff, 60.0))
+                    backoff = min(backoff * 1.5, 60.0)
+                    continue
+                headers = {"X-Tunnel-Authorization": f"tunnel {dt_token}"}
+                logger.info("sat: connecting to host %s (tunnel %s)", ws_url, tname)
                 async with self._session.ws_connect(
-                    ws_url, heartbeat=30.0, autoping=True,
+                    ws_url, heartbeat=30.0, autoping=True, headers=headers,
                 ) as ws:
                     self._ws = ws
-                    backoff = self.reconnect_delay  # reset on success
+                    backoff = self.reconnect_delay
                     await ws.send_json({
                         "type": "hello",
                         "machine_id": self.machine_id,

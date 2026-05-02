@@ -12,7 +12,7 @@ from boxagent.agent.claude_process import ClaudeProcess
 from boxagent.channels.base import IncomingMessage
 from boxagent.channels.telegram import TelegramChannel
 from boxagent.channels.web import WebChannel
-from boxagent.cluster import SatelliteClient, SatelliteRegistry
+from boxagent.cluster import ClusterTunnel, SatelliteClient, SatelliteRegistry
 from boxagent.config import AppConfig, BotConfig, WorkgroupConfig, node_matches
 from boxagent.paths import default_config_dir, default_local_dir, default_workspace_dir
 from boxagent.router import Router
@@ -195,6 +195,7 @@ class Gateway:
     _http_runner: web.AppRunner | None = field(default=None, repr=False)
     _sat_registry: SatelliteRegistry | None = field(default=None, repr=False)
     _sat_client: SatelliteClient | None = field(default=None, repr=False)
+    _cluster_tunnel: ClusterTunnel | None = field(default=None, repr=False)
     _start_time: float = 0.0
     _workgroup_mgr: WorkgroupManager | None = field(default=None, repr=False)
 
@@ -255,21 +256,35 @@ class Gateway:
         # Start Web UI server (separate port)
         await self._start_web_http()
 
-        # If configured as a satellite, dial the host
-        if self.config.host_url:
+        # If configured as a cluster host, manage our own devtunnel for /api/sat/ws
+        if self.config.satellite_token and self.config.cluster_tunnel:
+            self._cluster_tunnel = ClusterTunnel(
+                name=self.config.cluster_tunnel,
+                port=self.config.web_port or 9292,
+            )
+            try:
+                url = await self._cluster_tunnel.start()
+                logger.info("Cluster: host devtunnel ready → %s", url)
+            except Exception as e:
+                logger.error("Cluster: failed to start host devtunnel: %s", e)
+                self._cluster_tunnel = None
+
+        # If configured as a satellite, dial the host (URL resolved via tunnel_name)
+        if (not self.config.satellite_token) and self.config.cluster_tunnel and self.config.host_token:
             mid = self.config.machine_id or self.config.node_id or "satellite"
             self._sat_client = SatelliteClient(
-                host_url=self.config.host_url,
+                host_url="",  # resolved by client via tunnel_name
                 host_token=self.config.host_token,
                 machine_id=mid,
                 local_web_port=self.config.web_port or 9292,
                 local_web_token=self.config.web_token,
+                tunnel_name=self.config.cluster_tunnel,
                 bot_provider=self._local_bot_descriptors,
             )
             self._sat_client.start()
             logger.info(
-                "Cluster: satellite mode — dialing host %s as machine_id=%s",
-                self.config.host_url, mid,
+                "Cluster: satellite mode — will resolve host via tunnel '%s' (machine_id=%s)",
+                self.config.cluster_tunnel, mid,
             )
 
         logger.info(
@@ -1440,6 +1455,14 @@ class Gateway:
             except Exception as e:
                 logger.error("Error stopping sat client: %s", e)
             self._sat_client = None
+
+        # Stop cluster devtunnel (host only)
+        if self._cluster_tunnel is not None:
+            try:
+                await self._cluster_tunnel.stop()
+            except Exception as e:
+                logger.error("Error stopping cluster tunnel: %s", e)
+            self._cluster_tunnel = None
 
         # Stop HTTP API and MCP server
         await self._stop_http()

@@ -118,9 +118,9 @@ class AppConfig:
     # If satellite_token is set, this node is a HOST: it accepts WS
     # connections at /api/sat/ws from satellite nodes that present the same token.
     satellite_token: str = ""
-    # If host_url is set, this node is a SATELLITE: it dials this URL on
-    # startup and registers its bots with the host.
-    host_url: str = ""
+    # Devtunnel name used by host (manages it) and satellites (resolves URL via it)
+    cluster_tunnel: str = ""
+    # Shared cluster secret (host validates incoming sat hello frames; sats send it)
     host_token: str = ""
     bots: dict[str, BotConfig] = field(default_factory=dict)
     workgroups: dict[str, WorkgroupConfig] = field(default_factory=dict)
@@ -239,15 +239,18 @@ def load_config(
     if not isinstance(cluster_cfg, dict):
         cluster_cfg = {}
     cluster_host = str(cluster_cfg.get("host", "") or "")
-    cluster_host_url = str(cluster_cfg.get("host_url", "") or "")
+    cluster_tunnel_name = str(cluster_cfg.get("tunnel_name", "") or "boxagent-cluster")
     cluster_token = str(cluster_cfg.get("token", "") or "")
     cluster_token = os.environ.get("BOXAGENT_CLUSTER_TOKEN", cluster_token)
     machine_id = node_id or cluster_host or ""
     is_host = bool(cluster_host) and node_id == cluster_host
-    is_satellite = bool(cluster_host) and bool(cluster_host_url) and not is_host
+    # Satellite mode is implied by cluster.host being set and not pointing at
+    # this node.  Satellites resolve the host's tunnel URL on demand via
+    # `devtunnel show <tunnel_name>` (same Microsoft account → resolvable).
+    is_satellite = bool(cluster_host) and not is_host
     satellite_token = cluster_token if is_host else ""
-    host_url = cluster_host_url if is_satellite else ""
     host_token = cluster_token if is_satellite else ""
+    cluster_tunnel = cluster_tunnel_name if (is_host or is_satellite) else ""
 
     telegram_bots = _load_telegram_bots(config_dir)
     discord_bots = _load_discord_bots(config_dir)
@@ -292,7 +295,7 @@ def load_config(
         web_host=web_host,
         machine_id=machine_id,
         satellite_token=satellite_token,
-        host_url=host_url,
+        cluster_tunnel=cluster_tunnel,
         host_token=host_token,
         bots=bots,
         workgroups=workgroups,

@@ -28,5 +28,6 @@ Wire protocol::
 
 from .registry import RemoteBot, SatelliteRegistry, SatelliteSession
 from .sat_client import SatelliteClient
+from .tunnel import ClusterTunnel
 
-__all__ = ["RemoteBot", "SatelliteRegistry", "SatelliteSession", "SatelliteClient"]
+__all__ = ["RemoteBot", "SatelliteRegistry", "SatelliteSession", "SatelliteClient", "ClusterTunnel"]
