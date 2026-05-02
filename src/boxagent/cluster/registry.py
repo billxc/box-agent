@@ -1,0 +1,246 @@
+"""Host-side: track connected satellite nodes and proxy RPC to them."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import uuid
+from dataclasses import dataclass, field
+from typing import AsyncIterator
+
+from aiohttp import web
+from aiohttp.web import WebSocketResponse
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RemoteBot:
+    """Metadata for a bot owned by a satellite node."""
+
+    name: str
+    display_name: str = ""
+    backend: str = ""
+    model: str = ""
+    kind: str = "bot"  # "bot" | "workgroup"
+
+
+class _PendingResponse:
+    """Future-like aggregator for a single RPC awaiting reply.
+
+    Non-streaming RPCs resolve `result` once with a JSON dict.
+    Streaming RPCs (used for SSE) push frames into `stream_queue` instead;
+    callers iterate via :meth:`iter_stream` until ``rpc_end`` arrives.
+    """
+
+    __slots__ = ("result", "stream_queue", "is_stream")
+
+    def __init__(self) -> None:
+        self.result: asyncio.Future[dict] = asyncio.get_event_loop().create_future()
+        self.stream_queue: asyncio.Queue = asyncio.Queue()
+        self.is_stream: bool = False
+
+
+@dataclass
+class SatelliteSession:
+    """One connected satellite node."""
+
+    machine_id: str
+    ws: WebSocketResponse
+    bots: list[RemoteBot] = field(default_factory=list)
+    _pending: dict[str, _PendingResponse] = field(default_factory=dict, repr=False)
+    _closed: bool = False
+
+    async def call(
+        self,
+        method: str,
+        path: str,
+        *,
+        query: dict | None = None,
+        body: dict | None = None,
+        timeout: float = 30.0,
+    ) -> dict:
+        """RPC: send request, await single response."""
+        rpc_id = uuid.uuid4().hex
+        pending = _PendingResponse()
+        self._pending[rpc_id] = pending
+        try:
+            await self.ws.send_json({
+                "type": "rpc",
+                "id": rpc_id,
+                "method": method,
+                "path": path,
+                "query": query or {},
+                "body": body,
+            })
+            return await asyncio.wait_for(pending.result, timeout=timeout)
+        finally:
+            self._pending.pop(rpc_id, None)
+
+    async def call_stream(
+        self,
+        method: str,
+        path: str,
+        *,
+        query: dict | None = None,
+        body: dict | None = None,
+    ) -> AsyncIterator[str]:
+        """RPC: send request, async-iterate stream frames until rpc_end."""
+        rpc_id = uuid.uuid4().hex
+        pending = _PendingResponse()
+        pending.is_stream = True
+        self._pending[rpc_id] = pending
+        try:
+            await self.ws.send_json({
+                "type": "rpc",
+                "id": rpc_id,
+                "method": method,
+                "path": path,
+                "query": query or {},
+                "body": body,
+            })
+            while True:
+                frame = await pending.stream_queue.get()
+                if frame is None:  # sentinel = rpc_end
+                    return
+                yield frame
+        finally:
+            self._pending.pop(rpc_id, None)
+
+    def _resolve(self, rpc_id: str, status: int, body: dict) -> None:
+        p = self._pending.get(rpc_id)
+        if p and not p.result.done():
+            p.result.set_result({"status": status, "body": body})
+
+    def _push_stream(self, rpc_id: str, data: str) -> None:
+        p = self._pending.get(rpc_id)
+        if p:
+            p.stream_queue.put_nowait(data)
+
+    def _end_stream(self, rpc_id: str) -> None:
+        p = self._pending.get(rpc_id)
+        if p:
+            p.stream_queue.put_nowait(None)
+
+
+@dataclass
+class SatelliteRegistry:
+    """Host-side registry of currently-connected satellites."""
+
+    expected_token: str = ""
+    sessions: dict[str, SatelliteSession] = field(default_factory=dict)
+
+    def get(self, machine_id: str) -> SatelliteSession | None:
+        return self.sessions.get(machine_id)
+
+    def list_bots(self) -> list[tuple[str, RemoteBot]]:
+        """Yield (machine_id, RemoteBot) for every registered remote bot."""
+        out: list[tuple[str, RemoteBot]] = []
+        for mid, sess in self.sessions.items():
+            for b in sess.bots:
+                out.append((mid, b))
+        return out
+
+    def find_bot(self, name: str) -> tuple[str, RemoteBot] | None:
+        """Return (machine_id, bot) for a remote bot by name. Errors on duplicates."""
+        hits = [(mid, b) for (mid, b) in self.list_bots() if b.name == name]
+        if not hits:
+            return None
+        if len(hits) > 1:
+            raise ValueError(
+                f"ambiguous bot name '{name}' across satellites: "
+                + ", ".join(m for (m, _) in hits)
+            )
+        return hits[0]
+
+    async def handle_ws(self, request: web.Request) -> web.WebSocketResponse:
+        """Aiohttp handler for /api/sat/ws."""
+        ws = web.WebSocketResponse(heartbeat=30.0)
+        await ws.prepare(request)
+
+        # Expect hello
+        sess: SatelliteSession | None = None
+        try:
+            async for msg in ws:
+                if msg.type != web.WSMsgType.TEXT:
+                    continue
+                try:
+                    payload = json.loads(msg.data)
+                except Exception:
+                    logger.warning("sat ws: invalid JSON frame")
+                    continue
+                t = payload.get("type")
+
+                if sess is None:
+                    if t != "hello":
+                        await ws.close(code=4001, message=b"expected hello")
+                        return ws
+                    if self.expected_token and payload.get("token") != self.expected_token:
+                        await ws.close(code=4003, message=b"bad token")
+                        return ws
+                    machine_id = str(payload.get("machine_id") or "").strip()
+                    if not machine_id:
+                        await ws.close(code=4002, message=b"missing machine_id")
+                        return ws
+                    bots_raw = payload.get("bots") or []
+                    bots = [
+                        RemoteBot(
+                            name=str(b.get("name") or ""),
+                            display_name=str(b.get("display_name") or ""),
+                            backend=str(b.get("backend") or ""),
+                            model=str(b.get("model") or ""),
+                            kind=str(b.get("kind") or "bot"),
+                        )
+                        for b in bots_raw
+                        if isinstance(b, dict) and b.get("name")
+                    ]
+                    sess = SatelliteSession(machine_id=machine_id, ws=ws, bots=bots)
+                    # If a previous session with this machine_id is still around,
+                    # evict it (a satellite reconnect).
+                    old = self.sessions.get(machine_id)
+                    if old is not None:
+                        old._closed = True
+                        try:
+                            await old.ws.close()
+                        except Exception:
+                            pass
+                    self.sessions[machine_id] = sess
+                    logger.info("satellite '%s' connected with %d bot(s)", machine_id, len(bots))
+                    await ws.send_json({"type": "welcome"})
+                    continue
+
+                if t == "ping":
+                    await ws.send_json({"type": "pong"})
+                elif t == "rpc_resp":
+                    sess._resolve(
+                        str(payload.get("id") or ""),
+                        int(payload.get("status") or 0),
+                        payload.get("body") or {},
+                    )
+                elif t == "rpc_stream":
+                    sess._push_stream(
+                        str(payload.get("id") or ""),
+                        str(payload.get("data") or ""),
+                    )
+                elif t == "rpc_end":
+                    sess._end_stream(str(payload.get("id") or ""))
+                elif t == "bots_update":
+                    # Satellite re-announces its bot list (e.g. after dynamic create)
+                    bots_raw = payload.get("bots") or []
+                    sess.bots = [
+                        RemoteBot(
+                            name=str(b.get("name") or ""),
+                            display_name=str(b.get("display_name") or ""),
+                            backend=str(b.get("backend") or ""),
+                            model=str(b.get("model") or ""),
+                            kind=str(b.get("kind") or "bot"),
+                        )
+                        for b in bots_raw
+                        if isinstance(b, dict) and b.get("name")
+                    ]
+        finally:
+            if sess is not None and not sess._closed:
+                self.sessions.pop(sess.machine_id, None)
+                logger.info("satellite '%s' disconnected", sess.machine_id)
+        return ws

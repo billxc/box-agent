@@ -113,6 +113,15 @@ class AppConfig:
     web_host: str = "127.0.0.1"  # Bind address for the web UI; "0.0.0.0" for LAN/phone
     web_token: str = ""
     web_trust_header: str = "X-BoxAgent-Trusted"
+    machine_id: str = ""
+    # Hub-and-spoke clustering (optional):
+    # If satellite_token is set, this node is a HOST: it accepts WS
+    # connections at /api/sat/ws from satellite nodes that present the same token.
+    satellite_token: str = ""
+    # If host_url is set, this node is a SATELLITE: it dials this URL on
+    # startup and registers its bots with the host.
+    host_url: str = ""
+    host_token: str = ""
     bots: dict[str, BotConfig] = field(default_factory=dict)
     workgroups: dict[str, WorkgroupConfig] = field(default_factory=dict)
     telegram_bots: dict[str, str] = field(default_factory=dict)
@@ -224,6 +233,21 @@ def load_config(
     web_port = int(os.environ.get("BOXAGENT_WEB_PORT", web_port))
     web_host = str(global_cfg.get("web_host", "127.0.0.1") or "127.0.0.1")
     web_host = os.environ.get("BOXAGENT_WEB_HOST", web_host)
+    # Cluster: shared block in config.yaml describes the topology;
+    # each machine self-selects its role by comparing its node_id to cluster.host.
+    cluster_cfg = effective_raw.get("cluster") or {}
+    if not isinstance(cluster_cfg, dict):
+        cluster_cfg = {}
+    cluster_host = str(cluster_cfg.get("host", "") or "")
+    cluster_host_url = str(cluster_cfg.get("host_url", "") or "")
+    cluster_token = str(cluster_cfg.get("token", "") or "")
+    cluster_token = os.environ.get("BOXAGENT_CLUSTER_TOKEN", cluster_token)
+    machine_id = node_id or cluster_host or ""
+    is_host = bool(cluster_host) and node_id == cluster_host
+    is_satellite = bool(cluster_host) and bool(cluster_host_url) and not is_host
+    satellite_token = cluster_token if is_host else ""
+    host_url = cluster_host_url if is_satellite else ""
+    host_token = cluster_token if is_satellite else ""
 
     telegram_bots = _load_telegram_bots(config_dir)
     discord_bots = _load_discord_bots(config_dir)
@@ -266,6 +290,10 @@ def load_config(
         web_trust_header=web_trust_header,
         web_port=web_port,
         web_host=web_host,
+        machine_id=machine_id,
+        satellite_token=satellite_token,
+        host_url=host_url,
+        host_token=host_token,
         bots=bots,
         workgroups=workgroups,
         telegram_bots=telegram_bots,

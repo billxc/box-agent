@@ -12,6 +12,7 @@ from boxagent.agent.claude_process import ClaudeProcess
 from boxagent.channels.base import IncomingMessage
 from boxagent.channels.telegram import TelegramChannel
 from boxagent.channels.web import WebChannel
+from boxagent.cluster import SatelliteClient, SatelliteRegistry
 from boxagent.config import AppConfig, BotConfig, WorkgroupConfig, node_matches
 from boxagent.paths import default_config_dir, default_local_dir, default_workspace_dir
 from boxagent.router import Router
@@ -192,6 +193,8 @@ class Gateway:
     _scheduler: Scheduler | None = field(default=None, repr=False)
     _scheduler_task: asyncio.Task | None = field(default=None, repr=False)
     _http_runner: web.AppRunner | None = field(default=None, repr=False)
+    _sat_registry: SatelliteRegistry | None = field(default=None, repr=False)
+    _sat_client: SatelliteClient | None = field(default=None, repr=False)
     _start_time: float = 0.0
     _workgroup_mgr: WorkgroupManager | None = field(default=None, repr=False)
 
@@ -251,6 +254,23 @@ class Gateway:
 
         # Start Web UI server (separate port)
         await self._start_web_http()
+
+        # If configured as a satellite, dial the host
+        if self.config.host_url:
+            mid = self.config.machine_id or self.config.node_id or "satellite"
+            self._sat_client = SatelliteClient(
+                host_url=self.config.host_url,
+                host_token=self.config.host_token,
+                machine_id=mid,
+                local_web_port=self.config.web_port or 9292,
+                local_web_token=self.config.web_token,
+                bot_provider=self._local_bot_descriptors,
+            )
+            self._sat_client.start()
+            logger.info(
+                "Cluster: satellite mode — dialing host %s as machine_id=%s",
+                self.config.host_url, mid,
+            )
 
         logger.info(
             "Gateway ready: %d bot(s) active", len(self.config.bots)
@@ -635,6 +655,11 @@ class Gateway:
         wapp.router.add_get("/api/claude/sessions", self._handle_claude_sessions)
         wapp.router.add_get("/api/claude/transcript", self._handle_claude_transcript)
         wapp.router.add_post("/api/claude/resume", self._handle_claude_resume)
+        # Hub-and-spoke: WS endpoint for satellite nodes
+        if self.config.satellite_token:
+            self._sat_registry = SatelliteRegistry(expected_token=self.config.satellite_token)
+            wapp.router.add_get("/api/sat/ws", self._sat_registry.handle_ws)
+            logger.info("Cluster: host mode enabled (accepting satellites at /api/sat/ws)")
         web_static = _Path(__file__).parent / "web" / "static"
         if web_static.is_dir():
             wapp.router.add_static("/", path=str(web_static), show_index=False)
@@ -658,6 +683,30 @@ class Gateway:
             await runner.cleanup()
             self._web_runner = None
         self._web_port_file.unlink(missing_ok=True)
+
+    def _local_bot_descriptors(self) -> list[dict]:
+        """List of {name, display_name, backend, model, kind} for everything web-enabled here."""
+        out: list[dict] = []
+        for name in self._web_channels:
+            cfg = self.config.bots.get(name)
+            wg = self.config.workgroups.get(name)
+            if cfg is not None:
+                out.append({
+                    "name": name,
+                    "display_name": cfg.display_name or name,
+                    "backend": cfg.ai_backend,
+                    "model": cfg.model,
+                    "kind": "bot",
+                })
+            elif wg is not None:
+                out.append({
+                    "name": name,
+                    "display_name": wg.display_name or name,
+                    "backend": wg.ai_backend,
+                    "model": wg.model,
+                    "kind": "workgroup",
+                })
+        return out
 
     async def _stop_http(self) -> None:
         """Stop the HTTP API server."""
@@ -987,6 +1036,7 @@ class Gateway:
         if not self._web_authorized(request):
             return self._web_unauthorized()
         bots = []
+        local_mid = self.config.machine_id or self.config.node_id or ""
         for name, ch in self._web_channels.items():
             cfg = self.config.bots.get(name)
             wg = self.config.workgroups.get(name)
@@ -997,6 +1047,7 @@ class Gateway:
                     "backend": cfg.ai_backend,
                     "model": cfg.model,
                     "kind": "bot",
+                    "machine": local_mid,
                 })
             elif wg is not None:
                 bots.append({
@@ -1005,6 +1056,18 @@ class Gateway:
                     "backend": wg.ai_backend,
                     "model": wg.model,
                     "kind": "workgroup",
+                    "machine": local_mid,
+                })
+        # Federate: include bots from connected satellites
+        if self._sat_registry is not None:
+            for mid, b in self._sat_registry.list_bots():
+                bots.append({
+                    "name": b.name,
+                    "display_name": (b.display_name or b.name) + f"  @{mid}",
+                    "backend": b.backend,
+                    "model": b.model,
+                    "kind": b.kind,
+                    "machine": mid,
                 })
         return web.json_response({"bots": bots})
 
@@ -1015,6 +1078,11 @@ class Gateway:
         bot = request.query.get("bot", "")
         if not bot:
             return web.json_response({"ok": False, "error": "missing bot"}, status=400)
+        # Remote? proxy to the satellite that owns this bot.
+        if bot not in self._web_channels:
+            mid, sess = self._remote_session_for_bot(bot)
+            if sess is not None:
+                return await self._proxy_to_remote(sess, "GET", "/api/sessions", request)
         if not self._storage:
             return web.json_response({"ok": True, "sessions": []})
 
@@ -1075,6 +1143,66 @@ class Gateway:
         sessions.sort(key=lambda x: x.get("last_ts") or 0, reverse=True)
         return web.json_response({"ok": True, "sessions": sessions})
 
+    def _remote_session_for_bot(self, bot: str):
+        """Return (machine_id, SatelliteSession) if `bot` belongs to a connected sat, else (None, None)."""
+        if self._sat_registry is None:
+            return None, None
+        try:
+            hit = self._sat_registry.find_bot(bot)
+        except ValueError as e:
+            logger.warning("ambiguous remote bot lookup: %s", e)
+            return None, None
+        if hit is None:
+            return None, None
+        mid, _ = hit
+        return mid, self._sat_registry.get(mid)
+
+    async def _proxy_to_remote(
+        self,
+        sess,
+        method: str,
+        path: str,
+        request: web.Request,
+        body: dict | None = None,
+    ) -> web.Response:
+        """Forward an HTTP request to a satellite over WS RPC and return its response."""
+        try:
+            result = await sess.call(
+                method, path,
+                query=dict(request.query),
+                body=body,
+            )
+        except asyncio.TimeoutError:
+            return web.json_response({"ok": False, "error": "remote timeout"}, status=504)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": f"remote error: {e}"}, status=502)
+        return web.json_response(result.get("body") or {}, status=int(result.get("status") or 200))
+
+    async def _proxy_stream_to_remote(
+        self,
+        sess,
+        path: str,
+        request: web.Request,
+    ) -> web.StreamResponse:
+        """Forward an SSE GET to a satellite, relay frames to the browser."""
+        resp = web.StreamResponse(
+            status=200,
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+        await resp.prepare(request)
+        await resp.write(b": connected\n\n")
+        try:
+            async for data in sess.call_stream("GET", path, query=dict(request.query)):
+                await resp.write(f"data: {data}\n\n".encode("utf-8"))
+        except (ConnectionResetError, asyncio.CancelledError):
+            pass
+        return resp
+
     async def _handle_web_history(self, request: web.Request) -> web.Response:
         if not self._web_authorized(request):
             return self._web_unauthorized()
@@ -1083,6 +1211,9 @@ class Gateway:
         if not bot or not chat_id:
             return web.json_response({"ok": False, "error": "missing bot/chat_id"}, status=400)
         if bot not in self._web_channels:
+            mid, sess = self._remote_session_for_bot(bot)
+            if sess is not None:
+                return await self._proxy_to_remote(sess, "GET", "/api/history", request)
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
 
         history: list[dict] = []
@@ -1162,6 +1293,9 @@ class Gateway:
             return web.json_response({"ok": False, "error": "missing bot/chat_id/text"}, status=400)
         ch = self._web_channels.get(bot)
         if ch is None:
+            mid, sess = self._remote_session_for_bot(bot)
+            if sess is not None:
+                return await self._proxy_to_remote(sess, "POST", "/api/send", request, body=body)
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
         try:
             await ch.inject(chat_id=chat_id, text=text, user_id="web")
@@ -1177,6 +1311,9 @@ class Gateway:
         chat_id = request.query.get("chat_id", "")
         ch = self._web_channels.get(bot)
         if ch is None or not chat_id:
+            mid, sess = self._remote_session_for_bot(bot)
+            if sess is not None and chat_id:
+                return await self._proxy_stream_to_remote(sess, "/api/stream", request)
             return web.json_response({"ok": False, "error": "bot not web-enabled or missing chat_id"}, status=404)
 
         resp = web.StreamResponse(
@@ -1295,6 +1432,14 @@ class Gateway:
 
     async def stop(self) -> None:
         logger.info("Gateway shutting down...")
+
+        # Stop satellite WS client (if running)
+        if self._sat_client is not None:
+            try:
+                await self._sat_client.stop()
+            except Exception as e:
+                logger.error("Error stopping sat client: %s", e)
+            self._sat_client = None
 
         # Stop HTTP API and MCP server
         await self._stop_http()
