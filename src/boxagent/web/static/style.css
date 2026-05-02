@@ -247,6 +247,17 @@ body.sidebar-dragging * { user-select: none !important; }
   border-bottom-left-radius: 6px;
 }
 .msg .md { white-space: normal; }
+.msg-time {
+  display: block;
+  margin-top: 4px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.55;
+  user-select: none;
+  letter-spacing: 0.2px;
+}
+.msg.user .msg-time { text-align: right; color: var(--user-fg); }
+.msg.assistant .msg-time { text-align: left; color: var(--muted); }
 .msg .md p { margin: 0 0 8px; }
 .msg .md p:last-child { margin: 0; }
 .msg .md pre {

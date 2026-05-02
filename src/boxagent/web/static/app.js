@@ -115,8 +115,31 @@
     md.className = "md";
     md.innerHTML = role === "user" ? escapeHtml(text).replace(/\n/g, "<br>") : renderMd(text);
     el.appendChild(md);
+    // Per-message timestamp. ts is epoch seconds (server-assigned via WebChannel
+    // _publish, or stored in transcript). Falls back to "now" for safety.
+    const tsSec = (opts.ts && opts.ts > 0) ? opts.ts : (Date.now() / 1000);
+    const time = document.createElement("time");
+    time.className = "msg-time";
+    const d = new Date(tsSec * 1000);
+    time.textContent = _fmtMessageTime(d);
+    time.title = d.toLocaleString();
+    time.dateTime = d.toISOString();
+    el.appendChild(time);
     if (opts.id) el.dataset.id = opts.id;
     return el;
+  }
+
+  // HH:MM if today, otherwise MM-DD HH:MM. Locale-aware via Intl, 24h to keep
+  // chats compact and unambiguous.
+  function _fmtMessageTime(d) {
+    const now = new Date();
+    const sameDay = d.getFullYear() === now.getFullYear()
+      && d.getMonth() === now.getMonth()
+      && d.getDate() === now.getDate();
+    const pad = (n) => String(n).padStart(2, "0");
+    const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    if (sameDay) return hm;
+    return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}`;
   }
 
   function addMessage(role, text, opts = {}) {
@@ -249,7 +272,7 @@
 
     const frag = document.createDocumentFragment();
     for (const h of history) {
-      const el = buildMessage(h.role, h.text);
+      const el = buildMessage(h.role, h.text, { ts: h.ts });
       el.style.animation = "none";
       frag.appendChild(el);
     }
@@ -285,7 +308,7 @@
   function handleEvent(ev) {
     switch (ev.type) {
       case "message": {
-        addMessage(ev.role || "assistant", ev.text || "", { id: ev.message_id });
+        addMessage(ev.role || "assistant", ev.text || "", { id: ev.message_id, ts: ev.ts });
         if (ev.role === "assistant") touchSession(ev.text || "");
         else touchSession(ev.text || "");
         break;
@@ -293,7 +316,7 @@
       case "typing": showTyping(); break;
       case "stream_start": {
         removeTyping();
-        const el = addMessage("assistant", "", { id: ev.message_id });
+        const el = addMessage("assistant", "", { id: ev.message_id, ts: ev.ts });
         state.streamMsgs[ev.message_id] = { el, text: "" };
         break;
       }
