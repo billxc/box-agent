@@ -135,6 +135,11 @@ body.sidebar-dragging * { user-select: none !important; }
 .machine-bots li.active { background: var(--bg); outline: 1px solid var(--accent); }
 .machine-bots .kind { font-size: 9px; color: var(--muted); padding: 0 4px; border: 1px solid var(--border); border-radius: 3px; flex-shrink: 0; }
 .machine.collapsed .machine-bots { display: none; }
+
+/* Specialist sub-tiles nested under a workgroup admin bot. */
+.specialist-sublist { padding: 2px 0 2px 16px !important; margin-top: 2px; border-left: 1px dashed var(--border); }
+.machine-bots li.specialist { font-size: 11px; color: var(--muted); padding: 2px 6px; }
+.machine-bots li.specialist.active { color: var(--text); background: var(--bg); outline: 1px solid var(--accent); }
 .machine.collapsed .caret::before { content: "▸"; }
 .machine:not(.collapsed) .caret::before { content: "▾"; }
 

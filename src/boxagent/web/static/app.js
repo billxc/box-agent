@@ -24,6 +24,7 @@
     collapsed: new Set(JSON.parse(localStorage.getItem("ba.collapsedMachines") || "[]")),
     sessions: {},         // "machine|bot" -> {chat_id: {title, preview, ts}}  (local browser-side)
     serverSessions: {},   // "machine|bot" -> [{chat_id, platform, preview, last_ts, ...}]
+    specialists: {},      // "machine|wg" -> [{name, display_name}] (workgroup specialists)
     chatId: null,
     es: null,
     streamMsgs: {},
@@ -53,6 +54,24 @@
   }
   function saveSessions(machine, bot, sessions) {
     localStorage.setItem("ba.sessions." + botKey(machine, bot), JSON.stringify(sessions));
+  }
+
+  // Fetch the specialist list for a workgroup once per session and cache it.
+  // Local-only for v1: remote-machine workgroups would need API forwarding
+  // (out of scope; tracked under #9).
+  async function loadSpecialists(machine, wgName) {
+    const key = botKey(machine, wgName);
+    if (state.specialists[key]) return state.specialists[key];
+    let list = [];
+    try {
+      const r = await api(`workgroup/specialists?workgroup=${encodeURIComponent(wgName)}`);
+      if (r.ok) {
+        const data = await r.json();
+        if (data && data.ok && Array.isArray(data.specialists)) list = data.specialists;
+      }
+    } catch { /* swallow — cache empty list to avoid retry loop */ }
+    state.specialists[key] = list;
+    return list;
   }
 
   async function fetchServerSessions(machine, bot) {
@@ -404,7 +423,9 @@
       bots.className = "machine-bots";
       for (const b of (m.bots || [])) {
         const bli = document.createElement("li");
-        if (state.bot === b.name && state.botMachine === m.machine_id) bli.classList.add("active");
+        if (state.bot === b.name && state.botMachine === m.machine_id && !isSpecialistChat(state.chatId)) {
+          bli.classList.add("active");
+        }
         bli.innerHTML = `<span>${escapeHtml(b.display_name || b.name)}</span><span class="kind">${b.kind || "bot"}</span>`;
         bli.onclick = (e) => {
           e.stopPropagation();
@@ -412,6 +433,16 @@
           selectBot(b.name, m.machine_id);
         };
         bots.appendChild(bli);
+
+        // For local workgroup admins, render specialists as collapsible
+        // children so users can open each specialist's stream directly.
+        // Remote workgroups are skipped (cluster RPC needed; #9).
+        if (b.kind === "workgroup" && m.self) {
+          const subUl = document.createElement("ul");
+          subUl.className = "machine-bots specialist-sublist";
+          bli.appendChild(subUl);
+          renderSpecialistsInto(subUl, m.machine_id, b.name);
+        }
       }
       if (!(m.bots || []).length) {
         bots.innerHTML = "<li class='muted' style='cursor:default;'>(no bots)</li>";
@@ -419,6 +450,77 @@
       li.appendChild(bots);
       machineList.appendChild(li);
     }
+  }
+
+  // Marker: chat ids of the form "wg:<sp_name>" are specialist sub-chats.
+  function isSpecialistChat(chatId) {
+    return typeof chatId === "string" && chatId.startsWith("wg:");
+  }
+
+  // Populate `<ul>` with one <li> per specialist of the given workgroup.
+  // Uses cached state.specialists; first call triggers a fetch and re-render.
+  function renderSpecialistsInto(ul, machineId, wgName) {
+    const key = botKey(machineId, wgName);
+    const cached = state.specialists[key];
+    if (!cached) {
+      ul.innerHTML = "<li class='muted specialist' style='cursor:default;'>…</li>";
+      loadSpecialists(machineId, wgName).then(() => renderMachines());
+      return;
+    }
+    ul.innerHTML = "";
+    if (cached.length === 0) {
+      // Don't show an empty placeholder — just collapse.
+      return;
+    }
+    for (const sp of cached) {
+      const li = document.createElement("li");
+      li.className = "specialist";
+      const chatId = `wg:${sp.name}`;
+      if (state.bot === wgName && state.botMachine === machineId && state.chatId === chatId) {
+        li.classList.add("active");
+      }
+      li.innerHTML = `<span>↳ ${escapeHtml(sp.display_name || sp.name)}</span>`;
+      li.onclick = (e) => {
+        e.stopPropagation();
+        selectSpecialist(machineId, wgName, sp);
+      };
+      ul.appendChild(li);
+    }
+  }
+
+  // Open a specialist's chat. Same bot (the workgroup admin) but chat_id
+  // points at the specialist's virtual `wg:<name>` stream so the SSE
+  // subscription receives that specialist's events.
+  async function selectSpecialist(machineId, wgName, sp) {
+    const chatId = `wg:${sp.name}`;
+    // Make sure the target bot is loaded as the active bot first.
+    if (state.bot !== wgName || state.botMachine !== machineId) {
+      $("messages-mask").classList.remove("hidden");
+      sessionList.innerHTML = "<li class='muted' style='cursor:default;'>Loading sessions…</li>";
+      state.bot = wgName;
+      state.botMachine = machineId;
+      localStorage.setItem("ba.lastBot", wgName);
+      localStorage.setItem("ba.lastBotMachine", machineId);
+      sessionsOf.textContent = `· ${wgName} @ ${machineId}`;
+      const key = botKey(machineId, wgName);
+      state.sessions[key] = loadSessions(machineId, wgName);
+      state.serverSessions[key] = await fetchServerSessions(machineId, wgName);
+    }
+    // Persist a session entry for this specialist chat so the session
+    // sidebar lists it like any other conversation.
+    const key = botKey(machineId, wgName);
+    const sessions = state.sessions[key] || {};
+    if (!sessions[chatId]) {
+      sessions[chatId] = {
+        title: `Specialist · ${sp.display_name || sp.name}`,
+        preview: "",
+        ts: Date.now(),
+      };
+      saveSessions(machineId, wgName, sessions);
+      state.sessions[key] = sessions;
+    }
+    renderMachines();
+    await switchChat(chatId);
   }
 
   function toggleMachine(mid) {
