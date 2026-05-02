@@ -478,13 +478,15 @@ class Gateway:
             info_lines.append("\u26a0\ufe0f workspace was not a git repo, created .git for skill discovery")
         notify_text = "\n".join(info_lines)
 
-        # Telegram: send immediately (user ID = chat ID for private chats)
+        # Telegram: send asynchronously so the next bot's startup isn't blocked on this HTTPS call
         tg_chat_id = str(bot_cfg.telegram_allowed_users[0]) if bot_cfg.telegram_token and bot_cfg.telegram_allowed_users else ""
         if tg_chat_id and name in self._channels:
-            try:
-                await self._channels[name].send_text(tg_chat_id, notify_text)
-            except Exception as e:
-                logger.warning("Failed to send Telegram startup notification for '%s': %s", name, e)
+            async def _send_tg_notify(ch=self._channels[name], cid=tg_chat_id, text=notify_text, bot_name=name):
+                try:
+                    await ch.send_text(cid, text)
+                except Exception as e:
+                    logger.warning("Failed to send Telegram startup notification for '%s': %s", bot_name, e)
+            asyncio.create_task(_send_tg_notify())
 
         # Discord: send DM after bot is ready (on_ready fires async)
         dc_user_id = str(bot_cfg.discord_allowed_users[0]) if bot_cfg.discord_token and bot_cfg.discord_allowed_users else ""
@@ -730,6 +732,40 @@ class Gateway:
             self._http_runner = None
         self._api_port_file.unlink(missing_ok=True)
 
+    def _pick_mcp_port(self) -> int:
+        """Pick an MCP port. Preference order: configured > previous > 9390+."""
+        import socket
+
+        def _free(p: int) -> bool:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                try:
+                    s.bind(("127.0.0.1", p))
+                    return True
+                except OSError:
+                    return False
+
+        configured = getattr(self.config, "mcp_port", 0) or 0
+        if configured:
+            return configured  # explicit config wins; let uvicorn fail loudly if busy
+
+        candidates: list[int] = []
+        if self._mcp_port_file.exists():
+            try:
+                prev = int(self._mcp_port_file.read_text(encoding="utf-8").strip())
+                if prev > 0:
+                    candidates.append(prev)
+            except Exception:
+                pass
+        for p in range(9390, 9500):
+            if p not in candidates:
+                candidates.append(p)
+
+        for p in candidates:
+            if _free(p):
+                return p
+        return 0  # fall back to OS-assigned
+
     async def _start_mcp_http(self) -> None:
         """Start the MCP streamable-http server (uvicorn)."""
         try:
@@ -742,7 +778,7 @@ class Gateway:
                 node_id=self.config.node_id,
                 gateway=self,
             )
-            mcp_port = getattr(self.config, "mcp_port", 0) or 0
+            mcp_port = self._pick_mcp_port()
             config = uvicorn.Config(
                 starlette_app,
                 host="127.0.0.1",
