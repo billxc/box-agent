@@ -12,7 +12,6 @@ import yaml
 from boxagent.config import BotConfig, SpecialistConfig, WorkgroupConfig
 from boxagent.paths import resolve_boxagent_dir
 from boxagent.workgroup.channel_adapter import (
-    DiscordWorkgroupAdapter,
     NullWorkgroupChannelAdapter,
     WebWorkgroupAdapter,
     WorkgroupChannelAdapter,
@@ -305,28 +304,24 @@ class WorkgroupManager:
         return sp_router
 
     def _build_adapter(self, wg_cfg: WorkgroupConfig) -> WorkgroupChannelAdapter:
-        """Pick a channel adapter based on workgroup config.
+        """Pick the workgroup's internal message adapter.
 
-        Selection:
-        - Discord: ``is_discord_mode`` AND a connected channel object exists
-        - Web:     not Discord mode AND a WebChannel is registered for this wg
-        - Null:    fallback (in-process / channel not yet ready)
+        Web is the only real workgroup substrate. Discord (if configured on
+        ``discord_bot_id``) is registered separately as an ingress channel
+        for admin's inbound messages — it is no longer part of the workgroup
+        message bus. Falls back to NullWorkgroupChannelAdapter if no
+        WebChannel exists yet.
         """
-        if wg_cfg.is_discord_mode and wg_cfg.discord_bot_id:
-            dc = self.discord_channels.get(wg_cfg.discord_bot_id)
-            if dc is not None:
-                return DiscordWorkgroupAdapter(dc_channel=dc)
-        if not wg_cfg.is_discord_mode:
-            web_ch = self.web_channels.get(wg_cfg.name)
-            if web_ch is not None:
-                return WebWorkgroupAdapter(web_channel=web_ch)
+        web_ch = self.web_channels.get(wg_cfg.name)
+        if web_ch is not None:
+            return WebWorkgroupAdapter(web_channel=web_ch)
         return NullWorkgroupChannelAdapter()
 
     async def start_workgroup(self, wg_name: str, wg_cfg: WorkgroupConfig) -> None:
         """Initialize a standalone workgroup: create admin + specialist agents."""
-        # --- Web channel must exist BEFORE building the adapter so the web
-        # adapter can hold a reference. ---
-        if wg_cfg.web_enabled and wg_name not in self.web_channels:
+        # Web is the workgroup's substrate — always create the WebChannel
+        # (even if web_enabled was set false in yaml; workgroup needs it).
+        if wg_name not in self.web_channels:
             from boxagent.channels.web import WebChannel
             self.web_channels[wg_name] = WebChannel(bot_name=wg_name)
 
@@ -399,21 +394,51 @@ class WorkgroupManager:
         )
         self.routers[wg_name] = admin_router
 
-        # --- Web channel inbound wiring (channel itself was created above so
-        # the adapter could hold it; on_message + router._channels need the
-        # admin_router which was just constructed). ---
-        if wg_cfg.web_enabled:
-            web_ch = self.web_channels[wg_name]
-            web_ch.on_message = admin_router.handle_message
-            admin_router._channels["web"] = web_ch
-            logger.info("Workgroup '%s': web channel enabled", wg_name)
+        # --- Web channel inbound wiring (the workgroup substrate). ---
+        web_ch = self.web_channels[wg_name]
+        web_ch.on_message = admin_router.handle_message
+        admin_router._channels["web"] = web_ch
+        logger.info("Workgroup '%s': web channel enabled", wg_name)
 
-        # Register admin inbound routes via the channel adapter (Discord today;
-        # web/null adapters are no-ops since web is wired above).
-        await adapter.register_admin(admin_router, wg_cfg)
+        # --- Discord ingress (optional, no longer a workgroup substrate). ---
+        # When discord_bot_id is set, register admin to receive inbound
+        # messages from a Discord category and/or channel. Replies go back
+        # to Discord via Router's normal channel resolution. Workgroup
+        # internals (specialist visibility, peer messaging, notifications)
+        # all run over Web — Discord is purely an inbound front door here.
+        if wg_cfg.discord_bot_id:
+            dc_channel = self.discord_channels.get(wg_cfg.discord_bot_id)
+            if dc_channel is not None:
+                if wg_cfg.admin_discord_category:
+                    dc_channel.register_route(
+                        admin_router.handle_message,
+                        [wg_cfg.admin_discord_category],
+                    )
+                    admin_router._channels["discord"] = dc_channel
+                    logger.info(
+                        "Workgroup '%s': Discord ingress on category %d",
+                        wg_name, wg_cfg.admin_discord_category,
+                    )
+                if wg_cfg.admin_discord_channel:
+                    try:
+                        dc_channel.register_channel_route(
+                            admin_router.handle_message,
+                            wg_cfg.admin_discord_channel,
+                        )
+                        admin_router._channels["discord"] = dc_channel
+                        logger.info(
+                            "Workgroup '%s': Discord ingress on channel %d",
+                            wg_name, wg_cfg.admin_discord_channel,
+                        )
+                    except ValueError:
+                        logger.debug(
+                            "Workgroup '%s': Discord channel %d already registered",
+                            wg_name, wg_cfg.admin_discord_channel,
+                        )
 
-        # Register peer channel route for cross-admin messaging
-        await adapter.register_peer(admin_router, wg_cfg)
+        # Cross-admin peer messaging is no longer Discord-channel-based
+        # (handled by cluster RPC in #8). discord_peer_channel in yaml is
+        # ignored; left as a no-op deprecation point.
 
         # --- Create specialists (already merged above) ---
         specialist_names = []
@@ -430,11 +455,10 @@ class WorkgroupManager:
 
         # --- Start heartbeat (if configured) ---
         if wg_cfg.heartbeat_interval_seconds > 0:
-            # Heartbeat publishing currently only supports Discord. For non-Discord
-            # adapters dc_channel is None — heartbeat still runs (admin context refresh)
-            # but skips the visible "───── heartbeat ─────" message. #3a will add
-            # web visibility via adapter.notify_admin.
-            hb_dc_channel = getattr(adapter, "dc_channel", None)
+            # Heartbeat is admin context refresh; the visible "─── heartbeat ───"
+            # publish is no longer wired (Discord-only path retired). The
+            # HeartbeatManager keeps its discord_channel param for direct-test
+            # use; we always pass None here.
             hb = HeartbeatManager(
                 wg_name=wg_name,
                 admin_pool=admin_pool,
@@ -444,8 +468,8 @@ class WorkgroupManager:
                 ai_backend=wg_cfg.ai_backend,
                 model=wg_cfg.model,
                 yolo=wg_cfg.yolo,
-                discord_channel=hb_dc_channel,
-                discord_chat_id=str(wg_cfg.admin_discord_channel) if wg_cfg.admin_discord_channel else "",
+                discord_channel=None,
+                discord_chat_id="",
                 display_heartbeat=wg_cfg.display_heartbeat,
                 start_time=self.start_time,
                 get_running_tasks=lambda wg=wg_name: self._get_running_tasks(wg),
