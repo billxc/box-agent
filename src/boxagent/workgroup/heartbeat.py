@@ -104,6 +104,7 @@ class HeartbeatManager:
     yolo: bool = False
     discord_channel: object | None = None  # DiscordChannel
     discord_chat_id: str = ""  # actual text channel ID (not category)
+    web_channel: object | None = None  # WebChannel — published to as fallback when Discord absent
     display_heartbeat: bool = False
     start_time: float = 0.0
     get_running_tasks: object = None  # Callable[[], list[dict]]
@@ -149,32 +150,39 @@ class HeartbeatManager:
                 break
 
     async def _send_display(self, text: str) -> None:
-        """Send a heartbeat display message via dedicated webhook.
+        """Send a heartbeat display message.
 
-        Uses _ensure_webhook (NOT ensure_allowed_webhook) so the message
-        is filtered out by _handle_incoming and never reaches the admin router.
-        Falls back to send_text for DM channels (which don't support webhooks);
-        bot's own messages are filtered by the is_self check in _handle_incoming.
+        Discord path (legacy): _ensure_webhook + send so the message is
+        filtered out by _handle_incoming and never reaches the admin router.
+        Falls back to send_text for DM channels.
+
+        Web path: publish to a synthetic ``heartbeat:<wg_name>`` chat_id on
+        the host's WebChannel. Web UI users can open this chat to inspect
+        heartbeat history.
         """
-        try:
-            # Try webhook first (guild channels)
-            wh = await self.discord_channel._ensure_webhook("Heartbeat", self.discord_chat_id)
-            if wh:
-                from boxagent.channels.splitter import split_message
-                for chunk in split_message(text, 2000):
-                    await wh.send(chunk, wait=True)
+        if self.discord_channel:
+            try:
+                wh = await self.discord_channel._ensure_webhook("Heartbeat", self.discord_chat_id)
+                if wh:
+                    from boxagent.channels.splitter import split_message
+                    for chunk in split_message(text, 2000):
+                        await wh.send(chunk, wait=True)
+                    return
+            except Exception:
+                pass
+            try:
+                await self.discord_channel.send_text(
+                    self.discord_chat_id, f"───── heartbeat ─────\n{text}\n─────────────────────",
+                )
                 return
-        except Exception:
-            pass
-        # Fallback: send as bot (DM or webhook unavailable)
-        # Bot's own messages are filtered by is_self check in _handle_incoming
-        # Add separators so heartbeat is visually distinct from normal messages
-        try:
-            await self.discord_channel.send_text(
-                self.discord_chat_id, f"───── heartbeat ─────\n{text}\n─────────────────────",
-            )
-        except Exception as e:
-            logger.warning("Heartbeat '%s': failed to send display: %s", self.wg_name, e)
+            except Exception as e:
+                logger.warning("Heartbeat '%s': failed to send display: %s", self.wg_name, e)
+                return
+        if self.web_channel is not None:
+            try:
+                await self.web_channel.send_text(f"heartbeat:{self.wg_name}", text)
+            except Exception as e:
+                logger.warning("Heartbeat '%s': web display failed: %s", self.wg_name, e)
 
     async def _tick(self) -> None:
         """Single heartbeat cycle."""
@@ -192,7 +200,7 @@ class HeartbeatManager:
 
         try:
             # Display heartbeat prompt (if configured)
-            if self.display_heartbeat and self.discord_channel and self.discord_chat_id:
+            if self.display_heartbeat and ((self.discord_channel and self.discord_chat_id) or self.web_channel):
                 now = datetime.datetime.now().strftime("%H:%M")
                 await self._send_display(
                     f"**[Heartbeat {now}]**\n```\n{content.strip()}\n```",
@@ -206,7 +214,7 @@ class HeartbeatManager:
 
             if is_silent_reply(decision):
                 logger.debug("Heartbeat silent reply from '%s'", self.wg_name)
-                if self.display_heartbeat and self.discord_channel and self.discord_chat_id:
+                if self.display_heartbeat and ((self.discord_channel and self.discord_chat_id) or self.web_channel):
                     await self._send_display("_Heartbeat: nothing to do._")
                 return
 
@@ -215,7 +223,7 @@ class HeartbeatManager:
                 "Heartbeat action for '%s': %s",
                 self.wg_name, decision[:200],
             )
-            if self.display_heartbeat and self.discord_channel and self.discord_chat_id:
+            if self.display_heartbeat and ((self.discord_channel and self.discord_chat_id) or self.web_channel):
                 preview = decision[:500] + "..." if len(decision) > 500 else decision
                 await self._send_display(f"**[Heartbeat decision]**\n{preview}")
 

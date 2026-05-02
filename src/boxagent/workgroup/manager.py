@@ -470,6 +470,7 @@ class WorkgroupManager:
                 yolo=wg_cfg.yolo,
                 discord_channel=None,
                 discord_chat_id="",
+                web_channel=self.web_channels.get(wg_name),
                 display_heartbeat=wg_cfg.display_heartbeat,
                 start_time=self.start_time,
                 get_running_tasks=lambda wg=wg_name: self._get_running_tasks(wg),

@@ -421,34 +421,9 @@ class Gateway:
                 dc_channel.register_route(router.handle_message, categories)
             router._channels["discord"] = dc_channel
 
-        # Register peer channel route (separate from category routing)
-        if bot_cfg.discord_peer_channel and dc_channel is not None:
-            peer_ch_id = bot_cfg.discord_peer_channel
-            comm_ch_id = str(bot_cfg.discord_comm_channel)
-            _bot_name = name
-
-            async def _peer_handler(msg, _name=_bot_name, _comm=comm_ch_id, _router=router):
-                target, sender, body = _parse_peer_message(msg.text)
-                if target != _name:
-                    return
-                # Rewrite chat_id to comm_channel so the response streams there
-                msg = IncomingMessage(
-                    channel=msg.channel,
-                    chat_id=_comm,
-                    user_id=msg.user_id,
-                    text=(
-                        f"[Peer message from {sender}]\n"
-                        f"{body}\n\n"
-                        f"---\n"
-                        f'Reply with: send_to_peer("{sender}", "your reply")'
-                    ),
-                    attachments=msg.attachments,
-                    trusted=True,
-                    channel_info=msg.channel_info,
-                )
-                await _router.handle_message(msg)
-
-            dc_channel.register_channel_route(_peer_handler, peer_ch_id)
+        # Register peer channel route — DEPRECATED: peer messaging now goes via
+        # cluster RPC (see send_peer / _handle_wg_peer_recv). discord_peer_channel
+        # in yaml is silently ignored; field kept for backward compat.
 
         # --- Web channel (optional) ---
         if bot_cfg.web_enabled:
@@ -1084,14 +1059,45 @@ class Gateway:
         status = 200 if result.get("ok") else 400
         return web.json_response(result, status=status)
 
-    async def _handle_peer_send(self, request: web.Request) -> web.Response:
-        """Handle POST /api/peer/send — deliver a message to another workgroup admin.
+    async def send_peer(
+        self, target: str, sender: str, message: str,
+    ) -> dict:
+        """Cluster-aware cross-admin peer message dispatch.
 
-        Routes via cluster RPC: target's owning machine is found through the
-        satellite registry; if local, dispatched in-process; if remote, sent
-        as POST /api/wg/peer/recv to that satellite (the sat_client transparently
-        forwards over WS).
+        Resolves target locally first, falls back to satellite RPC. Used by
+        both the HTTP route /api/peer/send and the MCP send_to_peer tool.
+
+        Returns ``{ok: bool, via: "local"|"rpc"|"none", machine?: str, error?: str}``.
         """
+        if (
+            self._workgroup_mgr is not None
+            and target in self._workgroup_mgr.routers
+        ):
+            await self._dispatch_local_peer(target, sender, message)
+            return {"ok": True, "via": "local"}
+        if self._sat_registry is not None:
+            for machine_id, bot in self._sat_registry.list_bots():
+                if bot.name != target or bot.kind != "workgroup":
+                    continue
+                sess = self._sat_registry.get(machine_id)
+                if sess is None:
+                    continue
+                try:
+                    await sess.call(
+                        "POST", "/api/wg/peer/recv",
+                        body={"target_workgroup": target, "sender": sender, "body": message},
+                    )
+                    return {"ok": True, "via": "rpc", "machine": machine_id}
+                except Exception as e:
+                    logger.error("Peer RPC to %s failed: %s", machine_id, e)
+                    return {"ok": False, "via": "rpc", "error": f"rpc failed: {e}"}
+        return {
+            "ok": False, "via": "none",
+            "error": f"no workgroup '{target}' found locally or in cluster",
+        }
+
+    async def _handle_peer_send(self, request: web.Request) -> web.Response:
+        """Handle POST /api/peer/send — thin wrapper around send_peer."""
         try:
             payload = await request.json()
         except Exception:
@@ -1106,38 +1112,12 @@ class Gateway:
                 status=400,
             )
 
-        # Local? Dispatch directly.
-        if (
-            self._workgroup_mgr is not None
-            and target in self._workgroup_mgr.routers
-        ):
-            await self._dispatch_local_peer(target, from_bot, message)
-            return web.json_response({"ok": True, "via": "local"})
-
-        # Remote? Find which satellite owns a workgroup-kind bot named `target`.
-        if self._sat_registry is not None:
-            for machine_id, bot in self._sat_registry.list_bots():
-                if bot.name != target or bot.kind != "workgroup":
-                    continue
-                sess = self._sat_registry.get(machine_id)
-                if sess is None:
-                    continue
-                try:
-                    await sess.call(
-                        "POST", "/api/wg/peer/recv",
-                        body={"target_workgroup": target, "sender": from_bot, "body": message},
-                    )
-                    return web.json_response({"ok": True, "via": "rpc", "machine": machine_id})
-                except Exception as e:
-                    logger.error("Peer RPC to %s failed: %s", machine_id, e)
-                    return web.json_response(
-                        {"ok": False, "error": f"rpc failed: {e}"}, status=502,
-                    )
-
-        return web.json_response(
-            {"ok": False, "error": f"no workgroup '{target}' found locally or in cluster"},
-            status=404,
-        )
+        result = await self.send_peer(target, from_bot, message)
+        if not result.get("ok"):
+            via = result.get("via")
+            status = 502 if via == "rpc" else 404
+            return web.json_response(result, status=status)
+        return web.json_response(result)
 
     async def _dispatch_local_peer(self, target: str, sender: str, body: str) -> None:
         """Inject a peer message into the local workgroup admin's router.

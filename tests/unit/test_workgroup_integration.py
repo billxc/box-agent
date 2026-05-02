@@ -389,6 +389,35 @@ class TestHeartbeatTick:
         # Webhook should be used for display
         dc._ensure_webhook.assert_called()
 
+    async def test_display_heartbeat_via_web_channel_when_no_discord(self, tmp_path):
+        """In web-only mode (no Discord), heartbeat _send_display publishes to
+        the WebChannel under chat_id 'heartbeat:<wg_name>' so web UI users can
+        subscribe to inspect heartbeat history."""
+        (tmp_path / "HEARTBEAT.md").write_text("- Check tasks")
+
+        wc = AsyncMock()
+        wc.send_text = AsyncMock()
+
+        hb = HeartbeatManager(
+            wg_name="my-wg", admin_pool=MagicMock(), admin_router=AsyncMock(),
+            workspace=str(tmp_path), interval_seconds=60, yolo=True,
+            discord_channel=None, discord_chat_id="",
+            web_channel=wc,
+            display_heartbeat=True,
+        )
+
+        with patch.object(hb, "_fork_and_decide", new_callable=AsyncMock) as mock_fork:
+            mock_fork.return_value = ("NO_REPLY", {
+                "source_session_id": "", "fork_session_id": "",
+                "raw_response": "", "prompt": "",
+            })
+            await hb._tick()
+
+        # Web channel publishes to the synthetic heartbeat:<wg> chat_id.
+        wc.send_text.assert_awaited()
+        first = wc.send_text.await_args_list[0]
+        assert first.args[0] == "heartbeat:my-wg"
+
     async def test_find_fork_session_from_pool(self, tmp_path):
         from boxagent.sessions.pool import SessionPool, ChatContext
 

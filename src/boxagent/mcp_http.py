@@ -452,13 +452,15 @@ def _register_peer_tools(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def send_to_peer(target: str, message: str) -> str:
-        """Send a message to another admin bot via the shared peer channel.
+        """Send a message to another admin bot.
 
-        The message is posted to the shared Discord peer channel. The target
-        bot will receive and process it.
+        Routes via cluster RPC: if the target lives on this machine the
+        message is dispatched in-process; otherwise it's sent over the
+        satellite WS to the node that owns the target. Discord shared
+        channels are no longer used.
 
         Args:
-            target: Name of the target bot (e.g. "win-bot", "mbp-bot")
+            target: Name of the target workgroup admin (e.g. "alpha", "beta")
             message: The message to send
         """
         if not _gateway:
@@ -466,33 +468,11 @@ def _register_peer_tools(mcp: FastMCP) -> None:
         bot_name = _ctx_bot_name.get()
         if not bot_name:
             return "Error: bot_name not set"
-
-        # Find sender's peer channel
-        peer_channel_id = 0
-        dc_key = None
-        bot_cfg = _gateway.config.bots.get(bot_name)
-        if bot_cfg and bot_cfg.discord_peer_channel:
-            peer_channel_id = bot_cfg.discord_peer_channel
-            dc_key = _gateway._bot_discord_key.get(bot_name)
-        else:
-            wg_cfg = _gateway.config.workgroups.get(bot_name)
-            if wg_cfg and wg_cfg.discord_peer_channel:
-                peer_channel_id = wg_cfg.discord_peer_channel
-                dc_key = wg_cfg.discord_bot_id
-
-        if not peer_channel_id:
-            return f"Error: bot '{bot_name}' has no peer channel configured"
-
-        dc_channel = _gateway._discord_channels.get(dc_key) if dc_key else None
-        if dc_channel is None:
-            return f"Error: no Discord channel for bot '{bot_name}'"
-
-        formatted = f"[To: {target}] [From: {bot_name}]\n{message}"
-        try:
-            await dc_channel.send_text(str(peer_channel_id), formatted)
-            return f"Message sent to {target}."
-        except Exception as e:
-            return f"Error: {e}"
+        result = await _gateway.send_peer(target, bot_name, message)
+        if result.get("ok"):
+            via = result.get("via", "?")
+            return f"Message sent to {target} (via {via})."
+        return f"Error: {result.get('error', 'unknown')}"
 
 
 # ════════════════════════════════════════════════════════════════
