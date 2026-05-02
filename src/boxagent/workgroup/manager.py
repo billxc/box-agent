@@ -14,6 +14,7 @@ from boxagent.paths import resolve_boxagent_dir
 from boxagent.workgroup.channel_adapter import (
     DiscordWorkgroupAdapter,
     NullWorkgroupChannelAdapter,
+    WebWorkgroupAdapter,
     WorkgroupChannelAdapter,
 )
 from boxagent.workgroup.heartbeat import HeartbeatManager
@@ -306,19 +307,29 @@ class WorkgroupManager:
     def _build_adapter(self, wg_cfg: WorkgroupConfig) -> WorkgroupChannelAdapter:
         """Pick a channel adapter based on workgroup config.
 
-        Discord is selected when the workgroup has a configured discord_bot_id
-        AND the bot is actually connected (channel object available). Otherwise
-        falls back to NullWorkgroupChannelAdapter (in-process / web-only). The
-        Web adapter is added in #3 (#3a).
+        Selection:
+        - Discord: ``is_discord_mode`` AND a connected channel object exists
+        - Web:     not Discord mode AND a WebChannel is registered for this wg
+        - Null:    fallback (in-process / channel not yet ready)
         """
         if wg_cfg.is_discord_mode and wg_cfg.discord_bot_id:
             dc = self.discord_channels.get(wg_cfg.discord_bot_id)
             if dc is not None:
                 return DiscordWorkgroupAdapter(dc_channel=dc)
+        if not wg_cfg.is_discord_mode:
+            web_ch = self.web_channels.get(wg_cfg.name)
+            if web_ch is not None:
+                return WebWorkgroupAdapter(web_channel=web_ch)
         return NullWorkgroupChannelAdapter()
 
     async def start_workgroup(self, wg_name: str, wg_cfg: WorkgroupConfig) -> None:
         """Initialize a standalone workgroup: create admin + specialist agents."""
+        # --- Web channel must exist BEFORE building the adapter so the web
+        # adapter can hold a reference. ---
+        if wg_cfg.web_enabled and wg_name not in self.web_channels:
+            from boxagent.channels.web import WebChannel
+            self.web_channels[wg_name] = WebChannel(bot_name=wg_name)
+
         adapter = self._build_adapter(wg_cfg)
         self.adapters[wg_name] = adapter
 
@@ -388,12 +399,12 @@ class WorkgroupManager:
         )
         self.routers[wg_name] = admin_router
 
-        # --- Web channel (default on for workgroup admin) ---
+        # --- Web channel inbound wiring (channel itself was created above so
+        # the adapter could hold it; on_message + router._channels need the
+        # admin_router which was just constructed). ---
         if wg_cfg.web_enabled:
-            from boxagent.channels.web import WebChannel
-            web_ch = WebChannel(bot_name=wg_name)
+            web_ch = self.web_channels[wg_name]
             web_ch.on_message = admin_router.handle_message
-            self.web_channels[wg_name] = web_ch
             admin_router._channels["web"] = web_ch
             logger.info("Workgroup '%s': web channel enabled", wg_name)
 

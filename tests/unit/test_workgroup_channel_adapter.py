@@ -10,6 +10,7 @@ from boxagent.config import SpecialistConfig, WorkgroupConfig
 from boxagent.workgroup.channel_adapter import (
     DiscordWorkgroupAdapter,
     NullWorkgroupChannelAdapter,
+    WebWorkgroupAdapter,
     WorkgroupChannelAdapter,
 )
 
@@ -229,3 +230,95 @@ def test_discord_adapter_post_task_swallows_exceptions():
     sp = _make_sp_cfg(discord_channel=42)
     # Should not raise — same as pre-refactor behavior.
     asyncio.run(a.post_task("alice", sp, "do thing", "admin"))
+
+
+# ─── Web adapter ─────────────────────────────────────────────────────────────
+
+def _make_web_channel():
+    """A spy WebChannel that records _publish events and ids."""
+    wc = MagicMock()
+    wc._publish = MagicMock()
+    wc.send_text = AsyncMock()
+    wc._allocate_id = MagicMock(side_effect=lambda: "id-1")
+    return wc
+
+
+def test_web_adapter_protocol_compliance():
+    a = WebWorkgroupAdapter(web_channel=_make_web_channel())
+    assert isinstance(a, WorkgroupChannelAdapter)
+    assert a.channel_name == "web"
+
+
+def test_web_adapter_primary_channel_is_web_channel():
+    wc = _make_web_channel()
+    a = WebWorkgroupAdapter(web_channel=wc)
+    assert a.primary_channel() is wc
+
+
+def test_web_adapter_chat_id_is_virtual_wg_prefix():
+    a = WebWorkgroupAdapter(web_channel=_make_web_channel())
+    sp = _make_sp_cfg(discord_channel=999)  # ignored
+    assert a.get_specialist_chat_id("alice", sp) == "wg:alice"
+
+
+def test_web_adapter_register_admin_is_noop():
+    """register_admin is a no-op — the WebChannel inbound wiring is set up
+    by manager.start_workgroup AFTER admin_router exists."""
+    wc = _make_web_channel()
+    a = WebWorkgroupAdapter(web_channel=wc)
+    router = MagicMock()
+    asyncio.run(a.register_admin(router, _make_wg_cfg()))
+    wc._publish.assert_not_called()
+
+
+def test_web_adapter_register_peer_is_noop():
+    """Peer messaging in web mode goes via gateway HTTP route in #8."""
+    a = WebWorkgroupAdapter(web_channel=_make_web_channel())
+    router = MagicMock()
+    asyncio.run(a.register_peer(router, _make_wg_cfg()))
+
+
+def test_web_adapter_setup_specialist_wires_inbound_channel():
+    wc = _make_web_channel()
+    a = WebWorkgroupAdapter(web_channel=wc)
+    router = MagicMock()
+    router._channels = {}
+    asyncio.run(a.setup_specialist("alice", _make_sp_cfg(), _make_wg_cfg(), router))
+    assert router._channels["web"] is wc
+
+
+def test_web_adapter_provision_returns_sp_cfg_unchanged():
+    wc = _make_web_channel()
+    a = WebWorkgroupAdapter(web_channel=wc)
+    sp = _make_sp_cfg()
+    out = asyncio.run(a.provision_specialist("alice", sp, _make_wg_cfg()))
+    assert out is sp
+    assert sp.discord_channel == 0
+
+
+def test_web_adapter_cleanup_specialist_is_noop():
+    wc = _make_web_channel()
+    a = WebWorkgroupAdapter(web_channel=wc)
+    asyncio.run(a.cleanup_specialist("alice", _make_sp_cfg()))
+    wc._publish.assert_not_called()
+
+
+def test_web_adapter_post_task_publishes_user_message_to_specialist_chat():
+    wc = _make_web_channel()
+    a = WebWorkgroupAdapter(web_channel=wc)
+    sp = _make_sp_cfg()
+    asyncio.run(a.post_task("alice", sp, "do thing", "admin"))
+    wc._publish.assert_called_once()
+    chat_id, event = wc._publish.call_args.args
+    assert chat_id == "wg:alice"
+    assert event["type"] == "message"
+    assert event["role"] == "user"
+    assert event["text"] == "[admin] do thing"
+    assert event["message_id"] == "id-1"
+
+
+def test_web_adapter_notify_admin_uses_send_text():
+    wc = _make_web_channel()
+    a = WebWorkgroupAdapter(web_channel=wc)
+    asyncio.run(a.notify_admin("123", "done"))
+    wc.send_text.assert_awaited_once_with("123", "done")

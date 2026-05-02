@@ -265,3 +265,66 @@ class DiscordWorkgroupAdapter:
                 await self.dc_channel.send_text(chat_id, text)
         except Exception as e:
             logger.warning("Failed to send task notification: %s", e)
+
+
+# ─── Web implementation ──────────────────────────────────────────────────────
+
+@dataclass
+class WebWorkgroupAdapter:
+    """Publishes workgroup events into the host's WebChannel.
+
+    Specialist visibility is achieved by using a virtual chat_id ``wg:<sp_name>``
+    on the SAME WebChannel as the admin — the admin web UI subscribes to that
+    chat_id in addition to its own and renders the specialist's stream alongside.
+    """
+
+    web_channel: object  # boxagent.channels.web.WebChannel
+
+    @property
+    def channel_name(self) -> str:
+        return "web"
+
+    def primary_channel(self) -> object:
+        return self.web_channel
+
+    def get_specialist_chat_id(self, sp_name: str, sp_cfg: SpecialistConfig) -> str:
+        return f"wg:{sp_name}"
+
+    async def register_admin(self, router, wg_cfg: WorkgroupConfig) -> None:
+        # WebChannel inbound (HTTP POST → on_message) is wired by manager
+        # at start_workgroup time before this adapter is built. No-op here.
+        return
+
+    async def register_peer(self, router, wg_cfg: WorkgroupConfig) -> None:
+        # Cross-admin peer messaging in web mode is owned by the gateway HTTP
+        # route added in #8 (cluster RPC). No registration needed at the
+        # adapter layer.
+        return
+
+    async def setup_specialist(self, sp_name, sp_cfg, wg_cfg, router) -> None:
+        # Inbound affordance: if a web POST addresses the specialist via its
+        # virtual chat_id, the router resolves the channel for replies.
+        router._channels["web"] = self.web_channel
+
+    async def provision_specialist(self, sp_name, sp_cfg, wg_cfg) -> SpecialistConfig:
+        # Nothing to allocate — specialist chat_id is virtual.
+        return sp_cfg
+
+    async def cleanup_specialist(self, sp_name, sp_cfg) -> None:
+        return
+
+    async def post_task(self, sp_name, sp_cfg, text, admin_display) -> None:
+        # Render the admin's task as a user-role message in the specialist's
+        # virtual chat so the web UI shows what was dispatched.
+        self.web_channel._publish(
+            f"wg:{sp_name}",
+            {
+                "type": "message",
+                "role": "user",
+                "message_id": self.web_channel._allocate_id(),
+                "text": f"[{admin_display}] {text}",
+            },
+        )
+
+    async def notify_admin(self, chat_id, text) -> None:
+        await self.web_channel.send_text(chat_id, text)
