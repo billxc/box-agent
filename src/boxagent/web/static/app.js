@@ -429,6 +429,10 @@
   }
 
   async function selectBot(botName, machineId) {
+    // Mask the chat panel for the whole switch so the user doesn't see
+    // empty/stale content while we fetch the new bot's session list and
+    // history. switchChat() will keep the mask up through its own swap.
+    $("messages-mask").classList.remove("hidden");
     state.bot = botName;
     state.botMachine = machineId;
     localStorage.setItem("ba.lastBot", botName);
