@@ -22,8 +22,8 @@
     bot: null,            // selected bot name
     botMachine: null,     // selected bot's machine_id (for display)
     collapsed: new Set(JSON.parse(localStorage.getItem("ba.collapsedMachines") || "[]")),
-    sessions: {},         // bot -> {chat_id: {title, preview, ts}}  (local browser-side)
-    serverSessions: {},   // bot -> [{chat_id, platform, preview, last_ts, ...}]
+    sessions: {},         // "machine|bot" -> {chat_id: {title, preview, ts}}  (local browser-side)
+    serverSessions: {},   // "machine|bot" -> [{chat_id, platform, preview, last_ts, ...}]
     chatId: null,
     es: null,
     streamMsgs: {},
@@ -43,18 +43,21 @@
     return "web-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
   }
 
-  function loadSessions(bot) {
+  function botKey(machine, bot) { return `${machine}|${bot}`; }
+  function curKey() { return botKey(state.botMachine, state.bot); }
+
+  function loadSessions(machine, bot) {
     try {
-      return JSON.parse(localStorage.getItem("ba.sessions." + bot) || "{}");
+      return JSON.parse(localStorage.getItem("ba.sessions." + botKey(machine, bot)) || "{}");
     } catch { return {}; }
   }
-  function saveSessions(bot, sessions) {
-    localStorage.setItem("ba.sessions." + bot, JSON.stringify(sessions));
+  function saveSessions(machine, bot, sessions) {
+    localStorage.setItem("ba.sessions." + botKey(machine, bot), JSON.stringify(sessions));
   }
 
-  async function fetchServerSessions(bot) {
+  async function fetchServerSessions(machine, bot) {
     try {
-      const r = await api(`sessions?bot=${encodeURIComponent(bot)}`);
+      const r = await api(`sessions?bot=${encodeURIComponent(bot)}&machine=${encodeURIComponent(machine)}`);
       if (!r.ok) return [];
       const { sessions } = await r.json();
       return sessions || [];
@@ -120,8 +123,8 @@
   // ── Sessions ──
   function buildSessionList() {
     // Merge server sessions (cross-platform) with local ones (web-only, may have user-renamed titles)
-    const local = state.sessions[state.bot] || {};
-    const server = state.serverSessions[state.bot] || [];
+    const local = state.sessions[curKey()] || {};
+    const server = state.serverSessions[curKey()] || [];
     const merged = new Map(); // chat_id -> entry
     for (const s of server) {
       merged.set(s.chat_id, {
@@ -186,13 +189,14 @@
   }
 
   function touchSession(preview) {
-    const sessions = state.sessions[state.bot] || {};
+    const key = curKey();
+    const sessions = state.sessions[key] || {};
     const cur = sessions[state.chatId] || { title: "Chat " + new Date().toLocaleString() };
     cur.preview = preview.slice(0, 60);
     cur.ts = Date.now();
     sessions[state.chatId] = cur;
-    state.sessions[state.bot] = sessions;
-    saveSessions(state.bot, sessions);
+    state.sessions[key] = sessions;
+    saveSessions(state.botMachine, state.bot, sessions);
     refreshSessionList();
     chatTitle.textContent = cur.title;
   }
@@ -203,9 +207,9 @@
     state.chatId = chatId;
     state.streamMsgs = {};
     refreshSessionList();
-    const meta = (state.sessions[state.bot] || {})[chatId] || {};
+    const meta = (state.sessions[curKey()] || {})[chatId] || {};
     chatTitle.textContent = meta.title || chatId;
-    localStorage.setItem("ba.last." + state.bot, chatId);
+    localStorage.setItem("ba.last." + curKey(), chatId);
 
     // Cover the chat panel with a mask so the fetch + swap + scroll-to-bottom
     // all happen invisibly. Old content stays in the DOM behind the mask.
@@ -215,7 +219,7 @@
     setConn("connecting");
     let history = [];
     try {
-      const r = await api(`history?bot=${encodeURIComponent(state.bot)}&chat_id=${encodeURIComponent(chatId)}`);
+      const r = await api(`history?bot=${encodeURIComponent(state.bot)}&machine=${encodeURIComponent(state.botMachine)}&chat_id=${encodeURIComponent(chatId)}`);
       if (r.ok) {
         const j = await r.json();
         history = j.history || [];
@@ -242,7 +246,7 @@
   }
 
   function openStream() {
-    const url = `api/stream?bot=${encodeURIComponent(state.bot)}&chat_id=${encodeURIComponent(state.chatId)}` + (TOKEN ? `&token=${encodeURIComponent(TOKEN)}` : "");
+    const url = `api/stream?bot=${encodeURIComponent(state.bot)}&machine=${encodeURIComponent(state.botMachine)}&chat_id=${encodeURIComponent(state.chatId)}` + (TOKEN ? `&token=${encodeURIComponent(TOKEN)}` : "");
     const es = new EventSource(url);
     state.es = es;
     es.onopen = () => setConn("online");
@@ -288,8 +292,8 @@
           delete state.streamMsgs[ev.message_id];
         }
         // Refresh server-side session list (other platforms may have new turns).
-        fetchServerSessions(state.bot).then((list) => {
-          state.serverSessions[state.bot] = list;
+        fetchServerSessions(state.botMachine, state.bot).then((list) => {
+          state.serverSessions[curKey()] = list;
           refreshSessionList();
         });
         break;
@@ -311,7 +315,7 @@
     try {
       const r = await api("send", {
         method: "POST",
-        body: JSON.stringify({ bot: state.bot, chat_id: state.chatId, text }),
+        body: JSON.stringify({ bot: state.bot, machine: state.botMachine, chat_id: state.chatId, text }),
       });
       if (!r.ok) {
         const err = await r.text();
@@ -430,10 +434,11 @@
     localStorage.setItem("ba.lastBot", botName);
     localStorage.setItem("ba.lastBotMachine", machineId);
     sessionsOf.textContent = `· ${botName} @ ${machineId}`;
-    state.sessions[botName] = loadSessions(botName);
-    state.serverSessions[botName] = await fetchServerSessions(botName);
+    const key = botKey(machineId, botName);
+    state.sessions[key] = loadSessions(machineId, botName);
+    state.serverSessions[key] = await fetchServerSessions(machineId, botName);
     renderMachines();
-    const lastChat = localStorage.getItem("ba.last." + botName);
+    const lastChat = localStorage.getItem("ba.last." + key);
     await switchChat(lastChat || pickFirstSessionId() || uuid());
     closeSidebar();
   }
@@ -515,14 +520,15 @@
 
   $("rename-session").onclick = () => {
     if (!state.chatId) return;
-    const sessions = state.sessions[state.bot] || {};
+    const key = curKey();
+    const sessions = state.sessions[key] || {};
     const cur = sessions[state.chatId] || {};
     const t = prompt("Rename session:", cur.title || "");
     if (t == null) return;
     cur.title = t.trim() || cur.title;
     sessions[state.chatId] = cur;
-    state.sessions[state.bot] = sessions;
-    saveSessions(state.bot, sessions);
+    state.sessions[key] = sessions;
+    saveSessions(state.botMachine, state.bot, sessions);
     chatTitle.textContent = cur.title;
     refreshSessionList();
   };
@@ -618,7 +624,7 @@
     pickerProjects.innerHTML = "<li class='muted'>Loading…</li>";
     pickerCount.textContent = "";
     try {
-      const r = await api("claude/projects");
+      const r = await api(`claude/projects?machine=${encodeURIComponent(state.botMachine)}`);
       const { projects } = await r.json();
       pickerProjects.innerHTML = "";
       pickerCount.textContent = `${projects.length} projects`;
@@ -647,7 +653,7 @@
     pickerCrumb.textContent = project.label;
     pickerSessions.innerHTML = "<li class='muted'>Loading…</li>";
     try {
-      const r = await api(`claude/sessions?project=${encodeURIComponent(project.encoded)}`);
+      const r = await api(`claude/sessions?machine=${encodeURIComponent(state.botMachine)}&project=${encodeURIComponent(project.encoded)}`);
       const { sessions } = await r.json();
       pickerSessions.innerHTML = "";
       pickerCount.textContent = `${sessions.length} sessions`;
@@ -674,7 +680,7 @@
     pickerPreview.classList.remove("hidden");
     pickerPreview.innerHTML = "<div class='muted'>Loading transcript…</div>";
     try {
-      const r = await api(`claude/transcript?project=${encodeURIComponent(picker_state.project.encoded)}&session_id=${encodeURIComponent(session.session_id)}`);
+      const r = await api(`claude/transcript?machine=${encodeURIComponent(state.botMachine)}&project=${encodeURIComponent(picker_state.project.encoded)}&session_id=${encodeURIComponent(session.session_id)}`);
       const { messages } = await r.json();
       pickerPreview.innerHTML = "";
       const tail = messages.slice(-12);
@@ -698,23 +704,23 @@
         method: "POST",
         body: JSON.stringify({
           bot: state.bot,
+          machine: state.botMachine,
           project: picker_state.project.encoded,
           session_id: picker_state.session.session_id,
         }),
       });
       if (!r.ok) throw new Error(await r.text());
       const { chat_id } = await r.json();
-      // Tag the local session list so the title reads nicely
-      const sessions = loadSessions(state.bot);
+      const key = curKey();
+      const sessions = loadSessions(state.botMachine, state.bot);
       sessions[chat_id] = {
         title: `Claude · ${picker_state.project.label}`,
         preview: picker_state.session.first_user || "",
         ts: Date.now(),
       };
-      saveSessions(state.bot, sessions);
-      state.sessions[state.bot] = sessions;
-      // Refresh server-side list and switch into the resumed chat
-      state.serverSessions[state.bot] = await fetchServerSessions(state.bot);
+      saveSessions(state.botMachine, state.bot, sessions);
+      state.sessions[key] = sessions;
+      state.serverSessions[key] = await fetchServerSessions(state.botMachine, state.bot);
       closePicker();
       await switchChat(chat_id);
     } catch (e) {

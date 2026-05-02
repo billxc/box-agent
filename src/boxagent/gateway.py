@@ -1088,7 +1088,7 @@ class Gateway:
         if not self._web_authorized(request):
             return self._web_unauthorized()
         bots = []
-        local_mid = self.config.machine_id or self.config.node_id or ""
+        local_mid = self._local_machine_id()
         for name, ch in self._web_channels.items():
             cfg = self.config.bots.get(name)
             wg = self.config.workgroups.get(name)
@@ -1128,7 +1128,7 @@ class Gateway:
         so the UI can render a grouped sidebar with online/offline status."""
         if not self._web_authorized(request):
             return self._web_unauthorized()
-        local_mid = self.config.machine_id or self.config.node_id or "local"
+        local_mid = self._local_machine_id()
         local_role = "host" if self.config.satellite_token else (
             "satellite" if self.config.host_token else "single"
         )
@@ -1152,13 +1152,17 @@ class Gateway:
         if not self._web_authorized(request):
             return self._web_unauthorized()
         bot = request.query.get("bot", "")
-        if not bot:
-            return web.json_response({"ok": False, "error": "missing bot"}, status=400)
+        machine = request.query.get("machine", "")
+        if not bot or not machine:
+            return web.json_response({"ok": False, "error": "missing bot/machine"}, status=400)
         # Remote? proxy to the satellite that owns this bot.
+        if machine != self._local_machine_id():
+            sess = self._remote_session_for(machine, bot)
+            if sess is None:
+                return web.json_response({"ok": False, "error": "unknown machine/bot"}, status=404)
+            return await self._proxy_to_remote(sess, "GET", "/api/sessions", request)
         if bot not in self._web_channels:
-            mid, sess = self._remote_session_for_bot(bot)
-            if sess is not None:
-                return await self._proxy_to_remote(sess, "GET", "/api/sessions", request)
+            return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
         if not self._storage:
             return web.json_response({"ok": True, "sessions": []})
 
@@ -1219,19 +1223,16 @@ class Gateway:
         sessions.sort(key=lambda x: x.get("last_ts") or 0, reverse=True)
         return web.json_response({"ok": True, "sessions": sessions})
 
-    def _remote_session_for_bot(self, bot: str):
-        """Return (machine_id, SatelliteSession) if `bot` belongs to a connected sat, else (None, None)."""
+    def _local_machine_id(self) -> str:
+        return self.config.machine_id or self.config.node_id or "local"
+
+    def _remote_session_for(self, machine_id: str, bot: str):
+        """Return SatelliteSession owning `bot` on `machine_id`, or None."""
         if self._sat_registry is None:
-            return None, None
-        try:
-            hit = self._sat_registry.find_bot(bot)
-        except ValueError as e:
-            logger.warning("ambiguous remote bot lookup: %s", e)
-            return None, None
-        if hit is None:
-            return None, None
-        mid, _ = hit
-        return mid, self._sat_registry.get(mid)
+            return None
+        if self._sat_registry.get_bot(machine_id, bot) is None:
+            return None
+        return self._sat_registry.get(machine_id)
 
     async def _proxy_to_remote(
         self,
@@ -1284,12 +1285,15 @@ class Gateway:
             return self._web_unauthorized()
         bot = request.query.get("bot", "")
         chat_id = request.query.get("chat_id", "")
-        if not bot or not chat_id:
-            return web.json_response({"ok": False, "error": "missing bot/chat_id"}, status=400)
+        machine = request.query.get("machine", "")
+        if not bot or not chat_id or not machine:
+            return web.json_response({"ok": False, "error": "missing bot/chat_id/machine"}, status=400)
+        if machine != self._local_machine_id():
+            sess = self._remote_session_for(machine, bot)
+            if sess is None:
+                return web.json_response({"ok": False, "error": "unknown machine/bot"}, status=404)
+            return await self._proxy_to_remote(sess, "GET", "/api/history", request)
         if bot not in self._web_channels:
-            mid, sess = self._remote_session_for_bot(bot)
-            if sess is not None:
-                return await self._proxy_to_remote(sess, "GET", "/api/history", request)
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
 
         history: list[dict] = []
@@ -1365,13 +1369,16 @@ class Gateway:
         bot = body.get("bot", "")
         chat_id = body.get("chat_id", "")
         text = body.get("text", "")
-        if not bot or not chat_id or not text:
-            return web.json_response({"ok": False, "error": "missing bot/chat_id/text"}, status=400)
+        machine = body.get("machine", "")
+        if not bot or not chat_id or not text or not machine:
+            return web.json_response({"ok": False, "error": "missing bot/chat_id/text/machine"}, status=400)
+        if machine != self._local_machine_id():
+            sess = self._remote_session_for(machine, bot)
+            if sess is None:
+                return web.json_response({"ok": False, "error": "unknown machine/bot"}, status=404)
+            return await self._proxy_to_remote(sess, "POST", "/api/send", request, body=body)
         ch = self._web_channels.get(bot)
         if ch is None:
-            mid, sess = self._remote_session_for_bot(bot)
-            if sess is not None:
-                return await self._proxy_to_remote(sess, "POST", "/api/send", request, body=body)
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
         try:
             await ch.inject(chat_id=chat_id, text=text, user_id="web")
@@ -1385,12 +1392,17 @@ class Gateway:
             return self._web_unauthorized()
         bot = request.query.get("bot", "")
         chat_id = request.query.get("chat_id", "")
+        machine = request.query.get("machine", "")
+        if not bot or not chat_id or not machine:
+            return web.json_response({"ok": False, "error": "missing bot/chat_id/machine"}, status=400)
+        if machine != self._local_machine_id():
+            sess = self._remote_session_for(machine, bot)
+            if sess is None:
+                return web.json_response({"ok": False, "error": "unknown machine/bot"}, status=404)
+            return await self._proxy_stream_to_remote(sess, "/api/stream", request)
         ch = self._web_channels.get(bot)
-        if ch is None or not chat_id:
-            mid, sess = self._remote_session_for_bot(bot)
-            if sess is not None and chat_id:
-                return await self._proxy_stream_to_remote(sess, "/api/stream", request)
-            return web.json_response({"ok": False, "error": "bot not web-enabled or missing chat_id"}, status=404)
+        if ch is None:
+            return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
 
         resp = web.StreamResponse(
             status=200,
@@ -1428,6 +1440,13 @@ class Gateway:
     async def _handle_claude_projects(self, request: web.Request) -> web.Response:
         if not self._web_authorized(request):
             return self._web_unauthorized()
+        machine = request.query.get("machine", "")
+        if not machine:
+            return web.json_response({"ok": False, "error": "missing machine"}, status=400)
+        if machine != self._local_machine_id():
+            if self._sat_registry is None or self._sat_registry.get(machine) is None:
+                return web.json_response({"ok": False, "error": "unknown machine"}, status=404)
+            return await self._proxy_to_remote(self._sat_registry.get(machine), "GET", "/api/claude/projects", request)
         from boxagent.sessions import claude_native
         return web.json_response({"ok": True, "projects": claude_native.list_projects()})
 
@@ -1435,8 +1454,13 @@ class Gateway:
         if not self._web_authorized(request):
             return self._web_unauthorized()
         encoded = request.query.get("project", "")
-        if not encoded:
-            return web.json_response({"ok": False, "error": "missing project"}, status=400)
+        machine = request.query.get("machine", "")
+        if not encoded or not machine:
+            return web.json_response({"ok": False, "error": "missing project/machine"}, status=400)
+        if machine != self._local_machine_id():
+            if self._sat_registry is None or self._sat_registry.get(machine) is None:
+                return web.json_response({"ok": False, "error": "unknown machine"}, status=404)
+            return await self._proxy_to_remote(self._sat_registry.get(machine), "GET", "/api/claude/sessions", request)
         from boxagent.sessions import claude_native
         return web.json_response({
             "ok": True,
@@ -1448,8 +1472,13 @@ class Gateway:
             return self._web_unauthorized()
         encoded = request.query.get("project", "")
         sid = request.query.get("session_id", "")
-        if not encoded or not sid:
-            return web.json_response({"ok": False, "error": "missing project/session_id"}, status=400)
+        machine = request.query.get("machine", "")
+        if not encoded or not sid or not machine:
+            return web.json_response({"ok": False, "error": "missing project/session_id/machine"}, status=400)
+        if machine != self._local_machine_id():
+            if self._sat_registry is None or self._sat_registry.get(machine) is None:
+                return web.json_response({"ok": False, "error": "unknown machine"}, status=404)
+            return await self._proxy_to_remote(self._sat_registry.get(machine), "GET", "/api/claude/transcript", request)
         from boxagent.sessions import claude_native
         return web.json_response({
             "ok": True,
@@ -1469,8 +1498,14 @@ class Gateway:
         bot = body.get("bot", "")
         sid = body.get("session_id", "")
         encoded = body.get("project", "")
-        if not bot or not sid:
-            return web.json_response({"ok": False, "error": "missing bot/session_id"}, status=400)
+        machine = body.get("machine", "")
+        if not bot or not sid or not machine:
+            return web.json_response({"ok": False, "error": "missing bot/session_id/machine"}, status=400)
+        if machine != self._local_machine_id():
+            sess = self._remote_session_for(machine, bot)
+            if sess is None:
+                return web.json_response({"ok": False, "error": "unknown machine/bot"}, status=404)
+            return await self._proxy_to_remote(sess, "POST", "/api/claude/resume", request, body=body)
         if bot not in self._web_channels:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
 

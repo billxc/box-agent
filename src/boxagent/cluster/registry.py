@@ -174,17 +174,15 @@ class SatelliteRegistry:
                 out.append((mid, b))
         return out
 
-    def find_bot(self, name: str) -> tuple[str, RemoteBot] | None:
-        """Return (machine_id, bot) for a remote bot by name. Errors on duplicates."""
-        hits = [(mid, b) for (mid, b) in self.list_bots() if b.name == name]
-        if not hits:
+    def get_bot(self, machine_id: str, name: str) -> RemoteBot | None:
+        """Return the RemoteBot named `name` on satellite `machine_id`, or None."""
+        sess = self.sessions.get(machine_id)
+        if sess is None:
             return None
-        if len(hits) > 1:
-            raise ValueError(
-                f"ambiguous bot name '{name}' across satellites: "
-                + ", ".join(m for (m, _) in hits)
-            )
-        return hits[0]
+        for b in sess.bots:
+            if b.name == name:
+                return b
+        return None
 
     async def handle_ws(self, request: web.Request) -> web.WebSocketResponse:
         """Aiohttp handler for /api/sat/ws."""
