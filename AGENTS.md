@@ -268,3 +268,30 @@ uv run boxagent --config ~/.boxagent/config.yaml
 # 看 git 状态
 git log --oneline -5 && git status -sb
 ```
+
+## 需求 / Issue 跟踪：yait
+
+本仓库用 [`yait`](https://) 管理需求和调研记录，项目名固定为 **`box-agent`**（命名项目，存在 `~/.yait/projects/box-agent/`，不污染仓库）。
+
+```bash
+# 列出所有 issue
+yait -P box-agent list
+
+# 查看某个 issue 详情
+yait -P box-agent show <ID>
+
+# 创建（注意 type ∈ {feature,bug,enhancement,misc}, priority ∈ {p0..p3,none}）
+yait -P box-agent new "标题" -t feature -p p2 -l workgroup --body "正文"
+
+# 关联 / 评论 / 关闭
+yait -P box-agent link <ID> {blocks|depends-on|relates-to} <ID>
+yait -P box-agent comment <ID> "进展"
+yait -P box-agent close <ID>
+```
+
+### 约定
+
+- **每次接到需求或做完调研都先开 issue**（甚至是只为留痕的调研也开），把背景 / 范围 / 参考文件路径 + 行号 / 开放问题写进 body
+- 大需求拆成主 issue + 子 issue，用 `blocks` / `depends-on` 串起来
+- 标签建议：`workgroup` / `cluster` / `config` / `docs` / `refactor` 等按模块走
+- 调研类 issue 在标题前加 `调研：`
