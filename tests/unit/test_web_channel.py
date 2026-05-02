@@ -52,21 +52,24 @@ class TestStream:
         q = channel.subscribe("c1")
         h = await channel.stream_start("c1")
         await channel.stream_update(h, "Hel")
-        await channel.stream_update(h, "Hello")
+        await channel.stream_update(h, "lo")
         await channel.stream_end(h)
         events = await _drain(q, 4)
         assert [e["type"] for e in events] == [
             "stream_start", "stream_delta", "stream_delta", "stream_end",
         ]
         assert events[1]["delta"] == "Hel"
+        assert events[1]["text"] == "Hel"
         assert events[2]["delta"] == "lo"
+        assert events[2]["text"] == "Hello"
         assert events[3]["text"] == "Hello"
 
     async def test_stream_update_dedupe_same_text(self, channel):
+        # Empty chunk is a no-op (router never sends empty deltas in practice)
         q = channel.subscribe("c1")
         h = await channel.stream_start("c1")
         await channel.stream_update(h, "abc")
-        await channel.stream_update(h, "abc")  # no-op
+        await channel.stream_update(h, "")  # no-op
         await channel.stream_end(h)
         events = await _drain(q, 3)
         assert [e["type"] for e in events] == ["stream_start", "stream_delta", "stream_end"]

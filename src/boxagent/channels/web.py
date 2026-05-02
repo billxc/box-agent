@@ -87,17 +87,22 @@ class WebChannel:
         return StreamHandle(message_id=mid, chat_id=chat_id)
 
     async def stream_update(self, handle: StreamHandle, text: str) -> None:
+        """Append `text` to the message buffer and emit a delta event.
+
+        Router callback passes incremental chunks (matching Telegram's
+        contract), not the full accumulated message — so we accumulate here.
+        """
         mid = handle.message_id
-        prev = self._stream_buffers.get(mid, "")
-        if text == prev:
+        if not text:
             return
-        delta = text[len(prev):] if text.startswith(prev) else text
-        self._stream_buffers[mid] = text
+        prev = self._stream_buffers.get(mid, "")
+        new_full = prev + text
+        self._stream_buffers[mid] = new_full
         self._publish(handle.chat_id, {
             "type": "stream_delta",
             "message_id": mid,
-            "delta": delta,
-            "text": text,
+            "delta": text,
+            "text": new_full,
         })
 
     async def stream_end(self, handle: StreamHandle) -> str:
