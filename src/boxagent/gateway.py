@@ -722,6 +722,7 @@ class Gateway:
         app.router.add_post("/api/workgroup/update_topic", self._handle_update_topic)
         app.router.add_post("/api/workgroup/cancel_task", self._handle_cancel_task)
         app.router.add_post("/api/peer/send", self._handle_peer_send)
+        app.router.add_post("/api/wg/peer/recv", self._handle_wg_peer_recv)
 
         runner = web.AppRunner(app)
         await runner.setup()
@@ -1084,56 +1085,112 @@ class Gateway:
         return web.json_response(result, status=status)
 
     async def _handle_peer_send(self, request: web.Request) -> web.Response:
-        """Handle POST /api/peer/send — send a message to the peer channel."""
+        """Handle POST /api/peer/send — deliver a message to another workgroup admin.
+
+        Routes via cluster RPC: target's owning machine is found through the
+        satellite registry; if local, dispatched in-process; if remote, sent
+        as POST /api/wg/peer/recv to that satellite (the sat_client transparently
+        forwards over WS).
+        """
         try:
-            body = await request.json()
+            payload = await request.json()
         except Exception:
             return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
 
-        target = body.get("target", "")
-        message = body.get("message", "")
-        from_bot = body.get("from", "")
+        target = payload.get("target", "")
+        message = payload.get("message", "")
+        from_bot = payload.get("from", "")
         if not target or not message or not from_bot:
             return web.json_response(
                 {"ok": False, "error": "missing 'target', 'message', or 'from'"},
                 status=400,
             )
 
-        # Find sender's Discord channel and peer channel ID
-        # Check regular bots first, then workgroups
-        peer_channel_id = 0
-        dc_key = None
-        bot_cfg = self.config.bots.get(from_bot)
-        if bot_cfg and bot_cfg.discord_peer_channel:
-            peer_channel_id = bot_cfg.discord_peer_channel
-            dc_key = self._bot_discord_key.get(from_bot)
-        else:
-            wg_cfg = self.config.workgroups.get(from_bot)
-            if wg_cfg and wg_cfg.discord_peer_channel:
-                peer_channel_id = wg_cfg.discord_peer_channel
-                dc_key = wg_cfg.discord_bot_id
+        # Local? Dispatch directly.
+        if (
+            self._workgroup_mgr is not None
+            and target in self._workgroup_mgr.routers
+        ):
+            await self._dispatch_local_peer(target, from_bot, message)
+            return web.json_response({"ok": True, "via": "local"})
 
-        if not peer_channel_id:
-            return web.json_response(
-                {"ok": False, "error": f"bot '{from_bot}' has no peer channel configured"},
-                status=400,
-            )
+        # Remote? Find which satellite owns a workgroup-kind bot named `target`.
+        if self._sat_registry is not None:
+            for machine_id, bot in self._sat_registry.list_bots():
+                if bot.name != target or bot.kind != "workgroup":
+                    continue
+                sess = self._sat_registry.get(machine_id)
+                if sess is None:
+                    continue
+                try:
+                    await sess.call(
+                        "POST", "/api/wg/peer/recv",
+                        body={"target_workgroup": target, "sender": from_bot, "body": message},
+                    )
+                    return web.json_response({"ok": True, "via": "rpc", "machine": machine_id})
+                except Exception as e:
+                    logger.error("Peer RPC to %s failed: %s", machine_id, e)
+                    return web.json_response(
+                        {"ok": False, "error": f"rpc failed: {e}"}, status=502,
+                    )
 
-        dc_channel = self._discord_channels.get(dc_key) if dc_key else None
-        if dc_channel is None:
-            return web.json_response(
-                {"ok": False, "error": f"no Discord channel for bot '{from_bot}'"},
-                status=400,
-            )
+        return web.json_response(
+            {"ok": False, "error": f"no workgroup '{target}' found locally or in cluster"},
+            status=404,
+        )
 
-        peer_chat_id = str(peer_channel_id)
-        formatted = f"[To: {target}] [From: {from_bot}]\n{message}"
+    async def _dispatch_local_peer(self, target: str, sender: str, body: str) -> None:
+        """Inject a peer message into the local workgroup admin's router.
+
+        Wraps `body` in the historical envelope (matches the old Discord peer
+        path so admin sees the same shape regardless of transport).
+        """
+        admin_router = self._workgroup_mgr.routers[target]
+        envelope = (
+            f"[Peer message from {sender}]\n"
+            f"{body}\n\n"
+            f"---\n"
+            f'Reply with: send_to_peer("{sender}", "your reply")'
+        )
+        from boxagent.channels.base import IncomingMessage
+        msg = IncomingMessage(
+            channel="internal",
+            chat_id=f"peer:{sender}",
+            user_id=sender,
+            text=envelope,
+            trusted=True,
+        )
+        await admin_router.handle_message(msg)
+
+    async def _handle_wg_peer_recv(self, request: web.Request) -> web.Response:
+        """Handle POST /api/wg/peer/recv — receive a peer message from another node.
+
+        Body: {target_workgroup, sender, body} where body is RAW (no envelope).
+        Caller (host's _handle_peer_send) routes here via cluster RPC; sat_client
+        forwards it over WS to this local gateway.
+        """
         try:
-            await dc_channel.send_text(peer_chat_id, formatted)
-        except Exception as e:
-            logger.error("Failed to send peer message: %s", e)
-            return web.json_response({"ok": False, "error": str(e)}, status=500)
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
 
+        target = payload.get("target_workgroup", "")
+        sender = payload.get("sender", "")
+        body = payload.get("body", "")
+        if not target or not sender:
+            return web.json_response(
+                {"ok": False, "error": "missing 'target_workgroup' or 'sender'"},
+                status=400,
+            )
+        if (
+            self._workgroup_mgr is None
+            or target not in self._workgroup_mgr.routers
+        ):
+            return web.json_response(
+                {"ok": False, "error": f"workgroup '{target}' not on this node"},
+                status=404,
+            )
+        await self._dispatch_local_peer(target, sender, body)
         return web.json_response({"ok": True})
 
     # ── Web chat handlers ──
