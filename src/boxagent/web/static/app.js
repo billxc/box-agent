@@ -6,8 +6,9 @@
 
   const $ = (id) => document.getElementById(id);
   const messagesEl = $("messages");
-  const botSelect = $("bot-select");
+  const machineList = $("machine-list");
   const sessionList = $("session-list");
+  const sessionsOf = $("sessions-of");
   const chatTitle = $("chat-title");
   const composer = $("composer");
   const input = $("input");
@@ -17,14 +18,17 @@
   const sidebar = $("sidebar");
 
   const state = {
-    bots: [],
-    bot: null,
-    sessions: {}, // bot -> {chat_id: {title, preview, ts}}  (local, browser-side)
-    serverSessions: {}, // bot -> [{chat_id, platform, preview, last_ts, ...}]
+    machines: [],         // [{machine_id, online, role, self, bots, last_seen}]
+    bot: null,            // selected bot name
+    botMachine: null,     // selected bot's machine_id (for display)
+    collapsed: new Set(JSON.parse(localStorage.getItem("ba.collapsedMachines") || "[]")),
+    sessions: {},         // bot -> {chat_id: {title, preview, ts}}  (local browser-side)
+    serverSessions: {},   // bot -> [{chat_id, platform, preview, last_ts, ...}]
     chatId: null,
     es: null,
-    streamMsgs: {}, // message_id -> {el, text}
+    streamMsgs: {},
     typingEl: null,
+    refreshTimer: null,
   };
 
   // ── Helpers ──
@@ -274,6 +278,11 @@
   async function sendText(text) {
     if (!text.trim()) return;
     if (!state.bot || !state.chatId) return;
+    const m = state.machines.find(m => m.machine_id === state.botMachine);
+    if (m && !m.online) {
+      addMessage("assistant", `_Machine **${state.botMachine}** is offline; can't send._`);
+      return;
+    }
     sendBtn.disabled = true;
     try {
       const r = await api("send", {
@@ -282,7 +291,11 @@
       });
       if (!r.ok) {
         const err = await r.text();
-        addMessage("assistant", "_Error: " + err + "_");
+        addMessage("assistant", `_Error (${r.status}): ${err}_`);
+        if (r.status === 502 || r.status === 504) {
+          // Likely the satellite dropped — refresh machines so UI reflects it.
+          loadMachines().catch(() => {});
+        }
       }
     } catch (e) {
       addMessage("assistant", "_Network error: " + e.message + "_");
@@ -291,56 +304,185 @@
     }
   }
 
-  // ── Bot picker ──
-  async function loadBots() {
-    setConn("connecting");
-    const r = await api("bots");
+  // ── Machines + bot grouping ──
+  async function loadMachines() {
+    const r = await api("machines");
     if (!r.ok) {
       if (r.status === 401) {
         const t = prompt("Enter access token:");
         if (t) { localStorage.setItem("ba.token", t); location.reload(); }
         return;
       }
-      throw new Error("bots fetch " + r.status);
+      throw new Error("machines fetch " + r.status);
     }
-    const { bots } = await r.json();
-    state.bots = bots;
-    botSelect.innerHTML = "";
-    for (const b of bots) {
-      const opt = document.createElement("option");
-      opt.value = b.name;
-      opt.textContent = b.display_name || b.name;
-      botSelect.appendChild(opt);
+    const { machines } = await r.json();
+    state.machines = machines;
+    renderMachines();
+    // Auto-pick a default bot on first load
+    if (!state.bot) {
+      const lastBot = localStorage.getItem("ba.lastBot");
+      const lastMachine = localStorage.getItem("ba.lastBotMachine");
+      let pick = null;
+      for (const m of machines) {
+        for (const b of (m.bots || [])) {
+          if (b.name === lastBot && m.machine_id === lastMachine && m.online) {
+            pick = { bot: b.name, machine: m.machine_id }; break;
+          }
+        }
+        if (pick) break;
+      }
+      if (!pick) {
+        for (const m of machines) {
+          if (!m.online) continue;
+          if ((m.bots || []).length) { pick = { bot: m.bots[0].name, machine: m.machine_id }; break; }
+        }
+      }
+      if (pick) {
+        await selectBot(pick.bot, pick.machine);
+      }
+    } else {
+      // Mark current bot as stale if its machine went offline
+      const m = state.machines.find(m => m.machine_id === state.botMachine);
+      if (m && !m.online) {
+        chatTitle.textContent = `${state.bot} @ ${state.botMachine} · offline`;
+      }
     }
-    if (bots.length === 0) {
-      addMessage("assistant", "No web-enabled bots configured. Add `channels.web: true` in config.yaml.");
+  }
+
+  function renderMachines() {
+    machineList.innerHTML = "";
+    if (state.machines.length === 0) {
+      machineList.innerHTML = "<li class='muted'>No machines</li>";
       return;
     }
-    const lastBot = localStorage.getItem("ba.lastBot");
-    state.bot = (lastBot && bots.find(b => b.name === lastBot)) ? lastBot : bots[0].name;
-    botSelect.value = state.bot;
-    state.sessions[state.bot] = loadSessions(state.bot);
-    state.serverSessions[state.bot] = await fetchServerSessions(state.bot);
-    const lastChat = localStorage.getItem("ba.last." + state.bot);
-    const chatId = lastChat || pickFirstSessionId() || uuid();
-    await switchChat(chatId);
+    for (const m of state.machines) {
+      const li = document.createElement("li");
+      li.className = "machine" + (m.online ? "" : " offline") + (state.collapsed.has(m.machine_id) ? " collapsed" : "");
+      const head = document.createElement("div");
+      head.className = "machine-head";
+      const dotCls = m.online ? "online" : "offline";
+      const lastSeen = m.online ? "" : ` · ${formatRelative(m.last_seen)}`;
+      head.innerHTML = `
+        <span class="caret"></span>
+        <span class="dot ${dotCls}"></span>
+        <span class="name">${escapeHtml(m.machine_id)}</span>
+        ${m.role && m.role !== "satellite" ? `<span class="role">${m.role}</span>` : ""}
+        <span class="last">${lastSeen}</span>
+      `;
+      head.onclick = () => toggleMachine(m.machine_id);
+      li.appendChild(head);
+
+      const bots = document.createElement("ul");
+      bots.className = "machine-bots";
+      for (const b of (m.bots || [])) {
+        const bli = document.createElement("li");
+        if (state.bot === b.name && state.botMachine === m.machine_id) bli.classList.add("active");
+        bli.innerHTML = `<span>${escapeHtml(b.display_name || b.name)}</span><span class="kind">${b.kind || "bot"}</span>`;
+        bli.onclick = (e) => {
+          e.stopPropagation();
+          if (!m.online) { alert(`Machine ${m.machine_id} is offline`); return; }
+          selectBot(b.name, m.machine_id);
+        };
+        bots.appendChild(bli);
+      }
+      if (!(m.bots || []).length) {
+        bots.innerHTML = "<li class='muted' style='cursor:default;'>(no bots)</li>";
+      }
+      li.appendChild(bots);
+      machineList.appendChild(li);
+    }
   }
 
-  function pickFirstSessionId() {
-    const list = buildSessionList();
-    return list.length ? list[0].chat_id : null;
+  function toggleMachine(mid) {
+    if (state.collapsed.has(mid)) state.collapsed.delete(mid);
+    else state.collapsed.add(mid);
+    localStorage.setItem("ba.collapsedMachines", JSON.stringify([...state.collapsed]));
+    renderMachines();
   }
 
-  botSelect.addEventListener("change", async () => {
-    state.bot = botSelect.value;
-    localStorage.setItem("ba.lastBot", state.bot);
-    state.sessions[state.bot] = loadSessions(state.bot);
-    state.serverSessions[state.bot] = await fetchServerSessions(state.bot);
-    const lastChat = localStorage.getItem("ba.last." + state.bot);
+  async function selectBot(botName, machineId) {
+    state.bot = botName;
+    state.botMachine = machineId;
+    localStorage.setItem("ba.lastBot", botName);
+    localStorage.setItem("ba.lastBotMachine", machineId);
+    sessionsOf.textContent = `· ${botName} @ ${machineId}`;
+    state.sessions[botName] = loadSessions(botName);
+    state.serverSessions[botName] = await fetchServerSessions(botName);
+    renderMachines();
+    const lastChat = localStorage.getItem("ba.last." + botName);
     await switchChat(lastChat || pickFirstSessionId() || uuid());
-  });
+    closeSidebar();
+  }
+
+  function formatRelative(ts) {
+    if (!ts) return "";
+    const diff = Math.floor(Date.now() / 1000 - ts);
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+  }
 
   // ── UI events ──
+  $("refresh-machines").onclick = () => loadMachines().catch(() => {});
+
+  // ── Sidebar resize ──
+  (function setupResize() {
+    const resizer = $("sidebar-resizer");
+    if (!resizer) return;
+    // Restore persisted width on desktop only
+    const saved = parseInt(localStorage.getItem("ba.sidebarWidth") || "0", 10);
+    if (saved >= 200 && window.innerWidth > 720) {
+      sidebar.style.flex = `0 0 ${saved}px`;
+      sidebar.style.width = `${saved}px`;
+    }
+    let dragging = false;
+    let startX = 0, startW = 0;
+    function onMove(e) {
+      if (!dragging) return;
+      const x = e.touches ? e.touches[0].clientX : e.clientX;
+      const dx = x - startX;
+      let w = startW + dx;
+      // clamp [200, 70vw]
+      w = Math.max(200, Math.min(window.innerWidth * 0.7, w));
+      sidebar.style.flex = `0 0 ${w}px`;
+      sidebar.style.width = `${w}px`;
+    }
+    function onUp() {
+      if (!dragging) return;
+      dragging = false;
+      resizer.classList.remove("dragging");
+      document.body.classList.remove("sidebar-dragging");
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.removeEventListener("touchmove", onMove);
+      document.removeEventListener("touchend", onUp);
+      const w = parseInt(sidebar.style.width, 10);
+      if (w >= 200) localStorage.setItem("ba.sidebarWidth", String(w));
+    }
+    function onDown(e) {
+      if (window.innerWidth <= 720) return;  // mobile uses drawer
+      dragging = true;
+      startX = e.touches ? e.touches[0].clientX : e.clientX;
+      startW = sidebar.getBoundingClientRect().width;
+      resizer.classList.add("dragging");
+      document.body.classList.add("sidebar-dragging");
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+      document.addEventListener("touchmove", onMove, { passive: false });
+      document.addEventListener("touchend", onUp);
+      e.preventDefault();
+    }
+    resizer.addEventListener("mousedown", onDown);
+    resizer.addEventListener("touchstart", onDown, { passive: false });
+    // Double-click resets to default
+    resizer.addEventListener("dblclick", () => {
+      sidebar.style.flex = "";
+      sidebar.style.width = "";
+      localStorage.removeItem("ba.sidebarWidth");
+    });
+  })();
+
   $("new-session").onclick = async () => {
     await switchChat(uuid());
     closeSidebar();
@@ -391,8 +533,21 @@
     }
   });
 
+  function pickFirstSessionId() {
+    const list = buildSessionList();
+    return list.length ? list[0].chat_id : null;
+  }
+
+  // ── Periodic refresh ──
+  function startMachinePoll() {
+    if (state.refreshTimer) clearInterval(state.refreshTimer);
+    state.refreshTimer = setInterval(() => {
+      loadMachines().catch(() => { /* network blip; UI stays as-is */ });
+    }, 15000);
+  }
+
   // ── Boot ──
-  loadBots().catch((e) => {
+  loadMachines().then(startMachinePoll).catch((e) => {
     console.error(e);
     setConn("offline");
     addMessage("assistant", "_Failed to connect: " + e.message + "_");

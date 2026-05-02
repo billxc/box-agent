@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import AsyncIterator
@@ -130,9 +131,40 @@ class SatelliteRegistry:
 
     expected_token: str = ""
     sessions: dict[str, SatelliteSession] = field(default_factory=dict)
+    # Machines we've seen this process lifetime; survives disconnect so the
+    # web UI can show an offline tile instead of the row vanishing.
+    history: dict[str, dict] = field(default_factory=dict)  # machine_id → {bots: [...], last_seen}
 
     def get(self, machine_id: str) -> SatelliteSession | None:
         return self.sessions.get(machine_id)
+
+    def list_machines(self) -> list[dict]:
+        """All known machines: connected + recently seen."""
+        out: list[dict] = []
+        seen: set[str] = set()
+        now = time.time()
+        for mid, sess in self.sessions.items():
+            seen.add(mid)
+            out.append({
+                "machine_id": mid,
+                "online": True,
+                "bots": [
+                    {"name": b.name, "display_name": b.display_name,
+                     "backend": b.backend, "model": b.model, "kind": b.kind}
+                    for b in sess.bots
+                ],
+                "last_seen": now,
+            })
+        for mid, info in self.history.items():
+            if mid in seen:
+                continue
+            out.append({
+                "machine_id": mid,
+                "online": False,
+                "bots": info.get("bots") or [],
+                "last_seen": info.get("last_seen") or 0,
+            })
+        return out
 
     def list_bots(self) -> list[tuple[str, RemoteBot]]:
         """Yield (machine_id, RemoteBot) for every registered remote bot."""
@@ -242,5 +274,14 @@ class SatelliteRegistry:
         finally:
             if sess is not None and not sess._closed:
                 self.sessions.pop(sess.machine_id, None)
+                # Remember bots so the UI keeps showing the row as "offline"
+                self.history[sess.machine_id] = {
+                    "bots": [
+                        {"name": b.name, "display_name": b.display_name,
+                         "backend": b.backend, "model": b.model, "kind": b.kind}
+                        for b in sess.bots
+                    ],
+                    "last_seen": time.time(),
+                }
                 logger.info("satellite '%s' disconnected", sess.machine_id)
         return ws

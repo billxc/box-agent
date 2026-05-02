@@ -13,24 +13,34 @@
     <header class="side-head">
       <button id="menu-close" class="icon-btn" aria-label="Close menu">×</button>
       <h1>BoxAgent</h1>
+      <span id="conn-state" class="dot offline" title="Disconnected"></span>
     </header>
-    <section class="side-section">
-      <label class="side-label">Bot</label>
-      <select id="bot-select"></select>
+
+    <section class="side-section machines">
+      <div class="side-row">
+        <label class="side-label">Machines</label>
+        <button id="refresh-machines" class="text-btn" title="Refresh">↻</button>
+      </div>
+      <ul id="machine-list"></ul>
     </section>
+
     <section class="side-section sessions">
       <div class="side-row">
-        <label class="side-label">Sessions</label>
+        <label class="side-label">
+          Sessions <span id="sessions-of" class="muted"></span>
+        </label>
         <button id="new-session" class="text-btn">＋ New</button>
       </div>
       <ul id="session-list"></ul>
       <button id="open-claude-picker" class="text-btn" style="margin-top:8px;align-self:flex-start;">⏱ Resume Claude session…</button>
     </section>
+
     <footer class="side-foot">
-      <span id="conn-state" class="dot offline" title="Disconnected"></span>
       <span id="conn-label">offline</span>
     </footer>
   </aside>
+
+  <div id="sidebar-resizer" aria-hidden="true"></div>
 
   <main id="main">
     <header class="top-bar">

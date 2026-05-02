@@ -664,6 +664,7 @@ class Gateway:
         wapp = web.Application()
         wapp.router.add_get("/", self._handle_web_index)
         wapp.router.add_get("/api/bots", self._handle_web_bots)
+        wapp.router.add_get("/api/machines", self._handle_web_machines)
         wapp.router.add_get("/api/sessions", self._handle_web_sessions)
         wapp.router.add_get("/api/history", self._handle_web_history)
         wapp.router.add_post("/api/send", self._handle_web_send)
@@ -1121,6 +1122,30 @@ class Gateway:
                     "machine": mid,
                 })
         return web.json_response({"bots": bots})
+
+    async def _handle_web_machines(self, request: web.Request) -> web.Response:
+        """Return all known machines (self + connected/disconnected satellites)
+        so the UI can render a grouped sidebar with online/offline status."""
+        if not self._web_authorized(request):
+            return self._web_unauthorized()
+        local_mid = self.config.machine_id or self.config.node_id or "local"
+        local_role = "host" if self.config.satellite_token else (
+            "satellite" if self.config.host_token else "single"
+        )
+        machines: list[dict] = [{
+            "machine_id": local_mid,
+            "online": True,
+            "role": local_role,
+            "self": True,
+            "bots": self._local_bot_descriptors(),
+            "last_seen": time.time(),
+        }]
+        if self._sat_registry is not None:
+            for m in self._sat_registry.list_machines():
+                m["role"] = "satellite"
+                m["self"] = False
+                machines.append(m)
+        return web.json_response({"machines": machines})
 
     async def _handle_web_sessions(self, request: web.Request) -> web.Response:
         """List every persisted chat session for a bot, across all channels."""
