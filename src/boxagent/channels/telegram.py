@@ -50,9 +50,11 @@ class TelegramChannel:
         self._dp.message.register(self._handle_incoming)
         self._dp.callback_query.register(self._handle_callback_query)
 
-        # Register slash commands in Telegram's menu
+        # Register slash commands in Telegram's menu — fire and forget.
+        # set_my_commands is a single HTTPS call (500ms-1s) that we don't need
+        # to block startup on; the menu shows up a beat later in Telegram.
         from aiogram.types import BotCommand
-        await self._bot.set_my_commands([
+        commands = [
             BotCommand(command="new", description="Start a fresh conversation"),
             BotCommand(command="resume", description="List or restore a previous session"),
             BotCommand(command="compact", description="Summarize and start new session with context"),
@@ -69,7 +71,15 @@ class TelegramChannel:
             BotCommand(command="schedule", description="Manage schedules (list/logs/show/run)"),
             BotCommand(command="version", description="Show version and commit hash"),
             BotCommand(command="help", description="Show available commands"),
-        ])
+        ]
+
+        async def _set_commands_bg():
+            try:
+                await self._bot.set_my_commands(commands)
+            except Exception as e:
+                logger.warning("Telegram set_my_commands failed: %s", e)
+
+        asyncio.create_task(_set_commands_bg())
 
         self._polling_task = asyncio.create_task(
             self._dp.start_polling(self._bot, handle_signals=False)

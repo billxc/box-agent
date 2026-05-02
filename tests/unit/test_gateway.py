@@ -156,6 +156,8 @@ class TestGateway:
             MockWD.return_value = mock_wd
 
             await gw._start_bot("my-bot", bot_cfg)
+            # Startup notify is now fire-and-forget; let the task run.
+            await asyncio.sleep(0)
 
             mock_channel.send_text.assert_called_once()
             call_args = mock_channel.send_text.call_args
