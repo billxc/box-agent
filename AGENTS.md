@@ -186,6 +186,7 @@ Telegram → TelegramChannel → Router → ClaudeProcess / CodexProcess / ACPPr
 - ✅ **Web UI channel**（默认开启，端口 9292，token 鉴权，移动端 UI，session 恢复，Claude 原生 session 选择恢复）
 - ✅ **Session 链式保存**：跨 `/compact` 不丢历史
 - ✅ **Hub-and-spoke 集群**：host 节点自动管理 devtunnel，satellites WS 接入，host web UI 联邦显示所有节点的 bot
+- ✅ **Workgroup over web**：admin/specialist 内部消息走 WebChannel；Discord 退化为可选入口（与 Telegram 平级）。跨 admin peer messaging 走 cluster RPC（同机 in-process / 跨机 `POST /api/wg/peer/recv`），不再依赖 Discord 共享频道。
 
 ### 有 Bug 的
 - 已知问题见 `docs/decisions.md` 和 git history

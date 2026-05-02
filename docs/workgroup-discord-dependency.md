@@ -1,5 +1,7 @@
 # Workgroup 对 Discord 的依赖分析
 
+> **STATUS**: 重构完成（commits e779ac4 / 120c9e8 / 08907a7 / 8b34b74 / ad72dc6 / 4ad0b35 / cfff2bd 在 feat/wg-channel-adapter 分支上）。Discord 已降级为纯入口；workgroup 内部消息走 WebChannel + cluster RPC。本文档描述的是**重构前**的状态，保留作为历史档案。新设计见 `docs/workgroup-design.md` §Transports。
+
 ## 现状
 
 workgroup.py 和 config.py 中有大量 Discord 特定逻辑，与核心的 agent 编排逻辑深度耦合。

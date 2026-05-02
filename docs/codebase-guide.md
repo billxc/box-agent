@@ -111,6 +111,16 @@ Gateway 启动时（与 Telegram channel 平行）：
 
 `Storage.save_session(bot, sid, chat_id=...)` 检测到同一 chat_id 切换到新 sid（典型场景：`/compact`）时，把旧 sid push 到 `previous_session_ids`（最长 20 条）。`/api/history` 走链：把当前 sid + 链上每条 sid 对应的 transcript JSONL 读出来按 `ts` 归并。Claude 原生 resume 同理走 `~/.claude/projects/<proj>/<sid>.jsonl` 链。
 
+## Workgroup (workgroup/)
+
+Admin agent + N specialist agent 的协作单元。每个 specialist 是一个独立的 CLI 进程，admin 通过 MCP `send_to_agent` 工具把任务派给 specialist。
+
+- **消息中枢**：`WebChannel` 唯一。Discord/Telegram 是平级入口，不再是 substrate（重构后；见 `workgroup-design.md` §Transports）。
+- **Specialist 可见性**：每个 specialist 用虚拟 chat_id `wg:<sp_name>`，admin 的 web UI sidebar 会自动列出本地 workgroup 的 specialist 子项（`web/static/app.js renderMachines()`）。
+- **Adapter 抽象**：`workgroup/channel_adapter.py` 定义 `WorkgroupChannelAdapter` Protocol。当前实现 `WebWorkgroupAdapter`（生产）+ `NullWorkgroupChannelAdapter`（测试）。`WorkgroupManager._build_adapter` 选取。
+- **跨 admin peer messaging**：`Gateway.send_peer(target, sender, message)`。本地直接 dispatch，远端通过 `SatelliteSession.call("POST", "/api/wg/peer/recv", body=…)` 走 cluster RPC。
+- **Heartbeat**：`workgroup/heartbeat.py` 周期性 fork admin session 决定是否需要行动；可见消息发到 Discord（如有）或 web 的 `heartbeat:<wg_name>` chat_id。
+
 ## Cluster (cluster/)
 
 Hub-and-spoke 单 host 拓扑，专门为"一台机器开浏览器管所有机器的 BoxAgent"设计。

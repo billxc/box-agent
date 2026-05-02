@@ -31,6 +31,40 @@ Workgroup 是独立的配置单元，不依赖 `bots` 配置节。
 
 ## 配置
 
+### Transports
+
+Workgroup 内部消息（admin↔specialist 调度、specialist 可见性、admin 通知、跨 admin peer messaging）**全部走 WebChannel**。Discord 退化为可选的入口（用户从 Discord 频道给 admin 发消息、admin 回复回去），跟 Telegram 同等地位。
+
+| 元素 | Web 模式（默认） | Discord 入口模式 |
+|---|---|---|
+| Admin 接收用户消息 | Web UI HTTP POST | Discord 频道（admin_discord_category 或 admin_discord_channel） |
+| Admin 回复用户 | Web UI SSE 流 | 回原 Discord 频道 |
+| Specialist 任务派发 | `WebChannel._publish` 到 `wg:<sp_name>` | 同左（Discord 不再涉及） |
+| Specialist 可见性 | Web UI sidebar 子项 | 同左 |
+| Admin 短通知（任务完成等） | `WebChannel.send_text` 到 admin chat_id | 同左 |
+| 跨 admin peer messaging | cluster RPC（同机 in-process / 远端 RPC） | 同左 |
+| 动态 create/delete specialist | yaml 持久化 + in-process spawn | 同左 |
+
+**`transport` 字段（可选）**：`web` / `discord` / 留空（auto-detect — 有 `discord_bot_id` 推断 discord，否则 web）。等同含义：是否注册 Discord 入站路由。
+
+#### 最简 Web-only yaml
+
+```yaml
+workgroups:
+  alpha:
+    workspace: alpha
+    transport: web                    # 可省略；不设 discord_bot_id 等价
+    allowed_users: [942620361332260936]
+    ai_backend: claude-cli
+    yolo: true
+    display_name: Alpha Admin
+    specialists:
+      dev-1:
+        display_name: Developer 1
+```
+
+#### Discord 入口模式 yaml
+
 ```yaml
 workgroups:
   war-room:
@@ -49,9 +83,9 @@ workgroups:
 
     # Heartbeat 配置
     heartbeat_interval_seconds: 300       # 0 = 禁用
-    display_heartbeat: true               # 在 Discord 显示 heartbeat 信息
+    display_heartbeat: true               # 在 Discord/Web 显示 heartbeat 信息
 
-    # Admin 频道配置
+    # Admin 频道配置（仅 Discord 入口需要）
     admin:
       discord_category: 1497645743123464333   # admin 监听的 Discord category
       discord_admin_channel: 1497645761830322267  # heartbeat/通知用的文字频道
@@ -60,10 +94,13 @@ workgroups:
     specialists:
       dev-1:
         display_name: Developer 1
-        discord_channel: 1497835185402544249   # 可选，有则显示对话
+        # discord_channel: …  ← 已废弃，被忽略；specialist 始终在 web 暴露
         # model: sonnet                       # 可选，默认继承 workgroup
         # ai_backend: claude-cli              # 可选，默认继承 workgroup
 ```
+
+> **废弃字段**：`discord_peer_channel`、`SpecialistConfig.discord_channel` 在 yaml 里仍可写但被忽略（peer messaging 走 cluster RPC；specialist 永远是虚拟 `wg:<name>` chat_id）。
+
 
 ### 字段继承关系
 
