@@ -1427,17 +1427,23 @@ class Gateway:
             saved = self._storage.load_session(bot, chat_id)
             session_id = ""
             prev_chain: list[str] = []
+            saved_backend = ""
             if isinstance(saved, dict):
                 session_id = saved.get("session_id", "")
                 raw_prev = saved.get("previous_session_ids") or []
                 if isinstance(raw_prev, list):
                     prev_chain = [str(s) for s in raw_prev if isinstance(s, str) and s]
+                saved_backend = str(saved.get("backend", "") or "")
             elif isinstance(saved, str):
                 session_id = saved
             sids = ([session_id] if session_id else []) + prev_chain
 
-            # Resumed Claude native session — walk chain across ~/.claude/projects/.../<sid>.jsonl
-            if chat_id.startswith("claude-") and sids:
+            # Claude-native: any session whose stored backend is claude-cli has
+            # a ~/.claude/projects/<encoded>/<sid>.jsonl with full tool_use /
+            # tool_result blocks — use that for the richest history (text +
+            # tool cards). Independent of chat_id shape (Telegram digits /
+            # Discord ids / web-uuid / wg:specialist all included).
+            if saved_backend == "claude-cli" and sids:
                 from boxagent.sessions import claude_native
                 base = claude_native.default_claude_projects_dir()
                 if base.is_dir():
