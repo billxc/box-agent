@@ -272,6 +272,17 @@
 
     const frag = document.createDocumentFragment();
     for (const h of history) {
+      if (h.role === "tool_call") {
+        const card = _buildToolCard(h.tool_id || "", h.name || "tool", h.args || {});
+        frag.appendChild(card.el);
+        // Stash so a following tool_result with the same id can update it.
+        state.toolCards[h.tool_id || `__hist${frag.children.length}`] = card;
+        continue;
+      }
+      if (h.role === "tool_result") {
+        _applyToolResult(h.tool_id || "", !!h.ok, h.summary || "", h.error || "");
+        continue;
+      }
       const el = buildMessage(h.role, h.text, { ts: h.ts });
       el.style.animation = "none";
       frag.appendChild(el);
@@ -371,16 +382,7 @@
     } catch { return ""; }
   }
 
-  function renderToolCall(toolId, name, args) {
-    if (!toolId) toolId = `t${Math.random().toString(36).slice(2, 10)}`;
-    let card = state.toolCards[toolId];
-    if (card) {
-      // Idempotent: same id arriving twice (Claude may emit start + final). Refresh args.
-      card.args = args;
-      card.headerEl.textContent = `▶ ${name}(${_argSummary(args)})`;
-      try { card.bodyEl.textContent = JSON.stringify(args, null, 2); } catch {}
-      return;
-    }
+  function _buildToolCard(toolId, name, args) {
     const det = document.createElement("details");
     det.className = "tool-card";
     const summary = document.createElement("summary");
@@ -394,18 +396,17 @@
     det.appendChild(summary);
     det.appendChild(body);
     det.appendChild(result);
-    document.getElementById("messages").appendChild(det);
-    state.toolCards[toolId] = {
-      el: det, headerEl: summary, bodyEl: body, resultEl: result, name, args,
-    };
+    return { el: det, headerEl: summary, bodyEl: body, resultEl: result, name, args, toolId };
   }
 
-  function renderToolResult(toolId, ok, summary, error) {
+  function _applyToolResult(toolId, ok, summary, error) {
     const card = state.toolCards[toolId];
     if (!card) {
-      // Result without preceding call: synthesize a minimal card.
-      renderToolCall(toolId, "tool", {});
-      return renderToolResult(toolId, ok, summary, error);
+      // Result without preceding call (rare; e.g. history mid-truncated).
+      const synth = _buildToolCard(toolId || "?", "tool", {});
+      document.getElementById("messages").appendChild(synth.el);
+      state.toolCards[toolId || "?"] = synth;
+      return _applyToolResult(toolId || "?", ok, summary, error);
     }
     const icon = ok ? "✓" : "✗";
     card.headerEl.textContent = `${icon} ${card.name}(${_argSummary(card.args)})`;
@@ -413,6 +414,25 @@
     card.resultEl.textContent = ok ? (summary || "(ok)") : (error || summary || "(failed)");
     card.resultEl.classList.toggle("ok", ok);
     card.resultEl.classList.toggle("failed", !ok);
+  }
+
+  function renderToolCall(toolId, name, args) {
+    if (!toolId) toolId = `t${Math.random().toString(36).slice(2, 10)}`;
+    let card = state.toolCards[toolId];
+    if (card) {
+      // Idempotent: same id arriving twice (Claude streaming start + final).
+      card.args = args;
+      card.headerEl.textContent = `▶ ${name}(${_argSummary(args)})`;
+      try { card.bodyEl.textContent = JSON.stringify(args, null, 2); } catch {}
+      return;
+    }
+    card = _buildToolCard(toolId, name, args);
+    document.getElementById("messages").appendChild(card.el);
+    state.toolCards[toolId] = card;
+  }
+
+  function renderToolResult(toolId, ok, summary, error) {
+    _applyToolResult(toolId, ok, summary, error);
   }
 
   // ── Send ──

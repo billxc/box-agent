@@ -172,7 +172,18 @@ def _summarize(path: Path) -> dict | None:
 
 
 def read_messages(encoded: str, session_id: str, claude_dir: Path | None = None) -> list[dict]:
-    """Return parsed user/assistant messages for a single Claude session."""
+    """Return parsed records for a single Claude session.
+
+    A record is one of:
+      {"role": "user"|"assistant", "text": str, "ts": float}
+      {"role": "tool_call", "tool_id": str, "name": str, "args": dict, "ts": float}
+      {"role": "tool_result", "tool_id": str, "ok": bool, "summary": str,
+       "error": str, "ts": float}
+
+    A single assistant turn may contain both text and tool_use blocks; we
+    split into multiple records preserving order. The frontend's history
+    replay dispatches by role to render either a chat bubble or a tool card.
+    """
     base = (claude_dir or default_claude_projects_dir()) / encoded / f"{session_id}.jsonl"
     if not base.is_file():
         return []
@@ -190,18 +201,87 @@ def read_messages(encoded: str, session_id: str, claude_dir: Path | None = None)
                 t = rec.get("type")
                 if t not in ("user", "assistant"):
                     continue
-                text = _extract_text(rec)
-                if not text:
-                    continue
                 ts = _parse_ts(rec.get("timestamp"))
-                out.append({"role": t, "text": text, "ts": ts})
+                out.extend(_extract_records(rec, t, ts))
     except OSError as e:
         logger.debug("claude_native: failed to read %s: %s", base, e)
     return out
 
 
+def _extract_records(rec: dict, role: str, ts: float) -> list[dict]:
+    """Split a single jsonl record into ordered text/tool_call/tool_result entries."""
+    msg = rec.get("message")
+    if not isinstance(msg, dict):
+        return []
+    content = msg.get("content")
+    # String content → single text record (legacy shape).
+    if isinstance(content, str):
+        return [{"role": role, "text": content, "ts": ts}] if content else []
+    if not isinstance(content, list):
+        return []
+    out: list[dict] = []
+    text_buf: list[str] = []
+
+    def _flush_text():
+        if text_buf:
+            joined = "\n".join(p for p in text_buf if p)
+            if joined:
+                out.append({"role": role, "text": joined, "ts": ts})
+            text_buf.clear()
+
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        block_type = item.get("type")
+        if block_type == "text":
+            txt = item.get("text") or ""
+            if txt:
+                text_buf.append(txt)
+        elif block_type == "tool_use":
+            _flush_text()
+            out.append({
+                "role": "tool_call",
+                "tool_id": item.get("id", "") or "",
+                "name": item.get("name", "") or "",
+                "args": item.get("input") if isinstance(item.get("input"), dict) else {},
+                "ts": ts,
+            })
+        elif block_type == "tool_result":
+            _flush_text()
+            raw = item.get("content")
+            summary, error = _stringify_tool_result(raw)
+            is_error = bool(item.get("is_error"))
+            out.append({
+                "role": "tool_result",
+                "tool_id": item.get("tool_use_id", "") or "",
+                "ok": not is_error,
+                "summary": "" if is_error else summary,
+                "error": (error or summary) if is_error else "",
+                "ts": ts,
+            })
+    _flush_text()
+    return out
+
+
+def _stringify_tool_result(raw) -> tuple[str, str]:
+    """Coerce tool_result.content (str | list[block]) to (summary, error_text)."""
+    if isinstance(raw, str):
+        return raw[:200], raw[:200]
+    if isinstance(raw, list):
+        parts: list[str] = []
+        for blk in raw:
+            if isinstance(blk, dict) and blk.get("type") == "text":
+                parts.append(blk.get("text") or "")
+            elif isinstance(blk, str):
+                parts.append(blk)
+        joined = "\n".join(p for p in parts if p)
+        return joined[:200], joined[:200]
+    return "", ""
+
+
 def _extract_text(rec: dict) -> str:
-    """Pull the human-readable text out of a Claude JSONL message record."""
+    """Pull joined text from a record (text blocks only). Used by session
+    summary scanners that don't care about tool blocks."""
     msg = rec.get("message")
     if not isinstance(msg, dict):
         return ""
@@ -211,9 +291,7 @@ def _extract_text(rec: dict) -> str:
     if isinstance(content, list):
         parts: list[str] = []
         for item in content:
-            if not isinstance(item, dict):
-                continue
-            if item.get("type") == "text":
+            if isinstance(item, dict) and item.get("type") == "text":
                 txt = item.get("text") or ""
                 if txt:
                     parts.append(txt)
