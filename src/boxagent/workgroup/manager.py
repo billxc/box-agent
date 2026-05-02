@@ -11,6 +11,11 @@ import yaml
 
 from boxagent.config import BotConfig, SpecialistConfig, WorkgroupConfig
 from boxagent.paths import resolve_boxagent_dir
+from boxagent.workgroup.channel_adapter import (
+    DiscordWorkgroupAdapter,
+    NullWorkgroupChannelAdapter,
+    WorkgroupChannelAdapter,
+)
 from boxagent.workgroup.heartbeat import HeartbeatManager
 from boxagent.router import Router
 from boxagent.sessions import SessionPool
@@ -83,6 +88,7 @@ class WorkgroupManager:
     routers: dict[str, Router] = field(default_factory=dict)    # name → Router
     pools: dict[str, SessionPool] = field(default_factory=dict)  # name → Pool
     procs: dict[str, object] = field(default_factory=dict)       # name → CLI process
+    adapters: dict[str, WorkgroupChannelAdapter] = field(default_factory=dict)  # wg_name → adapter
     # Async task tracking
     _tasks: dict[str, asyncio.Task] = field(default_factory=dict, repr=False)
     _task_results: dict[str, dict] = field(default_factory=dict, repr=False)
@@ -224,8 +230,9 @@ class WorkgroupManager:
                     "Failed to symlink template skill %s → %s: %s", src, target, e
                 )
 
-    def _create_specialist_agent(
-        self, sp_name: str, sp_cfg, wg_cfg: WorkgroupConfig, dc_channel,
+    async def _create_specialist_agent(
+        self, sp_name: str, sp_cfg, wg_cfg: WorkgroupConfig,
+        adapter: WorkgroupChannelAdapter,
         template_info: TemplateInfo | None = None,
     ) -> Router:
         """Create backend, pool, router for a single specialist. Returns the Router."""
@@ -277,7 +284,7 @@ class WorkgroupManager:
 
         sp_router = Router(
             cli_process=cli,
-            channel=dc_channel,
+            channel=adapter.primary_channel(),
             allowed_users=wg_cfg.allowed_users,
             storage=self.storage,
             pool=pool,
@@ -291,16 +298,29 @@ class WorkgroupManager:
             extra_skill_dirs=syn_cfg.extra_skill_dirs,
             ai_backend=syn_cfg.ai_backend,
         )
-        if dc_channel:
-            sp_router._channels["discord"] = dc_channel
+        # Adapter wires any inbound channel affordances on the specialist.
+        await adapter.setup_specialist(sp_name, sp_cfg, wg_cfg, sp_router)
         self.routers[sp_name] = sp_router
         return sp_router
 
+    def _build_adapter(self, wg_cfg: WorkgroupConfig) -> WorkgroupChannelAdapter:
+        """Pick a channel adapter based on workgroup config.
+
+        Discord is selected when the workgroup has a configured discord_bot_id
+        AND the bot is actually connected (channel object available). Otherwise
+        falls back to NullWorkgroupChannelAdapter (in-process / web-only). The
+        Web adapter is added in #3 (#3a).
+        """
+        if wg_cfg.discord_bot_id:
+            dc = self.discord_channels.get(wg_cfg.discord_bot_id)
+            if dc is not None:
+                return DiscordWorkgroupAdapter(dc_channel=dc)
+        return NullWorkgroupChannelAdapter()
+
     async def start_workgroup(self, wg_name: str, wg_cfg: WorkgroupConfig) -> None:
         """Initialize a standalone workgroup: create admin + specialist agents."""
-        dc_channel = None
-        if wg_cfg.discord_bot_id:
-            dc_channel = self.discord_channels.get(wg_cfg.discord_bot_id)
+        adapter = self._build_adapter(wg_cfg)
+        self.adapters[wg_name] = adapter
 
         # --- Create admin agent ---
         admin_ws = wg_cfg.admin_workspace
@@ -350,7 +370,7 @@ class WorkgroupManager:
 
         admin_router = Router(
             cli_process=admin_cli,
-            channel=dc_channel,
+            channel=adapter.primary_channel(),
             allowed_users=wg_cfg.allowed_users,
             storage=self.storage,
             pool=admin_pool,
@@ -377,83 +397,17 @@ class WorkgroupManager:
             admin_router._channels["web"] = web_ch
             logger.info("Workgroup '%s': web channel enabled", wg_name)
 
-        # Register admin on Discord category
-        if dc_channel and wg_cfg.admin_discord_category:
-            dc_channel.register_route(
-                admin_router.handle_message,
-                [wg_cfg.admin_discord_category],
-            )
-            admin_router._channels["discord"] = dc_channel
-            logger.info(
-                "Workgroup '%s': admin registered on Discord category %d",
-                wg_name, wg_cfg.admin_discord_category,
-            )
-
-        # Also register admin on the admin channel (e.g. DM) if different from category
-        if dc_channel and wg_cfg.admin_discord_channel:
-            try:
-                dc_channel.register_channel_route(
-                    admin_router.handle_message,
-                    wg_cfg.admin_discord_channel,
-                )
-                admin_router._channels["discord"] = dc_channel
-                logger.info(
-                    "Workgroup '%s': admin registered on Discord channel %d",
-                    wg_name, wg_cfg.admin_discord_channel,
-                )
-            except ValueError:
-                # Already registered (e.g. same channel used by another route)
-                logger.debug(
-                    "Workgroup '%s': Discord channel %d already registered, skipping",
-                    wg_name, wg_cfg.admin_discord_channel,
-                )
+        # Register admin inbound routes via the channel adapter (Discord today;
+        # web/null adapters are no-ops since web is wired above).
+        await adapter.register_admin(admin_router, wg_cfg)
 
         # Register peer channel route for cross-admin messaging
-        if dc_channel and wg_cfg.discord_peer_channel:
-            from boxagent.channels.base import IncomingMessage
-            from boxagent.gateway import _parse_peer_message
-
-            peer_ch_id = wg_cfg.discord_peer_channel
-            comm_ch_id = str(wg_cfg.admin_discord_channel)
-            _wg_name = wg_name
-
-            async def _peer_handler(msg, _name=_wg_name, _comm=comm_ch_id, _router=admin_router):
-                target, sender, body = _parse_peer_message(msg.text)
-                if target != _name:
-                    return
-                msg = IncomingMessage(
-                    channel=msg.channel,
-                    chat_id=_comm,
-                    user_id=msg.user_id,
-                    text=(
-                        f"[Peer message from {sender}]\n"
-                        f"{body}\n\n"
-                        f"---\n"
-                        f'Reply with: send_to_peer("{sender}", "your reply")'
-                    ),
-                    attachments=msg.attachments,
-                    trusted=True,
-                    channel_info=msg.channel_info,
-                )
-                await _router.handle_message(msg)
-
-            try:
-                dc_channel.register_channel_route(_peer_handler, peer_ch_id)
-                admin_router.has_peer_channel = True
-                logger.info(
-                    "Workgroup '%s': peer channel %d registered (comm → %s)",
-                    wg_name, peer_ch_id, comm_ch_id,
-                )
-            except ValueError:
-                logger.debug(
-                    "Workgroup '%s': peer channel %d already registered, skipping",
-                    wg_name, peer_ch_id,
-                )
+        await adapter.register_peer(admin_router, wg_cfg)
 
         # --- Create specialists (already merged above) ---
         specialist_names = []
         for sp_name, sp_cfg in wg_cfg.specialists.items():
-            self._create_specialist_agent(sp_name, sp_cfg, wg_cfg, dc_channel)
+            await self._create_specialist_agent(sp_name, sp_cfg, wg_cfg, adapter)
             specialist_names.append(sp_name)
             logger.info(
                 "Workgroup '%s': specialist '%s' started (model=%s)",
@@ -465,6 +419,11 @@ class WorkgroupManager:
 
         # --- Start heartbeat (if configured) ---
         if wg_cfg.heartbeat_interval_seconds > 0:
+            # Heartbeat publishing currently only supports Discord. For non-Discord
+            # adapters dc_channel is None — heartbeat still runs (admin context refresh)
+            # but skips the visible "───── heartbeat ─────" message. #3a will add
+            # web visibility via adapter.notify_admin.
+            hb_dc_channel = getattr(adapter, "dc_channel", None)
             hb = HeartbeatManager(
                 wg_name=wg_name,
                 admin_pool=admin_pool,
@@ -474,7 +433,7 @@ class WorkgroupManager:
                 ai_backend=wg_cfg.ai_backend,
                 model=wg_cfg.model,
                 yolo=wg_cfg.yolo,
-                discord_channel=dc_channel,
+                discord_channel=hb_dc_channel,
                 discord_chat_id=str(wg_cfg.admin_discord_channel) if wg_cfg.admin_discord_channel else "",
                 display_heartbeat=wg_cfg.display_heartbeat,
                 start_time=self.start_time,
@@ -500,21 +459,20 @@ class WorkgroupManager:
         self._task_counter += 1
         task_id = f"{target}-{self._task_counter}"
 
-        # Resolve Discord channel info
-        sp_discord_channel = 0
-        dc_channel = None
+        # Resolve the workgroup that owns this specialist + its adapter
+        adapter: WorkgroupChannelAdapter = NullWorkgroupChannelAdapter()
+        sp_cfg = None
         wg_display = from_bot or "admin"
         wg_name = ""
         for name, wg_cfg in self.config.items():
             if target in wg_cfg.specialists:
-                sp_discord_channel = wg_cfg.specialists[target].discord_channel
-                if wg_cfg.discord_bot_id:
-                    dc_channel = self.discord_channels.get(wg_cfg.discord_bot_id)
+                sp_cfg = wg_cfg.specialists[target]
+                adapter = self.adapters.get(name) or NullWorkgroupChannelAdapter()
                 wg_display = wg_cfg.display_name or from_bot or "admin"
                 wg_name = name
                 break
 
-        chat_id = str(sp_discord_channel) if sp_discord_channel else f"wg:{target}"
+        chat_id = adapter.get_specialist_chat_id(target, sp_cfg) if sp_cfg else f"wg:{target}"
 
         # Wrap admin's message with system instruction for XML-tagged response
         wrapped_text = (
@@ -531,12 +489,9 @@ class WorkgroupManager:
         async def _run():
             result = ""
             try:
-                # Post task in specialist's channel via webhook
-                if sp_discord_channel and dc_channel:
-                    try:
-                        await dc_channel.send_via_webhook(sp_discord_channel, wg_display, text)
-                    except Exception as e:
-                        logger.warning("Failed to post task to specialist channel: %s", e)
+                # Post task in specialist's visibility channel (e.g. Discord webhook)
+                if sp_cfg is not None:
+                    await adapter.post_task(target, sp_cfg, text, wg_display)
 
                 raw_result = await router.dispatch_sync(wrapped_text, chat_id, from_bot=from_bot)
                 result = _extract_specialist_response(raw_result)
@@ -555,26 +510,13 @@ class WorkgroupManager:
                 logger.error("Task %s failed: %s", task_id, e)
                 result = f"Error: {e}"
 
-            # Callback: Discord notification with result + full result to admin router
+            # Callback: short notification to admin's chat + full result to admin router
             if reply_chat_id:
-                # 1. Result notification on Discord (for human observers)
-                # Use _ensure_webhook (NOT ensure_allowed_webhook) so the
-                # notification is filtered out by _handle_incoming and doesn't
-                # trigger the admin to reply again.
-                if dc_channel:
-                    status = "done" if "Error" not in result[:10] else "failed"
-                    preview = result[:800] + "..." if len(result) > 800 else result
-                    notify = f"**[{target}]** {status}\n{preview}"
-                    try:
-                        wh = await dc_channel._ensure_webhook(
-                            "TaskNotification", reply_chat_id,
-                        )
-                        if wh:
-                            await wh.send(notify, wait=True)
-                        else:
-                            await dc_channel.send_text(reply_chat_id, notify)
-                    except Exception as e:
-                        logger.warning("Failed to send task notification: %s", e)
+                # 1. Result notification (Discord: webhook; null: no-op)
+                status = "done" if "Error" not in result[:10] else "failed"
+                preview = result[:800] + "..." if len(result) > 800 else result
+                notify = f"**[{target}]** {status}\n{preview}"
+                await adapter.notify_admin(reply_chat_id, notify)
 
                 # 2. Full result to admin router (internal, admin AI processes it)
                 admin_router = self.routers.get(wg_name)
@@ -828,18 +770,8 @@ class WorkgroupManager:
                 p = ba_dir / p
             resolved_user_dirs.append(str(p))
 
-        # Create Discord channel (if workgroup has Discord)
-        discord_channel_id = 0
-        dc_channel = None
-        if wg_cfg.discord_bot_id and wg_cfg.admin_discord_category:
-            dc_channel = self.discord_channels.get(wg_cfg.discord_bot_id)
-            if dc_channel:
-                try:
-                    discord_channel_id = await dc_channel.create_text_channel(
-                        wg_cfg.admin_discord_category, sp_name,
-                    )
-                except Exception as e:
-                    logger.warning("Failed to create Discord channel for '%s': %s", sp_name, e)
+        # Reuse the workgroup's adapter (built at start_workgroup time).
+        adapter = self.adapters.get(wg_name) or self._build_adapter(wg_cfg)
 
         sp_cfg = SpecialistConfig(
             name=sp_name,
@@ -847,13 +779,18 @@ class WorkgroupManager:
             workspace=workspace or wg_cfg.specialist_workspace(sp_name),
             ai_backend=wg_cfg.ai_backend,
             display_name=display_name or sp_name,
-            discord_channel=discord_channel_id,
+            discord_channel=0,
             extra_skill_dirs=resolved_user_dirs,
             template=template,
         )
 
-        self._create_specialist_agent(
-            sp_name, sp_cfg, wg_cfg, dc_channel, template_info=template_info,
+        # Adapter allocates any external resource (e.g. Discord text channel)
+        # and may mutate sp_cfg.discord_channel.
+        sp_cfg = await adapter.provision_specialist(sp_name, sp_cfg, wg_cfg)
+        discord_channel_id = sp_cfg.discord_channel
+
+        await self._create_specialist_agent(
+            sp_name, sp_cfg, wg_cfg, adapter, template_info=template_info,
         )
 
         # Persist
@@ -882,26 +819,19 @@ class WorkgroupManager:
 
         # Find which workgroup owns this specialist
         wg_name = ""
-        sp_discord_channel = 0
+        sp_cfg = None
         sp_workspace = ""
         for name, wg_cfg in self.config.items():
             if sp_name in wg_cfg.specialists:
                 wg_name = name
-                sp_discord_channel = wg_cfg.specialists[sp_name].discord_channel
-                sp_workspace = wg_cfg.specialists[sp_name].workspace
+                sp_cfg = wg_cfg.specialists[sp_name]
+                sp_workspace = sp_cfg.workspace
                 break
 
-        # Delete Discord channel (if exists)
-        if sp_discord_channel and wg_name:
-            wg_cfg = self.config[wg_name]
-            dc_channel = None
-            if wg_cfg.discord_bot_id:
-                dc_channel = self.discord_channels.get(wg_cfg.discord_bot_id)
-            if dc_channel:
-                try:
-                    await dc_channel.delete_text_channel(sp_discord_channel)
-                except Exception as e:
-                    logger.warning("Failed to delete Discord channel for '%s': %s", sp_name, e)
+        # Tear down any external resource via the adapter (Discord channel etc.).
+        if sp_cfg is not None and wg_name:
+            adapter = self.adapters.get(wg_name) or NullWorkgroupChannelAdapter()
+            await adapter.cleanup_specialist(sp_name, sp_cfg)
 
         # Stop process
         cli = self.procs.pop(sp_name, None)
