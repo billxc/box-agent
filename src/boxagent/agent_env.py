@@ -163,6 +163,7 @@ class AgentEnv:
     ai_backend: str = "claude-cli"
     model: str = ""
     yolo: bool = False
+    passthrough: bool = False  # raw bot: skip context + MCP injection
 
     # ── Derived ──
 

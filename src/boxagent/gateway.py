@@ -16,6 +16,7 @@ from boxagent.config import AppConfig, BotConfig, WorkgroupConfig, node_matches
 from boxagent.paths import default_config_dir, default_local_dir, default_workspace_dir
 from boxagent.router import Router
 from boxagent.sessions import SessionPool
+from boxagent.sessions.raw_pool import RawSessionPool
 from boxagent.scheduler import BotRef, Scheduler, load_schedules
 from boxagent.sessions import Storage
 from boxagent.watchdog import Watchdog
@@ -222,6 +223,9 @@ class Gateway:
                 logger.info("Bot '%s' skipped (enabled_on_nodes=%s, current=%s)", name, bot_cfg.enabled_on_nodes, self.config.node_id)
                 continue
             await self._start_bot(name, bot_cfg)
+
+        # Phase 2b: Register the synthetic ``raw`` bot (web-only passthrough).
+        await self._start_raw_bot()
 
         # Phase 3: Start all shared Discord channels (one start() per unique client)
         for dc_key, dc_ch in self._discord_channels.items():
@@ -528,11 +532,96 @@ class Gateway:
 
         logger.info("Bot '%s' started (session=%s)", name, session_id)
 
+    # ---- raw virtual bot ----
+
+    def _raw_backend_factory(self, *, backend: str, workspace: str, model: str,
+                             session_id: str | None, bot_name: str) -> object:
+        """Spawn a fresh per-chat backend process for the raw bot."""
+        cfg = BotConfig(
+            name=bot_name,
+            ai_backend=backend or "claude-cli",
+            workspace=workspace or "",
+            model=model or "",
+            yolo=True,           # raw bot: no permission prompts (web-only)
+            passthrough=True,
+        )
+        return _create_backend(cfg, session_id)
+
+    async def _start_raw_bot(self) -> None:
+        """Register the synthetic ``raw`` bot.
+
+        ``raw`` is a web-only passthrough bot: no Telegram/Discord, no
+        BoxAgent context/MCP injection, per-chat backend chosen at resume
+        time. Used as a clean ``--resume`` shell for native claude / codex
+        sessions.
+        """
+        name = "raw"
+        bot_cfg = BotConfig(
+            name=name,
+            ai_backend="claude-cli",   # placeholder; real backend per-chat
+            workspace="",
+            display_name="Raw passthrough",
+            passthrough=True,
+            web_enabled=True,
+            yolo=True,
+        )
+        self.config.bots[name] = bot_cfg
+
+        pool = RawSessionPool(
+            storage=self._storage,
+            bot_name=name,
+            backend_factory=self._raw_backend_factory,
+        )
+        pool.start()
+        self._pools[name] = pool
+
+        # Stub cli_process (Router requires one); never started.
+        stub = ClaudeProcess(
+            workspace="/tmp",
+            session_id=None,
+            model="",
+            agent="",
+            bot_name=name,
+            yolo=True,
+        )
+        self._cli_processes[name] = stub
+
+        router = Router(
+            cli_process=stub,
+            channel=None,
+            allowed_users=[],
+            storage=self._storage,
+            pool=pool,
+            bot_name=name,
+            display_name=bot_cfg.display_name,
+            config_dir=str(self.config_dir),
+            node_id=self.config.node_id,
+            local_dir=self._storage.local_dir if self._storage else None,
+            start_time=self._start_time,
+            workspace="",
+            extra_skill_dirs=[],
+            ai_backend="claude-cli",
+            on_backend_switched=self._on_backend_switched,
+            has_peer_channel=False,
+            telegram_token="",
+            passthrough=True,
+        )
+
+        web_ch = WebChannel(bot_name=name)
+        web_ch.on_message = router.handle_message
+        self._web_channels[name] = web_ch
+        router._channels["web"] = web_ch
+
+        self._routers[name] = router
+        logger.info("Bot 'raw' (passthrough, web-only) registered")
+
     def _start_scheduler(self) -> None:
         """Create and start the Scheduler after all active bots are online."""
         schedules_file = self.config_dir / "schedules.yaml"
         bot_refs: dict[str, BotRef] = {}
         for name in self._routers:
+            if name == "raw":
+                continue  # synthetic web-only bot, never a scheduler target
             bot_cfg = self.config.bots[name]
             chat_id = str(bot_cfg.allowed_users[0]) if bot_cfg.allowed_users else ""
             primary_channel = self._channels.get(name) or self._get_bot_discord_channel(name)
@@ -1486,8 +1575,14 @@ class Gateway:
         })
 
     async def _handle_claude_resume(self, request: web.Request) -> web.Response:
-        """Persist the chosen Claude session_id under a synthetic chat_id so the
-        next message in that chat_id resumes that Claude session via ``--resume``.
+        """Persist the chosen native session_id under a synthetic chat_id so the
+        next message in that chat_id resumes it via the appropriate backend.
+
+        Two modes:
+        - bot=<real bot>: legacy — binds to a real configured bot, chat_id is
+          ``claude-<sid>``, backend is the bot's configured backend.
+        - bot="raw": passthrough — chat_id is ``<backend>-<sid>``, backend is
+          chosen by the caller (claude-cli / codex-cli / codex-acp).
         """
         if not self._web_authorized(request):
             return self._web_unauthorized()
@@ -1499,6 +1594,7 @@ class Gateway:
         sid = body.get("session_id", "")
         encoded = body.get("project", "")
         machine = body.get("machine", "")
+        backend_override = body.get("backend", "")  # raw mode only
         if not bot or not sid or not machine:
             return web.json_response({"ok": False, "error": "missing bot/session_id/machine"}, status=400)
         if machine != self._local_machine_id():
@@ -1509,16 +1605,21 @@ class Gateway:
         if bot not in self._web_channels:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
 
-        chat_id = f"claude-{sid}"
+        is_raw = bot == "raw"
+        workspace = ""
         if self._storage:
             cfg = self.config.bots.get(bot)
             wg = self.config.workgroups.get(bot)
             model = (cfg.model if cfg else None) or (wg.model if wg else "")
-            backend = (cfg.ai_backend if cfg else None) or (wg.ai_backend if wg else "claude-cli")
+            if is_raw:
+                backend = backend_override or "claude-cli"
+            else:
+                backend = (cfg.ai_backend if cfg else None) or (wg.ai_backend if wg else "claude-cli")
             from boxagent.sessions import claude_native
             workspace = (claude_native.project_cwd(encoded) if encoded else "") or (
                 cfg.workspace if cfg else (wg.admin_workspace if wg else "")
             )
+            chat_id = f"{backend.split('-')[0]}-{sid}" if is_raw else f"claude-{sid}"
             self._storage.save_session(
                 bot, sid,
                 preview="(resumed via web)",
@@ -1530,14 +1631,20 @@ class Gateway:
             pool = self._pools.get(bot)
             if pool is None and self._workgroup_mgr is not None:
                 pool = self._workgroup_mgr.pools.get(bot)
-            if pool is not None and workspace:
-                pool.set_workspace(chat_id, workspace)
+            if pool is not None:
+                if workspace:
+                    pool.set_workspace(chat_id, workspace)
                 pool.set_session_id(chat_id, sid)
+                if is_raw and hasattr(pool, "set_backend"):
+                    pool.set_backend(chat_id, backend)
+        else:
+            chat_id = f"claude-{sid}"
         return web.json_response({
             "ok": True,
             "chat_id": chat_id,
             "session_id": sid,
             "project": encoded,
+            "backend": backend if self._storage else "",
             "workspace": workspace if self._storage else "",
         })
 

@@ -81,13 +81,15 @@ class ClaudeProcess(BaseCLIProcess):
                 args.append("--fork-session")
                 self.fork_session = False  # only fork on the first turn
 
-        # MCP servers — HTTP endpoints, selected by bot capabilities
+        # MCP servers — HTTP endpoints, selected by bot capabilities.
+        # passthrough bots (raw) skip MCP injection so the backend behaves
+        # identically to running ``claude --resume`` from a terminal.
         if env is None:
             from boxagent.agent_env import AgentEnv as _AE
             env = _AE(bot_name=self.bot_name)
 
         mcp_port_file = Path(env.local_dir) / "mcp-port.txt" if env.local_dir else None
-        if mcp_port_file and mcp_port_file.exists() and chat_id:
+        if not env.passthrough and mcp_port_file and mcp_port_file.exists() and chat_id:
             mcp_port = mcp_port_file.read_text().strip()
             base_url = f"http://127.0.0.1:{mcp_port}"
             headers = {

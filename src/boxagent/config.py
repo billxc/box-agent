@@ -42,6 +42,7 @@ class BotConfig:
     enabled_on_nodes: str | list[str] = ""
     yolo: bool = False
     web_enabled: bool = True
+    passthrough: bool = False  # raw bot: skip all BoxAgent context/MCP injection
 
 
 @dataclass

@@ -54,6 +54,7 @@ class Router:
     has_peer_channel: bool = False
     telegram_token: str = ""      # from BotConfig at startup
     workgroup_role: str = ""      # "admin" / "specialist" / ""
+    passthrough: bool = False     # raw bot: skip context + MCP injection
     _compact_summaries: dict[str, str] = field(default_factory=dict, repr=False)
     _resume_contexts: dict[str, str] = field(default_factory=dict, repr=False)
     _channels: dict[str, object] = field(default_factory=dict, repr=False)
@@ -581,23 +582,26 @@ class Router:
         # Inject session context every turn via --append-system-prompt;
         # the flag is independent of the conversation so it won't be
         # compressed away by context window management.
-        context = self._build_session_context(chat_id, env=env)
-        if context:
-            system_parts.append(context)
-
-        resume_ctx = self._resume_contexts.pop(chat_id, "")
-        if resume_ctx:
-            system_parts.append(resume_ctx)
-
-        # Inject compact summary if available (system-level)
+        # passthrough bots (e.g. "raw") skip all BoxAgent injection so the
+        # backend behaves identically to running its CLI standalone.
         used_compact = False
-        compact_summary = self._compact_summaries.get(chat_id, "")
-        if compact_summary:
-            system_parts.append(
-                f"[Previous conversation summary]\n{compact_summary}\n"
-                f"[End of summary]\n"
-            )
-            used_compact = True
+        if not env.passthrough:
+            context = self._build_session_context(chat_id, env=env)
+            if context:
+                system_parts.append(context)
+
+            resume_ctx = self._resume_contexts.pop(chat_id, "")
+            if resume_ctx:
+                system_parts.append(resume_ctx)
+
+            # Inject compact summary if available (system-level)
+            compact_summary = self._compact_summaries.get(chat_id, "")
+            if compact_summary:
+                system_parts.append(
+                    f"[Previous conversation summary]\n{compact_summary}\n"
+                    f"[End of summary]\n"
+                )
+                used_compact = True
 
         text = msg.text.strip()
 
@@ -765,6 +769,7 @@ class Router:
             ai_backend=self.ai_backend,
             model=model,
             yolo=getattr(self.cli_process, "yolo", False),
+            passthrough=self.passthrough,
         )
 
     def _build_session_context(self, chat_id: str = "", env: AgentEnv | None = None) -> str:

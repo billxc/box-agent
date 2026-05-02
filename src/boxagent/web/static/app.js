@@ -706,28 +706,37 @@
     if (!picker_state.session || !state.bot) return;
     pickerResume.disabled = true;
     pickerResume.textContent = "Resuming…";
+    const raw = $("picker-raw") && $("picker-raw").checked;
+    const resumeBot = raw ? "raw" : state.bot;
+    const resumeMachine = raw ? state.botMachine : state.botMachine;
     try {
       const r = await api("claude/resume", {
         method: "POST",
         body: JSON.stringify({
-          bot: state.bot,
-          machine: state.botMachine,
+          bot: resumeBot,
+          machine: resumeMachine,
           project: picker_state.project.encoded,
           session_id: picker_state.session.session_id,
+          backend: raw ? "claude-cli" : undefined,
         }),
       });
       if (!r.ok) throw new Error(await r.text());
       const { chat_id } = await r.json();
-      const key = curKey();
-      const sessions = loadSessions(state.botMachine, state.bot);
+      const sessions = loadSessions(resumeMachine, resumeBot);
       sessions[chat_id] = {
-        title: `Claude · ${picker_state.project.label}`,
+        title: `${raw ? "Raw" : "Claude"} · ${picker_state.project.label}`,
         preview: picker_state.session.first_user || "",
         ts: Date.now(),
       };
-      saveSessions(state.botMachine, state.bot, sessions);
+      saveSessions(resumeMachine, resumeBot, sessions);
+      // Switch active bot if we routed to raw
+      if (raw && state.bot !== "raw") {
+        state.bot = "raw";
+        state.botMachine = resumeMachine;
+      }
+      const key = curKey();
       state.sessions[key] = sessions;
-      state.serverSessions[key] = await fetchServerSessions(state.botMachine, state.bot);
+      state.serverSessions[key] = await fetchServerSessions(resumeMachine, resumeBot);
       closePicker();
       await switchChat(chat_id);
     } catch (e) {
