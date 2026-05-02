@@ -85,8 +85,7 @@
     return s.replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
   }
 
-  function addMessage(role, text, opts = {}) {
-    removeTyping();
+  function buildMessage(role, text, opts = {}) {
     const el = document.createElement("div");
     el.className = "msg " + role;
     const md = document.createElement("div");
@@ -94,6 +93,12 @@
     md.innerHTML = role === "user" ? escapeHtml(text).replace(/\n/g, "<br>") : renderMd(text);
     el.appendChild(md);
     if (opts.id) el.dataset.id = opts.id;
+    return el;
+  }
+
+  function addMessage(role, text, opts = {}) {
+    removeTyping();
+    const el = buildMessage(role, text, opts);
     messagesEl.appendChild(el);
     scrollDown();
     return el;
@@ -197,23 +202,42 @@
     if (state.es) { state.es.close(); state.es = null; }
     state.chatId = chatId;
     state.streamMsgs = {};
-    messagesEl.innerHTML = "";
     refreshSessionList();
     const meta = (state.sessions[state.bot] || {})[chatId] || {};
     chatTitle.textContent = meta.title || chatId;
     localStorage.setItem("ba.last." + state.bot, chatId);
 
-    // Load history
+    // Cover the chat panel with a mask so the fetch + swap + scroll-to-bottom
+    // all happen invisibly. Old content stays in the DOM behind the mask.
+    const mask = $("messages-mask");
+    mask.classList.remove("hidden");
+
     setConn("connecting");
+    let history = [];
     try {
       const r = await api(`history?bot=${encodeURIComponent(state.bot)}&chat_id=${encodeURIComponent(chatId)}`);
       if (r.ok) {
-        const { history } = await r.json();
-        for (const h of history) addMessage(h.role, h.text);
+        const j = await r.json();
+        history = j.history || [];
       }
     } catch (e) { console.warn("history load failed", e); }
 
-    // Open SSE stream
+    const frag = document.createDocumentFragment();
+    for (const h of history) {
+      const el = buildMessage(h.role, h.text);
+      el.style.animation = "none";
+      frag.appendChild(el);
+    }
+    // Disable smooth scroll just for the bottom-jump; the live-stream
+    // appends below still use the smooth behavior set in CSS.
+    const prevBehavior = messagesEl.style.scrollBehavior;
+    messagesEl.style.scrollBehavior = "auto";
+    messagesEl.replaceChildren(frag);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    messagesEl.style.scrollBehavior = prevBehavior;
+
+    requestAnimationFrame(() => mask.classList.add("hidden"));
+
     openStream();
   }
 
