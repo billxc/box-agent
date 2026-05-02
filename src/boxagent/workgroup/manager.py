@@ -391,6 +391,9 @@ class WorkgroupManager:
             ai_backend=wg_cfg.ai_backend,
             get_running_tasks=lambda wg=wg_name: self._get_running_tasks(wg),
             workgroup_role="admin",
+            # Workgroup admins always have peer messaging capability via cluster
+            # RPC (no per-bot toggle needed — they're always cluster citizens).
+            has_peer_channel=True,
         )
         self.routers[wg_name] = admin_router
 
