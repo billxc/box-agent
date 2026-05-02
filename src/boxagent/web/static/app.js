@@ -28,6 +28,7 @@
     chatId: null,
     es: null,
     streamMsgs: {},
+    toolCards: {},        // tool_id -> {el, headerEl, resultEl, name, args}
     typingEl: null,
     refreshTimer: null,
   };
@@ -225,6 +226,7 @@
     if (state.es) { state.es.close(); state.es = null; }
     state.chatId = chatId;
     state.streamMsgs = {};
+    state.toolCards = {};
     refreshSessionList();
     const meta = (state.sessions[curKey()] || {})[chatId] || {};
     chatTitle.textContent = meta.title || chatId;
@@ -317,8 +319,77 @@
         });
         break;
       }
+      case "tool_call": {
+        renderToolCall(ev.tool_id, ev.name || "tool", ev.args || {});
+        scrollDown();
+        break;
+      }
+      case "tool_result": {
+        renderToolResult(ev.tool_id, !!ev.ok, ev.summary || "", ev.error || "");
+        scrollDown();
+        break;
+      }
       case "_close": setConn("offline"); break;
     }
+  }
+
+  // ── Tool call rendering ──
+  function _argSummary(args) {
+    if (!args || typeof args !== "object") return "";
+    for (const v of Object.values(args)) {
+      if (typeof v === "string" && v.length) {
+        const s = v.replace(/\s+/g, " ");
+        return s.length > 60 ? s.slice(0, 60) + "…" : s;
+      }
+    }
+    try {
+      const j = JSON.stringify(args);
+      return j.length > 60 ? j.slice(0, 60) + "…" : j;
+    } catch { return ""; }
+  }
+
+  function renderToolCall(toolId, name, args) {
+    if (!toolId) toolId = `t${Math.random().toString(36).slice(2, 10)}`;
+    let card = state.toolCards[toolId];
+    if (card) {
+      // Idempotent: same id arriving twice (Claude may emit start + final). Refresh args.
+      card.args = args;
+      card.headerEl.textContent = `▶ ${name}(${_argSummary(args)})`;
+      try { card.bodyEl.textContent = JSON.stringify(args, null, 2); } catch {}
+      return;
+    }
+    const det = document.createElement("details");
+    det.className = "tool-card";
+    const summary = document.createElement("summary");
+    summary.className = "tool-card-header";
+    summary.textContent = `▶ ${name}(${_argSummary(args)})`;
+    const body = document.createElement("pre");
+    body.className = "tool-card-body";
+    try { body.textContent = JSON.stringify(args, null, 2); } catch { body.textContent = String(args); }
+    const result = document.createElement("div");
+    result.className = "tool-card-result hidden";
+    det.appendChild(summary);
+    det.appendChild(body);
+    det.appendChild(result);
+    document.getElementById("messages").appendChild(det);
+    state.toolCards[toolId] = {
+      el: det, headerEl: summary, bodyEl: body, resultEl: result, name, args,
+    };
+  }
+
+  function renderToolResult(toolId, ok, summary, error) {
+    const card = state.toolCards[toolId];
+    if (!card) {
+      // Result without preceding call: synthesize a minimal card.
+      renderToolCall(toolId, "tool", {});
+      return renderToolResult(toolId, ok, summary, error);
+    }
+    const icon = ok ? "✓" : "✗";
+    card.headerEl.textContent = `${icon} ${card.name}(${_argSummary(card.args)})`;
+    card.resultEl.classList.remove("hidden");
+    card.resultEl.textContent = ok ? (summary || "(ok)") : (error || summary || "(failed)");
+    card.resultEl.classList.toggle("ok", ok);
+    card.resultEl.classList.toggle("failed", !ok);
   }
 
   // ── Send ──

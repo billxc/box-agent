@@ -140,6 +140,16 @@ body.sidebar-dragging * { user-select: none !important; }
 .specialist-sublist { padding: 2px 0 2px 16px !important; margin-top: 2px; border-left: 1px dashed var(--border); }
 .machine-bots li.specialist { font-size: 11px; color: var(--muted); padding: 2px 6px; }
 .machine-bots li.specialist.active { color: var(--text); background: var(--bg); outline: 1px solid var(--accent); }
+
+/* Tool call card (folded by default; expand to see args). */
+.tool-card { margin: 6px 0; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel-2); color: var(--text); font-size: 12px; }
+.tool-card-header { cursor: pointer; user-select: none; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; outline: none; }
+.tool-card-header:hover { color: var(--accent); }
+.tool-card-body { margin: 6px 0 0 0; padding: 8px; background: var(--panel); color: var(--text); font-size: 11px; max-height: 240px; overflow: auto; white-space: pre-wrap; border-radius: 3px; border: 1px solid var(--border); }
+.tool-card-result { margin-top: 6px; padding: 6px 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; white-space: pre-wrap; max-height: 240px; overflow: auto; border-radius: 3px; background: var(--panel); color: var(--text); border: 1px solid var(--border); }
+.tool-card-result.ok { border-left: 3px solid #2ea043; }
+.tool-card-result.failed { border-left: 3px solid #cf222e; }
+.tool-card-result.hidden { display: none; }
 .machine.collapsed .caret::before { content: "▸"; }
 .machine:not(.collapsed) .caret::before { content: "▾"; }
 
