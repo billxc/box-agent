@@ -440,8 +440,8 @@ class WorkgroupManager:
                         )
 
         # Cross-admin peer messaging is no longer Discord-channel-based
-        # (handled by cluster RPC in #8). discord_peer_channel in yaml is
-        # ignored; left as a no-op deprecation point.
+        # (handled by cluster RPC in send_peer). discord_peer_channel removed
+        # from config.
 
         # --- Create specialists (already merged above) ---
         specialist_names = []

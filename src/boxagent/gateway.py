@@ -400,7 +400,7 @@ class Gateway:
             extra_skill_dirs=bot_cfg.extra_skill_dirs,
             ai_backend=bot_cfg.ai_backend,
             on_backend_switched=self._on_backend_switched,
-            has_peer_channel=bool(bot_cfg.discord_peer_channel),
+            has_peer_channel=False,  # regular bots don't peer; only workgroup admins do
             telegram_token=bot_cfg.telegram_token,
         )
 
@@ -421,9 +421,9 @@ class Gateway:
                 dc_channel.register_route(router.handle_message, categories)
             router._channels["discord"] = dc_channel
 
-        # Register peer channel route — DEPRECATED: peer messaging now goes via
-        # cluster RPC (see send_peer / _handle_wg_peer_recv). discord_peer_channel
-        # in yaml is silently ignored; field kept for backward compat.
+        # Peer messaging: regular bots have no send_to_peer capability.
+        # Workgroup admins get it via WorkgroupManager.start_workgroup, routed
+        # through Gateway.send_peer (cluster-aware: local in-process / remote RPC).
 
         # --- Web channel (optional) ---
         if bot_cfg.web_enabled:
