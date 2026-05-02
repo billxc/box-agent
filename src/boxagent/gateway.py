@@ -10,7 +10,6 @@ from pathlib import Path
 
 from boxagent.agent.claude_process import ClaudeProcess
 from boxagent.channels.base import IncomingMessage
-from boxagent.channels.telegram import TelegramChannel
 from boxagent.channels.web import WebChannel
 from boxagent.cluster import ClusterTunnel, SatelliteClient, SatelliteRegistry
 from boxagent.config import AppConfig, BotConfig, WorkgroupConfig, node_matches
@@ -211,6 +210,9 @@ class Gateway:
         self._storage = Storage(local_dir=self.local_dir)
         logger.info("Gateway starting (node=%s)", self.config.node_id or "(any)")
 
+        # Start Web UI first so the page is reachable while the rest boots.
+        await self._start_web_http()
+
         # Phase 1: Create shared Discord channel instances (one per unique bot identity)
         self._create_shared_discord_channels()
 
@@ -252,9 +254,6 @@ class Gateway:
 
         # Start HTTP API
         await self._start_http()
-
-        # Start Web UI server (separate port)
-        await self._start_web_http()
 
         # If configured as a cluster host, manage our own devtunnel for /api/sat/ws
         if self.config.satellite_token and self.config.cluster_tunnel:
@@ -366,6 +365,7 @@ class Gateway:
 
         # --- Telegram channel ---
         if bot_cfg.telegram_token:
+            from boxagent.channels.telegram import TelegramChannel
             channel = TelegramChannel(
                 token=bot_cfg.telegram_token,
                 allowed_users=bot_cfg.allowed_users,
@@ -1509,6 +1509,12 @@ class Gateway:
     async def stop(self) -> None:
         logger.info("Gateway shutting down...")
 
+        # Release listening ports first so a restarting process can re-bind immediately,
+        # regardless of how long the rest of the shutdown takes.
+        await self._stop_web_http()
+        await self._stop_http()
+        await self._stop_mcp_http()
+
         # Stop satellite WS client (if running)
         if self._sat_client is not None:
             try:
@@ -1524,11 +1530,6 @@ class Gateway:
             except Exception as e:
                 logger.error("Error stopping cluster tunnel: %s", e)
             self._cluster_tunnel = None
-
-        # Stop HTTP API and MCP server
-        await self._stop_http()
-        await self._stop_mcp_http()
-        await self._stop_web_http()
 
         # Stop scheduler
         if self._scheduler:

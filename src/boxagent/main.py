@@ -155,7 +155,7 @@ async def _run(config, config_dir, local_dir):
     await stop.wait()
 
     try:
-        await asyncio.wait_for(gw.stop(), timeout=10.0)
+        await asyncio.wait_for(gw.stop(), timeout=3.0)
     except asyncio.TimeoutError:
         logger.warning("Graceful shutdown timed out")
 
