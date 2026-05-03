@@ -158,6 +158,7 @@ class AgentEnv:
     workgroup_role: str = ""  # "" / "admin" / "specialist"
     workgroup_agents: tuple[str, ...] = ()
     running_tasks: tuple = ()
+    peers: tuple = ()  # workgroup admins this admin can send_to_peer (cluster registry)
 
     # ── Config ──
     ai_backend: str = "claude-cli"

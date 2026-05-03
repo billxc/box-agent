@@ -99,6 +99,7 @@ class WorkgroupManager:
     _create_backend: object = None  # Callable[[BotConfig, str|None], object]
     _ensure_git_repo: object = None  # Callable[[Path], bool]
     _sync_skills: object = None      # Callable[[str, list, str], list]
+    _peer_provider: object = None    # Callable[[str], list[dict]] — exclude=self_name
 
     def _specialists_file(self) -> Path:
         return self.local_dir / "workgroup_specialists.yaml"
@@ -390,6 +391,9 @@ class WorkgroupManager:
             extra_skill_dirs=wg_cfg.extra_skill_dirs,
             ai_backend=wg_cfg.ai_backend,
             get_running_tasks=lambda wg=wg_name: self._get_running_tasks(wg),
+            get_peers=lambda wg=wg_name: (
+                self._peer_provider(wg) if callable(self._peer_provider) else []
+            ),
             workgroup_role="admin",
             # Workgroup admins always have peer messaging capability via cluster
             # RPC (no per-bot toggle needed — they're always cluster citizens).

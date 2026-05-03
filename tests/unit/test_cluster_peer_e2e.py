@@ -316,3 +316,75 @@ async def test_send_peer_surfaces_404_from_sat_recv():
     assert result["via"] == "rpc"
     assert "404" in str(result.get("error", "")), result
 
+
+
+# ---------------------------------------------------------------------------
+# Gateway._build_peer_descriptors — peer list source of truth
+# ---------------------------------------------------------------------------
+
+
+def test_build_peer_descriptors_combines_local_and_remote():
+    """Replaces the old peers.yaml read. Source = local workgroup_mgr.routers
+    + remote sat_registry.list_bots() + offline history. Self is excluded."""
+    from boxagent.cluster.registry import RemoteBot, SatelliteRegistry
+    from boxagent.config import AppConfig, WorkgroupConfig
+    from boxagent.gateway import Gateway
+
+    gw = Gateway.__new__(Gateway)
+    gw.config = AppConfig(
+        workgroups={
+            "war-room": WorkgroupConfig(name="war-room", display_name="War Room"),
+            "war-room-2": WorkgroupConfig(name="war-room-2", display_name="War Room Backup"),
+        },
+    )
+
+    class _FakeMgr:
+        routers = {"war-room": object(), "war-room-2": object()}
+
+    gw._workgroup_mgr = _FakeMgr()
+
+    reg = SatelliteRegistry()
+    # Online sat with one workgroup + one regular bot (regular must be excluded)
+    sess = type("S", (), {"bots": [
+        RemoteBot(name="mac-mini-wg", display_name="MM Admin", kind="workgroup"),
+        RemoteBot(name="claude", display_name="Claude bot", kind="bot"),
+    ]})()
+    reg.sessions["macmini"] = sess
+    # Offline sat (history only)
+    reg.history["old-mbp"] = {
+        "bots": [{"name": "old-mbp-wg", "display_name": "Old", "kind": "workgroup"}],
+        "last_seen": 0,
+    }
+    gw._sat_registry = reg
+
+    peers = gw._build_peer_descriptors(exclude="war-room")
+
+    by_name = {p["name"]: p for p in peers}
+    assert "war-room" not in by_name, "self must be excluded"
+    assert "claude" not in by_name, "non-workgroup kinds must be excluded"
+    assert by_name["war-room-2"] == {
+        "name": "war-room-2", "machine": "local", "online": True,
+        "kind": "workgroup", "description": "War Room Backup",
+    }
+    assert by_name["mac-mini-wg"]["machine"] == "macmini"
+    assert by_name["mac-mini-wg"]["online"] is True
+    assert by_name["old-mbp-wg"]["machine"] == "old-mbp"
+    assert by_name["old-mbp-wg"]["online"] is False
+
+
+def test_build_peer_descriptors_satellite_node_returns_local_only():
+    """On a satellite node sat_registry is None — return local workgroups
+    only, until sat→host peer-list RPC lands (yait #67)."""
+    from boxagent.config import AppConfig, WorkgroupConfig
+    from boxagent.gateway import Gateway
+
+    gw = Gateway.__new__(Gateway)
+    gw.config = AppConfig(workgroups={
+        "sat-wg": WorkgroupConfig(name="sat-wg", display_name="Sat WG"),
+    })
+    gw._workgroup_mgr = type("M", (), {"routers": {"sat-wg": object()}})()
+    gw._sat_registry = None
+
+    peers = gw._build_peer_descriptors(exclude="")
+    assert [p["name"] for p in peers] == ["sat-wg"]
+    assert peers[0]["machine"] == "local"

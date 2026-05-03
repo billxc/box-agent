@@ -145,3 +145,16 @@
 
 **回归测试**: `tests/unit/test_cluster_peer_e2e.py::test_peer_recv_route_registered_on_web_app_not_api_app` + `::test_send_peer_surfaces_404_from_sat_recv`。
 
+
+## 2026-05-03: Workgroup peer discovery comes from cluster registry, not peers.yaml
+
+**决定**: 删掉 `~/.boxagent/peers.yaml` 的读取路径。Workgroup admin 在 system context 里看到的 peer 列表，由 `Gateway._build_peer_descriptors(exclude=self_name)` 动态生成，源 = `_workgroup_mgr.routers`（本机 workgroup-kind） + `_sat_registry.list_bots()`（远端 workgroup-kind） + `_sat_registry.history`（离线带 history）。
+
+**原因**: yaml 是手维护静态副本，跟动态 cluster 状态分叉：
+- 加/删 sat 要跨机同步 yaml；不同步就有 admin "看不见" peer 或 "看到不存在" 的 peer
+- 没有在线/离线状态
+- 同时维护两套真相，cluster registry 里早已知道一切
+
+新链路：`Router.get_peers` callable → `AgentEnv.peers` tuple → `build_session_context` 渲染。WorkgroupManager 通过 `_peer_provider` 钩子拿 Gateway 的 helper。
+
+**已知不足**: satellite 节点的 `_sat_registry` 是 None — 只能看到本机 workgroup，看不到 host 上的或其他 sat 上的 workgroup。需要 sat→host 反向 RPC 查询补齐（yait #67）。

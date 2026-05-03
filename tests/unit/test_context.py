@@ -98,3 +98,65 @@ class TestReadBoxagentMd:
     def test_strips_whitespace(self, tmp_path):
         (tmp_path / "BOXAGENT.md").write_text("\n  content  \n\n")
         assert _read_boxagent_md(str(tmp_path)) == "content"
+
+
+class TestPeerInjection:
+    """Peer list comes from cluster registry (env.peers), not peers.yaml."""
+
+    def _env(self, *, peers=(), has_peer_channel=True):
+        from boxagent.agent_env import AgentEnv
+        return AgentEnv(
+            bot_name="war-room",
+            workgroup_role="admin",
+            has_peer_channel=has_peer_channel,
+            peers=tuple(peers),
+        )
+
+    def test_peer_section_omitted_when_no_peer_channel(self):
+        env = self._env(has_peer_channel=False, peers=[
+            {"name": "other", "machine": "mac", "online": True},
+        ])
+        ctx = build_session_context(env=env)
+        assert "[Peer Messaging]" not in ctx
+
+    def test_peer_section_present_with_no_peers(self):
+        ctx = build_session_context(env=self._env(peers=[]))
+        assert "[Peer Messaging]" in ctx
+        assert "send_to_peer" in ctx
+        assert "Peers:" not in ctx
+
+    def test_peer_list_renders_local_and_remote(self):
+        peers = [
+            {"name": "war-room-2", "machine": "local", "online": True,
+             "kind": "workgroup", "description": "local backup"},
+            {"name": "mac-mini-wg", "machine": "macmini", "online": True,
+             "kind": "workgroup", "description": "Mac Mini Admin"},
+        ]
+        ctx = build_session_context(env=self._env(peers=peers))
+        assert "- war-room-2 (local) — local backup" in ctx
+        assert "- mac-mini-wg (@macmini) — Mac Mini Admin" in ctx
+
+    def test_offline_peer_marked(self):
+        peers = [{"name": "old-mbp", "machine": "old-mbp", "online": False,
+                  "kind": "workgroup"}]
+        ctx = build_session_context(env=self._env(peers=peers))
+        assert "(offline)" in ctx
+        assert "old-mbp" in ctx
+
+    def test_peers_yaml_no_longer_read(self, tmp_path):
+        """Regression: peers.yaml on disk must NOT inject anything when env
+        has empty peers list. Source of truth is cluster registry only."""
+        (tmp_path / "peers.yaml").write_text(
+            "ghost-peer:\n  description: this should not appear\n"
+        )
+        from boxagent.agent_env import AgentEnv
+        env = AgentEnv(
+            bot_name="war-room",
+            workgroup_role="admin",
+            has_peer_channel=True,
+            config_dir=str(tmp_path),
+            peers=(),
+        )
+        ctx = build_session_context(env=env)
+        assert "ghost-peer" not in ctx
+        assert "this should not appear" not in ctx

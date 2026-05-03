@@ -246,6 +246,7 @@ class Gateway:
                 _create_backend=_create_backend,
                 _ensure_git_repo=_ensure_git_repo,
                 _sync_skills=sync_skills,
+                _peer_provider=self._build_peer_descriptors,
             )
             for wg_name, wg_cfg in self.config.workgroups.items():
                 if not node_matches(wg_cfg.enabled_on_nodes, self.config.node_id):
@@ -795,6 +796,67 @@ class Gateway:
                     "model": wg.model,
                     "kind": "workgroup",
                 })
+        return out
+
+    def _build_peer_descriptors(self, exclude: str = "") -> list[dict]:
+        """List all workgroup admins reachable from this node, excluding *exclude*.
+
+        Sources combined:
+        - Local workgroups (from ``self._workgroup_mgr.routers``)
+        - Remote workgroup-kind bots from connected satellites
+          (``self._sat_registry.list_bots()``)
+        - Remote workgroup-kind bots from disconnected-but-known satellites
+          (``self._sat_registry.history``) — flagged ``online=False``
+
+        Each entry: ``{name, machine, online, kind, description}``. Used by
+        Router.get_peers → AgentEnv.peers → context block; admin AI uses the
+        *name* field as the ``send_to_peer(target=…)`` argument.
+
+        Note (yait #67): on satellites the registry is None, so this returns
+        local-only — sat admins won't see cross-machine peers until sat→host
+        peer-list RPC lands.
+        """
+        out: list[dict] = []
+        if self._workgroup_mgr is not None:
+            for name in self._workgroup_mgr.routers:
+                if name == exclude:
+                    continue
+                if name not in self.config.workgroups:
+                    continue  # routers also holds specialists; only workgroup names here
+                wg = self.config.workgroups[name]
+                out.append({
+                    "name": name,
+                    "machine": "local",
+                    "online": True,
+                    "kind": "workgroup",
+                    "description": wg.display_name or "",
+                })
+        if self._sat_registry is not None:
+            for machine_id, bot in self._sat_registry.list_bots():
+                if bot.kind != "workgroup" or bot.name == exclude:
+                    continue
+                out.append({
+                    "name": bot.name,
+                    "machine": machine_id,
+                    "online": True,
+                    "kind": "workgroup",
+                    "description": bot.display_name or "",
+                })
+            seen = {(p["name"], p["machine"]) for p in out}
+            for machine_id, info in (self._sat_registry.history or {}).items():
+                for b in info.get("bots") or []:
+                    if b.get("kind") != "workgroup":
+                        continue
+                    name = b.get("name") or ""
+                    if name == exclude or (name, machine_id) in seen:
+                        continue
+                    out.append({
+                        "name": name,
+                        "machine": machine_id,
+                        "online": False,
+                        "kind": "workgroup",
+                        "description": b.get("display_name") or "",
+                    })
         return out
 
     async def _stop_http(self) -> None:

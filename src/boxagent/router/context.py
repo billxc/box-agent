@@ -49,8 +49,10 @@ def build_session_context(
         config_dir = env.config_dir
         workgroup_agents = list(env.workgroup_agents) if env.workgroup_agents else None
         running_tasks = list(env.running_tasks) if env.running_tasks else None
+        peers = list(env.peers) if env.peers else []
         has_peer_channel = env.has_peer_channel
     else:
+        peers = []
         has_peer_channel = False
 
     lines = [
@@ -101,19 +103,39 @@ def build_session_context(
         )
         lines.append("[/Workgroup]")
 
-    # Peer messaging info
+    # Peer messaging info — list comes from cluster registry via Router.get_peers
+    # (see Gateway._build_peer_descriptors). NOTE on satellites the registry is
+    # not visible, so the list will be local-only until sat→host peer-list RPC
+    # lands (yait #67).
     if has_peer_channel:
-        peer_info = _read_peers_yaml(config_dir)
         lines.append("")
         lines.append("[Peer Messaging]")
-        lines.append("You can send messages to other bots using the send_to_peer MCP tool.")
-        if peer_info:
+        lines.append("You can send messages to other workgroup admins using the send_to_peer MCP tool.")
+        if peers:
             lines.append("Peers:")
-            lines.append(peer_info)
+            for p in peers:
+                lines.append(_format_peer(p))
         lines.append("[/Peer Messaging]")
 
     lines.append("[/BoxAgent Context]")
     return "\n".join(lines)
+
+
+def _format_peer(p) -> str:
+    """One bullet line per peer descriptor.
+
+    p shape: {name, machine, online, kind, description?}
+    """
+    if not isinstance(p, dict):
+        return f"- {p}"
+    name = p.get("name", "")
+    machine = p.get("machine", "")
+    online = p.get("online", True)
+    desc = p.get("description", "")
+    where = "local" if machine in ("", "local") else f"@{machine}"
+    status = "" if online else " (offline)"
+    suffix = f" — {desc}" if desc else ""
+    return f"- {name} ({where}){status}{suffix}"
 
 
 def build_schedule_context(
@@ -181,41 +203,4 @@ def _read_boxagent_node_md(base_dir: str, node_id: str) -> str:
         return md_path.read_text(encoding="utf-8").strip()
     except Exception as e:
         logger.warning("Failed to read %s: %s", md_path, e)
-        return ""
-
-
-def _read_peers_yaml(config_dir: str) -> str:
-    """Read {config_dir}/peers.yaml and format as peer list.
-
-    Expected format::
-
-        mbp-bot:
-          description: Macbook bot, handles macOS development
-        win-bot:
-          description: Windows bot, handles Edge builds
-
-    Returns formatted string or empty string if not found.
-    """
-    if not config_dir:
-        return ""
-    peers_path = Path(config_dir) / "peers.yaml"
-    if not peers_path.is_file():
-        return ""
-    try:
-        import yaml
-
-        data = yaml.safe_load(peers_path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            return ""
-        lines = []
-        for name, info in data.items():
-            desc = ""
-            if isinstance(info, dict):
-                desc = info.get("description", "")
-            elif isinstance(info, str):
-                desc = info
-            lines.append(f"- {name}: {desc}" if desc else f"- {name}")
-        return "\n".join(lines)
-    except Exception as e:
-        logger.warning("Failed to read %s: %s", peers_path, e)
         return ""

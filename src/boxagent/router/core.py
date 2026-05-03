@@ -51,6 +51,7 @@ class Router:
     on_backend_switched: object = None  # async callback(bot_name, new_cli, new_backend)
     workgroup_agents: list[str] = field(default_factory=list)  # specialist names for context
     get_running_tasks: object = None  # Callable[[], list[dict]]
+    get_peers: object = None  # Callable[[], list[dict]] — workgroup admin only
     has_peer_channel: bool = False
     telegram_token: str = ""      # from BotConfig at startup
     workgroup_role: str = ""      # "admin" / "specialist" / ""
@@ -749,6 +750,7 @@ class Router:
         workgroup_role = self.workgroup_role
 
         running_tasks = self.get_running_tasks() if callable(self.get_running_tasks) else []
+        peers = self.get_peers() if callable(self.get_peers) else []
 
         return AgentEnv(
             channel=channel,
@@ -766,6 +768,7 @@ class Router:
             workgroup_role=workgroup_role,
             workgroup_agents=tuple(self.workgroup_agents),
             running_tasks=tuple(running_tasks),
+            peers=tuple(peers),
             ai_backend=self.ai_backend,
             model=model,
             yolo=getattr(self.cli_process, "yolo", False),
