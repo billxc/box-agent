@@ -141,8 +141,8 @@ class SatelliteClient:
             logger.debug("sat: bots_update failed: %s", e)
 
     async def _run_forever(self) -> None:
-        tname = self.tunnel_name or _tunnel_name_from_url(self.host_url)
-        if not tname:
+        effective_tunnel_name = self.tunnel_name or _tunnel_name_from_url(self.host_url)
+        if not effective_tunnel_name:
             logger.error("sat: cannot derive tunnel name from %s", self.host_url)
             return
         backoff = self.reconnect_delay
@@ -157,7 +157,7 @@ class SatelliteClient:
                 else:
                     try:
                         resolved_url = await _devtunnel_resolve_url(
-                            tname, port=self.local_web_port,
+                            effective_tunnel_name, port=self.local_web_port,
                         )
                     except Exception as e:
                         logger.warning("sat: tunnel URL resolution failed: %s", e)
@@ -167,14 +167,14 @@ class SatelliteClient:
                 ws_url = self._derive_ws_url(resolved_url)
                 # Mint a fresh devtunnel connect token each attempt.
                 try:
-                    devtunnel_token = await _devtunnel_connect_token(tname)
+                    devtunnel_token = await _devtunnel_connect_token(effective_tunnel_name)
                 except Exception as e:
                     logger.warning("sat: devtunnel token mint failed: %s", e)
                     await asyncio.sleep(min(backoff, 60.0))
                     backoff = min(backoff * 1.5, 60.0)
                     continue
                 headers = {"X-Tunnel-Authorization": f"tunnel {devtunnel_token}"}
-                logger.info("sat: connecting to host %s (tunnel %s)", ws_url, tname)
+                logger.info("sat: connecting to host %s (tunnel %s)", ws_url, effective_tunnel_name)
                 async with self._session.ws_connect(
                     ws_url, heartbeat=30.0, autoping=True, headers=headers,
                 ) as ws:

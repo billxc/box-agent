@@ -414,14 +414,14 @@ def _register_admin_tools(mcp: FastMCP) -> None:
         """
         if not _gateway or not _gateway._workgroup_mgr:
             return "Error: workgroup manager not available"
-        dc_channel = None
+        discord_channel = None
         for dc in _gateway._workgroup_mgr.discord_channels.values():
-            dc_channel = dc
+            discord_channel = dc
             break
-        if dc_channel is None:
+        if discord_channel is None:
             return "Error: no Discord channel available"
         try:
-            await dc_channel.update_channel_topic(int(channel_id), topic[:1024])
+            await discord_channel.update_channel_topic(int(channel_id), topic[:1024])
             return "Channel topic updated."
         except Exception as e:
             return f"Error: {e}"

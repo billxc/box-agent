@@ -266,9 +266,9 @@ class WorkgroupManager:
             template_claude_md_text=read_template_snapshot(bot_config.workspace),
         )
 
-        cli = self._make_backend(bot_config)
-        cli.start()
-        self.procs[sp_name] = cli
+        cli_process = self._make_backend(bot_config)
+        cli_process.start()
+        self.procs[sp_name] = cli_process
 
         def _factory(cfg=bot_config):
             return self._make_backend(cfg)
@@ -284,7 +284,7 @@ class WorkgroupManager:
         self.pools[sp_name] = pool
 
         sp_router = Router(
-            cli_process=cli,
+            cli_process=cli_process,
             channel=adapter.primary_channel(),
             allowed_users=wg_cfg.allowed_users,
             storage=self.storage,
@@ -414,25 +414,25 @@ class WorkgroupManager:
         # internals (specialist visibility, peer messaging, notifications)
         # all run over Web — Discord is purely an inbound front door here.
         if wg_cfg.discord_bot_id:
-            dc_channel = self.discord_channels.get(wg_cfg.discord_bot_id)
-            if dc_channel is not None:
+            discord_channel = self.discord_channels.get(wg_cfg.discord_bot_id)
+            if discord_channel is not None:
                 if wg_cfg.admin_discord_category:
-                    dc_channel.register_route(
+                    discord_channel.register_route(
                         admin_router.handle_message,
                         [wg_cfg.admin_discord_category],
                     )
-                    admin_router._channels["discord"] = dc_channel
+                    admin_router._channels["discord"] = discord_channel
                     logger.info(
                         "Workgroup '%s': Discord ingress on category %d",
                         wg_name, wg_cfg.admin_discord_category,
                     )
                 if wg_cfg.admin_discord_channel:
                     try:
-                        dc_channel.register_channel_route(
+                        discord_channel.register_channel_route(
                             admin_router.handle_message,
                             wg_cfg.admin_discord_channel,
                         )
-                        admin_router._channels["discord"] = dc_channel
+                        admin_router._channels["discord"] = discord_channel
                         logger.info(
                             "Workgroup '%s': Discord ingress on channel %d",
                             wg_name, wg_cfg.admin_discord_channel,
@@ -877,10 +877,10 @@ class WorkgroupManager:
             await adapter.cleanup_specialist(sp_name, sp_cfg)
 
         # Stop process
-        cli = self.procs.pop(sp_name, None)
-        if cli:
+        cli_process = self.procs.pop(sp_name, None)
+        if cli_process:
             try:
-                await cli.stop()
+                await cli_process.stop()
             except Exception as e:
                 logger.warning("Error stopping specialist CLI '%s': %s", sp_name, e)
 
@@ -943,9 +943,9 @@ class WorkgroupManager:
         for name, hb in self._heartbeats.items():
             hb.stop()
         self._heartbeats.clear()
-        for name, cli in self.procs.items():
+        for name, cli_process in self.procs.items():
             try:
-                await cli.stop()
+                await cli_process.stop()
             except Exception as e:
                 logger.error("Error stopping workgroup CLI %s: %s", name, e)
         for name, pool in self.pools.items():

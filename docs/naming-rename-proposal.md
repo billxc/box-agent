@@ -80,6 +80,10 @@ find-and-replace, batched per cluster (e.g. all `dc_*` together, all
 
 | Date | Old → New | Commit |
 |------|-----------|--------|
-| 2026-05-03 | `syn_cfg` → `bot_config` (workgroup/manager.py, 20 refs) | (this batch) |
-| 2026-05-03 | `wapp` → `web_app` (gateway.py, 16 refs + 1 NOTE) | (this batch) |
-| 2026-05-03 | `dt_token` → `devtunnel_token` (cluster/sat_client.py, 2 refs) | (this batch) |
+| 2026-05-03 | `syn_cfg` → `bot_config` (workgroup/manager.py, 20 refs) | 1ba97bb |
+| 2026-05-03 | `wapp` → `web_app` (gateway.py, 16 refs + 1 NOTE) | 1ba97bb |
+| 2026-05-03 | `dt_token` → `devtunnel_token` (cluster/sat_client.py, 2 refs) | 1ba97bb |
+| 2026-05-04 | `cli` → `cli_process` (gateway.py + workgroup/manager.py, 12 sites) | (this batch) |
+| 2026-05-04 | `dc_channel` → `discord_channel` (gateway.py + manager.py + mcp_http.py, 21 sites) | (this batch) |
+| 2026-05-04 | `dc_user_id` → `discord_user_id` (gateway.py, 4 sites) | (this batch) |
+| 2026-05-04 | `tname` → `effective_tunnel_name` (cluster/sat_client.py, 5 sites) | (this batch) |

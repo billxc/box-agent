@@ -331,9 +331,9 @@ class Gateway:
             elif isinstance(saved, str):
                 session_id = saved
 
-        cli = _create_backend(bot_cfg, session_id)
-        cli.start()
-        self._cli_processes[name] = cli
+        cli_process = _create_backend(bot_cfg, session_id)
+        cli_process.start()
+        self._cli_processes[name] = cli_process
 
         # Create session pool
         def _factory():
@@ -380,13 +380,13 @@ class Gateway:
             self._channels[name] = channel
 
         # --- Discord channel (shared instance) ---
-        dc_channel = self._get_bot_discord_channel(name)
-        if dc_channel is not None:
+        discord_channel = self._get_bot_discord_channel(name)
+        if discord_channel is not None:
             if primary_channel is None:
-                primary_channel = dc_channel
+                primary_channel = discord_channel
 
         router = Router(
-            cli_process=cli,
+            cli_process=cli_process,
             channel=primary_channel,
             allowed_users=bot_cfg.allowed_users,
             storage=self._storage,
@@ -412,15 +412,15 @@ class Gateway:
             await self._channels[name].start()
 
         # Register route on shared Discord channel (start() happens later in Gateway.start)
-        if dc_channel is not None:
+        if discord_channel is not None:
             from boxagent.channels.discord import DM_CATEGORY
 
             categories: list = list(bot_cfg.discord_allowed_categories)
             if bot_cfg.discord_dm:
                 categories.append(DM_CATEGORY)
             if categories:
-                dc_channel.register_route(router.handle_message, categories)
-            router._channels["discord"] = dc_channel
+                discord_channel.register_route(router.handle_message, categories)
+            router._channels["discord"] = discord_channel
 
         # Peer messaging: regular bots have no send_to_peer capability.
         # Workgroup admins get it via WorkgroupManager.start_workgroup, routed
@@ -442,7 +442,7 @@ class Gateway:
         channels_active = []
         if bot_cfg.telegram_token:
             channels_active.append("telegram")
-        if dc_channel is not None:
+        if discord_channel is not None:
             channels_active.append("discord")
         info_lines = [
             f"\U0001f7e2 *{display_name}* is online",
@@ -469,9 +469,9 @@ class Gateway:
             asyncio.create_task(_send_tg_notify())
 
         # Discord: send DM after bot is ready (on_ready fires async)
-        dc_user_id = str(bot_cfg.discord_allowed_users[0]) if bot_cfg.discord_token and bot_cfg.discord_allowed_users else ""
-        if dc_user_id and dc_channel is not None:
-            async def _send_discord_notify(ch=dc_channel, uid=dc_user_id, text=notify_text, bot_name=name):
+        discord_user_id = str(bot_cfg.discord_allowed_users[0]) if bot_cfg.discord_token and bot_cfg.discord_allowed_users else ""
+        if discord_user_id and discord_channel is not None:
+            async def _send_discord_notify(ch=discord_channel, uid=discord_user_id, text=notify_text, bot_name=name):
                 # Wait for Discord client to be created (Phase 3) and connected
                 for _ in range(60):
                     if ch._client is not None:
@@ -492,10 +492,10 @@ class Gateway:
             await self._restart_bot(n, bc)
 
         # Watchdog chat_id for error notifications
-        wd_chat_id = tg_chat_id or dc_user_id
+        wd_chat_id = tg_chat_id or discord_user_id
 
         wd = Watchdog(
-            cli_process=cli,
+            cli_process=cli_process,
             channel=primary_channel,
             chat_id=wd_chat_id,
             bot_name=name,
@@ -1098,16 +1098,16 @@ class Gateway:
             return web.json_response({"ok": False, "error": "missing 'channel_id'"}, status=400)
 
         # Find the Discord channel object from any workgroup
-        dc_channel = None
+        discord_channel = None
         if self._workgroup_mgr:
             for dc in self._workgroup_mgr.discord_channels.values():
-                dc_channel = dc
+                discord_channel = dc
                 break
-        if dc_channel is None:
+        if discord_channel is None:
             return web.json_response({"ok": False, "error": "no Discord channel available"}, status=400)
 
         try:
-            await dc_channel.update_channel_topic(int(channel_id), topic)
+            await discord_channel.update_channel_topic(int(channel_id), topic)
             return web.json_response({"ok": True})
         except Exception as e:
             return web.json_response({"ok": False, "error": str(e)}, status=400)
@@ -1834,12 +1834,12 @@ class Gateway:
             except Exception as e:
                 logger.error("Error stopping web channel %s: %s", name, e)
 
-        for name, cli in self._cli_processes.items():
+        for name, cli_process in self._cli_processes.items():
             try:
                 # Save session before stopping
-                if self._storage and cli.session_id:
-                    self._storage.save_session(name, cli.session_id)
-                await cli.stop()
+                if self._storage and cli_process.session_id:
+                    self._storage.save_session(name, cli_process.session_id)
+                await cli_process.stop()
             except Exception as e:
                 logger.error("Error stopping CLI %s: %s", name, e)
 
