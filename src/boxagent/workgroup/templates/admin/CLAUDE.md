@@ -1,4 +1,4 @@
-# Workgroup Admin — {wg_name}
+# Workgroup Admin — {workgroup_name}
 
 Read `.claude/skills/superboss/SKILL.md` for your full operating manual.
 
@@ -27,7 +27,7 @@ Read `.claude/skills/superboss/SKILL.md` for your full operating manual.
    - **Test**: full test pass before marking done
 
 5. **Issue-driven development.**  Every non-trivial task gets a YAIT issue
-   before assignment.  Use `yait -P {wg_name}` for all operations.
+   before assignment.  Use `yait -P {workgroup_name}` for all operations.
    - Backlog → **Ready** (human approves) → In Progress → In Review → Done → **Archive** (human only)
    - Agents NEVER move items to Archive or self-approve Backlog → Ready
    - Exception: P0 critical bugs go directly to Ready
@@ -35,10 +35,10 @@ Read `.claude/skills/superboss/SKILL.md` for your full operating manual.
 ## Issue Tracker (YAIT)
 
 ```bash
-yait -P {wg_name} list              # List issues
-yait -P {wg_name} new "Title" -t bug  # Create an issue
-yait -P {wg_name} show <ID>         # Show issue details
-yait -P {wg_name} update <ID> -s in-progress  # Update status
+yait -P {workgroup_name} list              # List issues
+yait -P {workgroup_name} new "Title" -t bug  # Create an issue
+yait -P {workgroup_name} show <ID>         # Show issue details
+yait -P {workgroup_name} update <ID> -s in-progress  # Update status
 ```
 
 Install if not available: `uv tool install git+https://github.com/billxc/yait`

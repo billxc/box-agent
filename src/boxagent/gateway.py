@@ -248,11 +248,11 @@ class Gateway:
                 _sync_skills=sync_skills,
                 _peer_provider=self._build_peer_descriptors,
             )
-            for wg_name, wg_cfg in self.config.workgroups.items():
-                if not node_matches(wg_cfg.enabled_on_nodes, self.config.node_id):
-                    logger.info("Workgroup '%s' skipped (enabled_on_nodes=%s, current=%s)", wg_name, wg_cfg.enabled_on_nodes, self.config.node_id)
+            for workgroup_name, workgroup_config in self.config.workgroups.items():
+                if not node_matches(workgroup_config.enabled_on_nodes, self.config.node_id):
+                    logger.info("Workgroup '%s' skipped (enabled_on_nodes=%s, current=%s)", workgroup_name, workgroup_config.enabled_on_nodes, self.config.node_id)
                     continue
-                await self._workgroup_mgr.start_workgroup(wg_name, wg_cfg)
+                await self._workgroup_mgr.start_workgroup(workgroup_name, workgroup_config)
 
         # Start scheduler
         self._start_scheduler()
@@ -313,13 +313,13 @@ class Gateway:
             self._bot_discord_key[name] = key
 
         # Ensure workgroup Discord identities are also created
-        for wg_name, wg_cfg in self.config.workgroups.items():
-            if not node_matches(wg_cfg.enabled_on_nodes, self.config.node_id):
+        for workgroup_name, workgroup_config in self.config.workgroups.items():
+            if not node_matches(workgroup_config.enabled_on_nodes, self.config.node_id):
                 continue
-            key = wg_cfg.discord_bot_id
+            key = workgroup_config.discord_bot_id
             if key and key not in self._discord_channels:
                 self._discord_channels[key] = DiscordChannel(
-                    token=wg_cfg.discord_token,
+                    token=workgroup_config.discord_token,
                 )
 
     async def _start_bot(self, name: str, bot_cfg: BotConfig) -> None:
@@ -779,7 +779,7 @@ class Gateway:
         out: list[dict] = []
         for name in self._web_channels:
             cfg = self.config.bots.get(name)
-            wg = self.config.workgroups.get(name)
+            workgroup = self.config.workgroups.get(name)
             if cfg is not None:
                 out.append({
                     "name": name,
@@ -788,12 +788,12 @@ class Gateway:
                     "model": cfg.model,
                     "kind": "bot",
                 })
-            elif wg is not None:
+            elif workgroup is not None:
                 out.append({
                     "name": name,
-                    "display_name": wg.display_name or name,
-                    "backend": wg.ai_backend,
-                    "model": wg.model,
+                    "display_name": workgroup.display_name or name,
+                    "backend": workgroup.ai_backend,
+                    "model": workgroup.model,
                     "kind": "workgroup",
                 })
         return out
@@ -823,13 +823,13 @@ class Gateway:
                     continue
                 if name not in self.config.workgroups:
                     continue  # routers also holds specialists; only workgroup names here
-                wg = self.config.workgroups[name]
+                workgroup = self.config.workgroups[name]
                 out.append({
                     "name": name,
                     "machine": "local",
                     "online": True,
                     "kind": "workgroup",
-                    "description": wg.display_name or "",
+                    "description": workgroup.display_name or "",
                 })
         if self._sat_registry is not None:
             for machine_id, bot in self._sat_registry.list_bots():
@@ -1022,19 +1022,19 @@ class Gateway:
         except Exception:
             return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
 
-        wg_name = body.get("workgroup", "")
+        workgroup_name = body.get("workgroup", "")
         specialist_name = body.get("name", "")
         logger.info(
-            "create_specialist request: wg=%s name=%s model=%s workspace=%s",
-            wg_name, specialist_name, body.get("model", ""), body.get("workspace", ""),
+            "create_specialist request: workgroup=%s name=%s model=%s workspace=%s",
+            workgroup_name, specialist_name, body.get("model", ""), body.get("workspace", ""),
         )
-        if not wg_name or not specialist_name:
+        if not workgroup_name or not specialist_name:
             return web.json_response(
                 {"ok": False, "error": "missing 'workgroup' or 'name'"}, status=400,
             )
 
         result = await self._workgroup_mgr.create_specialist(
-            wg_name, specialist_name,
+            workgroup_name, specialist_name,
             model=body.get("model", ""),
             workspace=body.get("workspace", ""),
         )
@@ -1058,8 +1058,8 @@ class Gateway:
 
     async def _handle_list_specialists(self, request: web.Request) -> web.Response:
         """Handle GET /api/workgroup/specialists — list all specialists with details."""
-        wg_name = request.query.get("workgroup", "")
-        result = self._workgroup_mgr.list_specialists(wg_name)
+        workgroup_name = request.query.get("workgroup", "")
+        result = self._workgroup_mgr.list_specialists(workgroup_name)
         return web.json_response(result)
 
     async def _handle_specialist_status(self, request: web.Request) -> web.Response:
@@ -1298,7 +1298,7 @@ class Gateway:
         local_mid = self._local_machine_id()
         for name, ch in self._web_channels.items():
             cfg = self.config.bots.get(name)
-            wg = self.config.workgroups.get(name)
+            workgroup = self.config.workgroups.get(name)
             if cfg is not None:
                 bots.append({
                     "name": name,
@@ -1308,12 +1308,12 @@ class Gateway:
                     "kind": "bot",
                     "machine": local_mid,
                 })
-            elif wg is not None:
+            elif workgroup is not None:
                 bots.append({
                     "name": name,
-                    "display_name": (wg.display_name or name) + "  (workgroup)",
-                    "backend": wg.ai_backend,
-                    "model": wg.model,
+                    "display_name": (workgroup.display_name or name) + "  (workgroup)",
+                    "backend": workgroup.ai_backend,
+                    "model": workgroup.model,
                     "kind": "workgroup",
                     "machine": local_mid,
                 })
@@ -1377,12 +1377,12 @@ class Gateway:
 
         # Workgroup heartbeat: admin uses admin_discord_channel as the chat_id
         # for periodic ticks, so flag that one specifically.
-        wg = self.config.workgroups.get(bot)
+        workgroup = self.config.workgroups.get(bot)
         heartbeat_chat_id = ""
-        if wg is not None:
-            if wg.heartbeat_interval_seconds and wg.admin_discord_channel:
-                heartbeat_chat_id = str(wg.admin_discord_channel)
-            elif wg.heartbeat_interval_seconds:
+        if workgroup is not None:
+            if workgroup.heartbeat_interval_seconds and workgroup.admin_discord_channel:
+                heartbeat_chat_id = str(workgroup.admin_discord_channel)
+            elif workgroup.heartbeat_interval_seconds:
                 heartbeat_chat_id = f"heartbeat:{bot}"
 
         for s in sessions:
@@ -1733,15 +1733,15 @@ class Gateway:
         workspace = ""
         if self._storage:
             cfg = self.config.bots.get(bot)
-            wg = self.config.workgroups.get(bot)
-            model = (cfg.model if cfg else None) or (wg.model if wg else "")
+            workgroup = self.config.workgroups.get(bot)
+            model = (cfg.model if cfg else None) or (workgroup.model if workgroup else "")
             if is_raw:
                 backend = backend_override or "claude-cli"
             else:
-                backend = (cfg.ai_backend if cfg else None) or (wg.ai_backend if wg else "claude-cli")
+                backend = (cfg.ai_backend if cfg else None) or (workgroup.ai_backend if workgroup else "claude-cli")
             from boxagent.sessions import claude_native
             workspace = (claude_native.project_cwd(encoded) if encoded else "") or (
-                cfg.workspace if cfg else (wg.admin_workspace if wg else "")
+                cfg.workspace if cfg else (workgroup.admin_workspace if workgroup else "")
             )
             chat_id = f"{backend.split('-')[0]}-{sid}" if is_raw else f"claude-{sid}"
             self._storage.save_session(

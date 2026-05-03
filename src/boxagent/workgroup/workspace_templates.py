@@ -90,7 +90,7 @@ def _write_exclusive(path: Path, content: str) -> bool:
 
 def seed_admin_workspace(
     workspace: str,
-    wg_name: str,
+    workgroup_name: str,
 ) -> list[str]:
     """Seed template files into admin workspace.
 
@@ -111,7 +111,7 @@ def seed_admin_workspace(
 
     # .claude/CLAUDE.md
     content = ADMIN_CLAUDE_MD.format(
-        wg_name=wg_name,
+        workgroup_name=workgroup_name,
         worktrees_dir=worktrees_dir,
     )
     if _write_always(ws / ".claude" / "CLAUDE.md", content):
@@ -143,7 +143,7 @@ def seed_admin_workspace(
 def seed_specialist_workspace(
     workspace: str,
     specialist_name: str,
-    wg_name: str,
+    workgroup_name: str,
     template_claude_md_text: str | None = None,
 ) -> list[str]:
     """Seed template files into specialist workspace.
@@ -170,7 +170,7 @@ def seed_specialist_workspace(
     # .claude/CLAUDE.md
     content = SPECIALIST_CLAUDE_MD.format(
         specialist_name=specialist_name,
-        wg_name=wg_name,
+        workgroup_name=workgroup_name,
         supercrew_ref=SUPERCREW_REF,
         worktrees_dir=worktrees_dir,
         workgroup_dir=workgroup_dir,
@@ -181,7 +181,7 @@ def seed_specialist_workspace(
         written.append(".claude/CLAUDE.md")
 
     # .claude/skills/supercrew/SKILL.md
-    skill = SPECIALIST_SKILL_MD.format(supercrew_ref=SUPERCREW_REF, wg_name=wg_name)
+    skill = SPECIALIST_SKILL_MD.format(supercrew_ref=SUPERCREW_REF, workgroup_name=workgroup_name)
     if _write_always(ws / ".claude" / "skills" / "supercrew" / "SKILL.md", skill):
         written.append(".claude/skills/supercrew/SKILL.md")
 

@@ -1,6 +1,6 @@
 # Specialist — {specialist_name}
 
-> Workgroup: {wg_name}
+> Workgroup: {workgroup_name}
 
 Read `.claude/skills/supercrew/SKILL.md` for your full operating manual.
 

@@ -273,7 +273,7 @@ class TestTemplateFormat:
 
     def test_admin_claude_md(self):
         result = ADMIN_CLAUDE_MD.format(
-            wg_name="test", worktrees_dir="/tmp/wt",
+            workgroup_name="test", worktrees_dir="/tmp/wt",
         )
         assert "test" in result
 
@@ -283,13 +283,13 @@ class TestTemplateFormat:
 
     def test_specialist_claude_md(self):
         result = SPECIALIST_CLAUDE_MD.format(
-            specialist_name="dev-1", wg_name="wg",
+            specialist_name="dev-1", workgroup_name="wg",
             supercrew_ref=SUPERCREW_REF, worktrees_dir="/tmp/wt",
         )
         assert "dev-1" in result
 
     def test_specialist_skill_md(self):
-        result = SPECIALIST_SKILL_MD.format(supercrew_ref=SUPERCREW_REF, wg_name="test-wg")
+        result = SPECIALIST_SKILL_MD.format(supercrew_ref=SUPERCREW_REF, workgroup_name="test-wg")
         assert "Super Crew" in result
 
 
@@ -301,15 +301,15 @@ class TestTemplateFormat:
 class TestWorkgroupManagerPureMethods:
     def _make_manager(self, tmp_path):
         from boxagent.config import WorkgroupConfig, SpecialistConfig
-        wg_cfg = WorkgroupConfig(
+        workgroup_config = WorkgroupConfig(
             name="test-wg",
             workspace=str(tmp_path / "workspace"),
         )
-        wg_cfg.specialists["dev-1"] = SpecialistConfig(
+        workgroup_config.specialists["dev-1"] = SpecialistConfig(
             name="dev-1", model="sonnet", workspace=str(tmp_path / "dev-1"),
         )
         mgr = WorkgroupManager(
-            config={"test-wg": wg_cfg},
+            config={"test-wg": workgroup_config},
             local_dir=tmp_path / "local",
             start_time=time.time(),
         )
@@ -405,7 +405,7 @@ class TestHeartbeatReadMd:
     def test_reads_file(self, tmp_path):
         (tmp_path / "HEARTBEAT.md").write_text("- Check tasks\n- Review work")
         hb = HeartbeatManager(
-            wg_name="wg", admin_pool=None, admin_router=None,
+            workgroup_name="wg", admin_pool=None, admin_router=None,
             workspace=str(tmp_path), interval_seconds=60,
         )
         content = hb._read_heartbeat_md()
@@ -413,7 +413,7 @@ class TestHeartbeatReadMd:
 
     def test_missing_file(self, tmp_path):
         hb = HeartbeatManager(
-            wg_name="wg", admin_pool=None, admin_router=None,
+            workgroup_name="wg", admin_pool=None, admin_router=None,
             workspace=str(tmp_path), interval_seconds=60,
         )
         assert hb._read_heartbeat_md() is None
@@ -421,14 +421,14 @@ class TestHeartbeatReadMd:
     def test_empty_file(self, tmp_path):
         (tmp_path / "HEARTBEAT.md").write_text("")
         hb = HeartbeatManager(
-            wg_name="wg", admin_pool=None, admin_router=None,
+            workgroup_name="wg", admin_pool=None, admin_router=None,
             workspace=str(tmp_path), interval_seconds=60,
         )
         assert hb._read_heartbeat_md() is None
 
     def test_empty_workspace(self):
         hb = HeartbeatManager(
-            wg_name="wg", admin_pool=None, admin_router=None,
+            workgroup_name="wg", admin_pool=None, admin_router=None,
             workspace="", interval_seconds=60,
         )
         assert hb._read_heartbeat_md() is None
@@ -442,7 +442,7 @@ class TestHeartbeatReadMd:
 class TestHeartbeatLog:
     def test_writes_log(self, tmp_path):
         hb = HeartbeatManager(
-            wg_name="wg", admin_pool=None, admin_router=None,
+            workgroup_name="wg", admin_pool=None, admin_router=None,
             workspace=str(tmp_path), interval_seconds=60,
         )
         hb._write_heartbeat_log("NO_REPLY", {
@@ -459,7 +459,7 @@ class TestHeartbeatLog:
 
     def test_appends_multiple(self, tmp_path):
         hb = HeartbeatManager(
-            wg_name="wg", admin_pool=None, admin_router=None,
+            workgroup_name="wg", admin_pool=None, admin_router=None,
             workspace=str(tmp_path), interval_seconds=60,
         )
         meta = {"source_session_id": "", "fork_session_id": "", "raw_response": "", "prompt": ""}

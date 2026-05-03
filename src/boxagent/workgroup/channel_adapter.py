@@ -53,13 +53,13 @@ class WorkgroupChannelAdapter(Protocol):
 
     async def setup_specialist(
         self, specialist_name: str, specialist_config: SpecialistConfig,
-        wg_cfg: WorkgroupConfig, router,
+        workgroup_config: WorkgroupConfig, router,
     ) -> None:
         """Wire any inbound channel affordances on the specialist's router."""
         ...
 
     async def provision_specialist(
-        self, specialist_name: str, specialist_config: SpecialistConfig, wg_cfg: WorkgroupConfig,
+        self, specialist_name: str, specialist_config: SpecialistConfig, workgroup_config: WorkgroupConfig,
     ) -> SpecialistConfig:
         """Allocate any external resources (e.g. a Discord text channel) and
         return the (possibly-mutated) specialist_config. Caller persists the result."""
@@ -102,10 +102,10 @@ class NullWorkgroupChannelAdapter:
     def get_specialist_chat_id(self, specialist_name: str, specialist_config: SpecialistConfig) -> str:
         return f"wg:{specialist_name}"
 
-    async def setup_specialist(self, specialist_name, specialist_config, wg_cfg, router) -> None:
+    async def setup_specialist(self, specialist_name, specialist_config, workgroup_config, router) -> None:
         return
 
-    async def provision_specialist(self, specialist_name, specialist_config, wg_cfg) -> SpecialistConfig:
+    async def provision_specialist(self, specialist_name, specialist_config, workgroup_config) -> SpecialistConfig:
         return specialist_config
 
     async def cleanup_specialist(self, specialist_name, specialist_config) -> None:
@@ -141,12 +141,12 @@ class WebWorkgroupAdapter:
     def get_specialist_chat_id(self, specialist_name: str, specialist_config: SpecialistConfig) -> str:
         return f"wg:{specialist_name}"
 
-    async def setup_specialist(self, specialist_name, specialist_config, wg_cfg, router) -> None:
+    async def setup_specialist(self, specialist_name, specialist_config, workgroup_config, router) -> None:
         # Inbound affordance: if a web POST addresses the specialist via its
         # virtual chat_id, the router resolves the channel for replies.
         router._channels["web"] = self.web_channel
 
-    async def provision_specialist(self, specialist_name, specialist_config, wg_cfg) -> SpecialistConfig:
+    async def provision_specialist(self, specialist_name, specialist_config, workgroup_config) -> SpecialistConfig:
         # Nothing to allocate — specialist chat_id is virtual.
         return specialist_config
 

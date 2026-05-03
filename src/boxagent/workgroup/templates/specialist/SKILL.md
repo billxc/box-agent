@@ -404,19 +404,19 @@ Every command requires `-P` since no global env var is set.
 
 ```bash
 # Initialize project (first time only)
-yait -P {wg_name} init
+yait -P {workgroup_name} init
 
 # List issues
-yait -P {wg_name} list
+yait -P {workgroup_name} list
 
 # Create an issue
-yait -P {wg_name} new "Title" -t bug
+yait -P {workgroup_name} new "Title" -t bug
 
 # Show issue details
-yait -P {wg_name} show <ID>
+yait -P {workgroup_name} show <ID>
 
 # Update issue status
-yait -P {wg_name} update <ID> -s closed
+yait -P {workgroup_name} update <ID> -s closed
 ```
 
 ## Security

@@ -27,7 +27,7 @@ def is_silent_reply(text: str) -> bool:
 
 
 def _build_heartbeat_prompt(
-    wg_name: str, content: str,
+    workgroup_name: str, content: str,
     uptime_seconds: float = 0,
     running_tasks: list[dict] | None = None,
 ) -> str:
@@ -50,7 +50,7 @@ def _build_heartbeat_prompt(
     return (
         "[HEARTBEAT CHECK]\n"
         f"time: {now}\n"
-        f"bot: {wg_name}\n"
+        f"bot: {workgroup_name}\n"
         f"uptime: {uptime_str}\n"
         f"{tasks_block}\n"
         "You are in a HEARTBEAT CHECK session — a read-only environment.\n"
@@ -94,7 +94,7 @@ def _extract_action(text: str) -> str:
 class HeartbeatManager:
     """Manages periodic heartbeat for a workgroup admin."""
 
-    wg_name: str
+    workgroup_name: str
     admin_pool: object  # SessionPool
     admin_router: object  # Router
     workspace: str
@@ -120,7 +120,7 @@ class HeartbeatManager:
         self._task = asyncio.ensure_future(self._loop())
         logger.info(
             "Heartbeat started for workgroup '%s' (every %ds, chat_id=%s)",
-            self.wg_name, self.interval_seconds, self.discord_chat_id,
+            self.workgroup_name, self.interval_seconds, self.discord_chat_id,
         )
 
     def stop(self) -> None:
@@ -129,7 +129,7 @@ class HeartbeatManager:
         if self._task and not self._task.done():
             self._task.cancel()
             self._task = None
-        logger.info("Heartbeat stopped for workgroup '%s'", self.wg_name)
+        logger.info("Heartbeat stopped for workgroup '%s'", self.workgroup_name)
 
     async def _loop(self) -> None:
         """Main loop: tick then sleep."""
@@ -138,13 +138,13 @@ class HeartbeatManager:
             client = getattr(self.discord_channel, "_client", None)
             if client:
                 await client.wait_until_ready()
-                logger.info("Heartbeat '%s': Discord ready, starting ticks", self.wg_name)
+                logger.info("Heartbeat '%s': Discord ready, starting ticks", self.workgroup_name)
 
         while self._running:
             try:
                 await self._tick()
             except Exception as e:
-                logger.error("Heartbeat tick error for '%s': %s", self.wg_name, e)
+                logger.error("Heartbeat tick error for '%s': %s", self.workgroup_name, e)
             await asyncio.sleep(self.interval_seconds)
             if not self._running:
                 break
@@ -156,7 +156,7 @@ class HeartbeatManager:
         filtered out by _handle_incoming and never reaches the admin router.
         Falls back to send_text for DM channels.
 
-        Web path: publish to a synthetic ``heartbeat:<wg_name>`` chat_id on
+        Web path: publish to a synthetic ``heartbeat:<workgroup_name>`` chat_id on
         the host's WebChannel. Web UI users can open this chat to inspect
         heartbeat history.
         """
@@ -176,27 +176,27 @@ class HeartbeatManager:
                 )
                 return
             except Exception as e:
-                logger.warning("Heartbeat '%s': failed to send display: %s", self.wg_name, e)
+                logger.warning("Heartbeat '%s': failed to send display: %s", self.workgroup_name, e)
                 return
         if self.web_channel is not None:
             try:
-                await self.web_channel.send_text(f"heartbeat:{self.wg_name}", text)
+                await self.web_channel.send_text(f"heartbeat:{self.workgroup_name}", text)
             except Exception as e:
-                logger.warning("Heartbeat '%s': web display failed: %s", self.wg_name, e)
+                logger.warning("Heartbeat '%s': web display failed: %s", self.workgroup_name, e)
 
     async def _tick(self) -> None:
         """Single heartbeat cycle."""
         if self._is_ticking:
-            logger.debug("Heartbeat skipped for '%s' (previous still running)", self.wg_name)
+            logger.debug("Heartbeat skipped for '%s' (previous still running)", self.workgroup_name)
             return
 
         content = self._read_heartbeat_md()
         if content is None:
-            logger.debug("No HEARTBEAT.md for '%s' — skipping", self.wg_name)
+            logger.debug("No HEARTBEAT.md for '%s' — skipping", self.workgroup_name)
             return
 
         self._is_ticking = True
-        logger.info("Heartbeat triggered for '%s'", self.wg_name)
+        logger.info("Heartbeat triggered for '%s'", self.workgroup_name)
 
         try:
             # Display heartbeat prompt (if configured)
@@ -213,7 +213,7 @@ class HeartbeatManager:
             self._write_heartbeat_log(decision, meta)
 
             if is_silent_reply(decision):
-                logger.debug("Heartbeat silent reply from '%s'", self.wg_name)
+                logger.debug("Heartbeat silent reply from '%s'", self.workgroup_name)
                 if self.display_heartbeat and ((self.discord_channel and self.discord_chat_id) or self.web_channel):
                     await self._send_display("_Heartbeat: nothing to do._")
                 return
@@ -221,13 +221,13 @@ class HeartbeatManager:
             # Phase 2: Send decision to admin session for execution
             logger.info(
                 "Heartbeat action for '%s': %s",
-                self.wg_name, decision[:200],
+                self.workgroup_name, decision[:200],
             )
             if self.display_heartbeat and ((self.discord_channel and self.discord_chat_id) or self.web_channel):
                 preview = decision[:500] + "..." if len(decision) > 500 else decision
                 await self._send_display(f"**[Heartbeat decision]**\n{preview}")
 
-            chat_id = self.discord_chat_id or f"heartbeat:{self.wg_name}"
+            chat_id = self.discord_chat_id or f"heartbeat:{self.workgroup_name}"
             await self.admin_router.dispatch_sync(
                 decision, chat_id, from_bot="heartbeat",
             )
@@ -249,13 +249,13 @@ class HeartbeatManager:
         uptime = time.time() - self.start_time if self.start_time else 0
         running_tasks = self.get_running_tasks() if callable(self.get_running_tasks) else []
         prompt = _build_heartbeat_prompt(
-            self.wg_name, content,
+            self.workgroup_name, content,
             uptime_seconds=uptime,
             running_tasks=running_tasks,
         )
 
         env = AgentEnv(
-            bot_name=self.wg_name,
+            bot_name=self.workgroup_name,
             workspace=self.workspace,
             ai_backend=self.ai_backend,
             model=self.model,
@@ -289,7 +289,7 @@ class HeartbeatManager:
         """Find a session_id from the admin pool to fork from."""
         pool = self.admin_pool
         if pool is None:
-            logger.warning("Heartbeat '%s': admin_pool is None", self.wg_name)
+            logger.warning("Heartbeat '%s': admin_pool is None", self.workgroup_name)
             return None
 
         # Trigger lazy load from storage for the heartbeat chat_id
@@ -298,7 +298,7 @@ class HeartbeatManager:
             if ctx.session_id:
                 logger.info(
                     "Heartbeat '%s': found session via chat_id %s: %s",
-                    self.wg_name, self.discord_chat_id, ctx.session_id,
+                    self.workgroup_name, self.discord_chat_id, ctx.session_id,
                 )
                 return ctx.session_id
 
@@ -307,11 +307,11 @@ class HeartbeatManager:
             if ctx.session_id:
                 logger.info(
                     "Heartbeat '%s': found session via pool scan chat_id=%s: %s",
-                    self.wg_name, cid, ctx.session_id,
+                    self.workgroup_name, cid, ctx.session_id,
                 )
                 return ctx.session_id
 
-        logger.info("Heartbeat '%s': no session found in pool", self.wg_name)
+        logger.info("Heartbeat '%s': no session found in pool", self.workgroup_name)
         return None
 
     def _write_heartbeat_log(self, decision: str, meta: dict) -> None:

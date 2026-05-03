@@ -173,23 +173,23 @@ def _validate_workgroups(
     """Validate workgroup configuration."""
     seen_categories: dict[int, str] = {}
 
-    for wg_name, wg in workgroups.items():
+    for workgroup_name, workgroup in workgroups.items():
         # Skip workgroups not enabled on this node
-        if not node_matches(wg.enabled_on_nodes, node_id):
+        if not node_matches(workgroup.enabled_on_nodes, node_id):
             continue
 
-        if not wg.workspace:
-            raise ConfigError(f"Workgroup '{wg_name}': missing workspace")
+        if not workgroup.workspace:
+            raise ConfigError(f"Workgroup '{workgroup_name}': missing workspace")
 
         # Discord category uniqueness (if configured)
-        if wg.admin_discord_category:
-            category = wg.admin_discord_category
+        if workgroup.admin_discord_category:
+            category = workgroup.admin_discord_category
             if category in seen_categories:
                 raise ConfigError(
-                    f"Workgroup '{wg_name}': Discord category {category} "
+                    f"Workgroup '{workgroup_name}': Discord category {category} "
                     f"already used by '{seen_categories[category]}'"
                 )
-            seen_categories[category] = wg_name
+            seen_categories[category] = workgroup_name
 
 
 def load_config(
@@ -289,9 +289,9 @@ def load_config(
 
     # Parse workgroups
     workgroups: dict[str, WorkgroupConfig] = {}
-    for wg_name, wg_raw in effective_raw.get("workgroups", {}).items():
-        workgroups[wg_name] = _parse_workgroup(
-            wg_name, wg_raw,
+    for workgroup_name, workgroup_raw in effective_raw.get("workgroups", {}).items():
+        workgroups[workgroup_name] = _parse_workgroup(
+            workgroup_name, workgroup_raw,
             box_agent_dir=box_agent_dir, config_dir=config_dir,
             discord_bots=discord_bots,
         )

@@ -100,14 +100,14 @@ def _make_manager(tmp_path: Path) -> tuple[WorkgroupManager, dict[str, FakeCLIPr
         ai_backend="claude-cli",
         display_name="sp1",
     )
-    wg_cfg = WorkgroupConfig(
+    workgroup_config = WorkgroupConfig(
         name="wg",
         workspace=str(tmp_path / "wg-root"),
         ai_backend="claude-cli",
         specialists={"sp1": specialist_config},
     )
     # Workspace dirs
-    Path(wg_cfg.admin_workspace).mkdir(parents=True, exist_ok=True)
+    Path(workgroup_config.admin_workspace).mkdir(parents=True, exist_ok=True)
     Path(specialist_config.workspace).mkdir(parents=True, exist_ok=True)
 
     # Pool.start() creates `size` processes per bot, so we track ALL fakes
@@ -125,7 +125,7 @@ def _make_manager(tmp_path: Path) -> tuple[WorkgroupManager, dict[str, FakeCLIPr
         return fp
 
     manager = WorkgroupManager(
-        config={"wg": wg_cfg},
+        config={"wg": workgroup_config},
         config_dir=str(tmp_path / "config"),
         node_id="test-node",
         local_dir=tmp_path / "local",

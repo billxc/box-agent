@@ -43,23 +43,23 @@ def _mock_pool():
 
 def _make_manager(tmp_path, specialists=None):
     """Create a WorkgroupManager with a basic config."""
-    wg_cfg = WorkgroupConfig(
+    workgroup_config = WorkgroupConfig(
         name="test-wg",
         workspace=str(tmp_path / "workspace"),
     )
     if specialists:
         for name in specialists:
-            wg_cfg.specialists[name] = SpecialistConfig(
+            workgroup_config.specialists[name] = SpecialistConfig(
                 name=name, model="sonnet",
                 workspace=str(tmp_path / "specialists" / name),
             )
 
     mgr = WorkgroupManager(
-        config={"test-wg": wg_cfg},
+        config={"test-wg": workgroup_config},
         local_dir=tmp_path / "local",
         start_time=time.time(),
     )
-    return mgr, wg_cfg
+    return mgr, workgroup_config
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +69,7 @@ def _make_manager(tmp_path, specialists=None):
 
 class TestSendToSpecialist:
     async def test_returns_task_id(self, tmp_path):
-        mgr, wg_cfg = _make_manager(tmp_path, ["dev-1"])
+        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
         mgr.routers["dev-1"] = _mock_router("task done")
         mgr.pools["dev-1"] = _mock_pool()
 
@@ -79,7 +79,7 @@ class TestSendToSpecialist:
         assert result["specialist"] == "dev-1"
 
     async def test_task_marked_running(self, tmp_path):
-        mgr, wg_cfg = _make_manager(tmp_path, ["dev-1"])
+        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
         mgr.routers["dev-1"] = _mock_router("done")
         mgr.pools["dev-1"] = _mock_pool()
 
@@ -91,7 +91,7 @@ class TestSendToSpecialist:
         assert info["status"] == "running"
 
     async def test_task_completes(self, tmp_path):
-        mgr, wg_cfg = _make_manager(tmp_path, ["dev-1"])
+        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
         mgr.routers["dev-1"] = _mock_router("all done")
         mgr.pools["dev-1"] = _mock_pool()
 
@@ -105,7 +105,7 @@ class TestSendToSpecialist:
         assert info["result"] == "all done"
 
     async def test_extracts_specialist_response(self, tmp_path):
-        mgr, wg_cfg = _make_manager(tmp_path, ["dev-1"])
+        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
         router = _mock_router()
         router.dispatch_sync = AsyncMock(
             return_value="Thinking...\n<specialist_response>Final result</specialist_response>"
@@ -120,7 +120,7 @@ class TestSendToSpecialist:
         assert info["result"] == "Final result"
 
     async def test_error_handling(self, tmp_path):
-        mgr, wg_cfg = _make_manager(tmp_path, ["dev-1"])
+        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
         router = _mock_router()
         router.dispatch_sync = AsyncMock(side_effect=RuntimeError("boom"))
         mgr.routers["dev-1"] = router
@@ -140,7 +140,7 @@ class TestSendToSpecialist:
         assert "not found" in result["error"]
 
     async def test_callback_to_admin(self, tmp_path):
-        mgr, wg_cfg = _make_manager(tmp_path, ["dev-1"])
+        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
         admin_router = _mock_router()
         mgr.routers["test-wg"] = admin_router
         mgr.routers["dev-1"] = _mock_router("result text")
@@ -158,7 +158,7 @@ class TestSendToSpecialist:
         assert "result text" in msg.text
 
     async def test_wraps_prompt_with_xml_instruction(self, tmp_path):
-        mgr, wg_cfg = _make_manager(tmp_path, ["dev-1"])
+        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
         router = _mock_router("ok")
         mgr.routers["dev-1"] = router
         mgr.pools["dev-1"] = _mock_pool()
@@ -173,7 +173,7 @@ class TestSendToSpecialist:
         assert "<specialist_response>" in prompt
 
     async def test_increments_task_counter(self, tmp_path):
-        mgr, wg_cfg = _make_manager(tmp_path, ["dev-1"])
+        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
         mgr.routers["dev-1"] = _mock_router("ok")
         mgr.pools["dev-1"] = _mock_pool()
 
@@ -190,7 +190,7 @@ class TestSendToSpecialist:
 
 class TestCreateSpecialist:
     async def test_creates_specialist(self, tmp_path):
-        mgr, wg_cfg = _make_manager(tmp_path)
+        mgr, workgroup_config = _make_manager(tmp_path)
 
         mock_cli = MagicMock()
         mock_cli.start = MagicMock()
@@ -200,10 +200,10 @@ class TestCreateSpecialist:
         result = await mgr.create_specialist("test-wg", "new-dev")
         assert result["ok"] is True
         assert "new-dev" in mgr.routers
-        assert "new-dev" in wg_cfg.specialists
+        assert "new-dev" in workgroup_config.specialists
 
     async def test_rejects_duplicate(self, tmp_path):
-        mgr, wg_cfg = _make_manager(tmp_path, ["dev-1"])
+        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
         mgr.routers["dev-1"] = _mock_router()
 
         result = await mgr.create_specialist("test-wg", "dev-1")
@@ -217,7 +217,7 @@ class TestCreateSpecialist:
         assert "not found" in result["error"]
 
     async def test_default_workspace(self, tmp_path):
-        mgr, wg_cfg = _make_manager(tmp_path)
+        mgr, workgroup_config = _make_manager(tmp_path)
 
         mock_cli = MagicMock()
         mock_cli.start = MagicMock()
@@ -225,12 +225,12 @@ class TestCreateSpecialist:
         mgr._ensure_git_repo = MagicMock()
 
         await mgr.create_specialist("test-wg", "new-dev")
-        specialist = wg_cfg.specialists["new-dev"]
-        expected = str(Path(wg_cfg.workgroup_dir) / "specialists" / "new-dev")
+        specialist = workgroup_config.specialists["new-dev"]
+        expected = str(Path(workgroup_config.workgroup_dir) / "specialists" / "new-dev")
         assert specialist.workspace == expected
 
     async def test_persists_specialist(self, tmp_path):
-        mgr, wg_cfg = _make_manager(tmp_path)
+        mgr, workgroup_config = _make_manager(tmp_path)
         (tmp_path / "local").mkdir(exist_ok=True)
 
         mock_cli = MagicMock()
@@ -251,7 +251,7 @@ class TestCreateSpecialist:
 
 class TestDeleteSpecialist:
     async def test_deletes_dynamic_specialist(self, tmp_path):
-        mgr, wg_cfg = _make_manager(tmp_path, ["dev-1"])
+        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
         mgr.routers["dev-1"] = _mock_router()
         mgr.pools["dev-1"] = _mock_pool()
         mgr.procs["dev-1"] = AsyncMock()
@@ -261,7 +261,7 @@ class TestDeleteSpecialist:
         assert "dev-1" not in mgr.routers
         assert "dev-1" not in mgr.pools
         assert "dev-1" not in mgr.procs
-        assert "dev-1" not in wg_cfg.specialists
+        assert "dev-1" not in workgroup_config.specialists
 
     async def test_rejects_unknown(self, tmp_path):
         mgr, _ = _make_manager(tmp_path)
@@ -277,7 +277,7 @@ class TestDeleteSpecialist:
 
 class TestResetSpecialist:
     def test_resets_session(self, tmp_path):
-        mgr, wg_cfg = _make_manager(tmp_path, ["dev-1"])
+        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
         pool = _mock_pool()
         mgr.pools["dev-1"] = pool
 
@@ -301,7 +301,7 @@ class TestHeartbeatTick:
         (tmp_path / "HEARTBEAT.md").write_text("- Check tasks")
 
         hb = HeartbeatManager(
-            wg_name="wg", admin_pool=MagicMock(), admin_router=AsyncMock(),
+            workgroup_name="wg", admin_pool=MagicMock(), admin_router=AsyncMock(),
             workspace=str(tmp_path), interval_seconds=60, yolo=True,
         )
 
@@ -325,7 +325,7 @@ class TestHeartbeatTick:
         admin_router.dispatch_sync = AsyncMock(return_value="executed")
 
         hb = HeartbeatManager(
-            wg_name="wg", admin_pool=MagicMock(), admin_router=admin_router,
+            workgroup_name="wg", admin_pool=MagicMock(), admin_router=admin_router,
             workspace=str(tmp_path), interval_seconds=60, yolo=True,
         )
 
@@ -346,7 +346,7 @@ class TestHeartbeatTick:
         (tmp_path / "HEARTBEAT.md").write_text("- Check tasks")
 
         hb = HeartbeatManager(
-            wg_name="wg", admin_pool=MagicMock(), admin_router=AsyncMock(),
+            workgroup_name="wg", admin_pool=MagicMock(), admin_router=AsyncMock(),
             workspace=str(tmp_path), interval_seconds=60, yolo=True,
         )
         hb._is_ticking = True
@@ -357,7 +357,7 @@ class TestHeartbeatTick:
 
     async def test_tick_no_heartbeat_md(self, tmp_path):
         hb = HeartbeatManager(
-            wg_name="wg", admin_pool=MagicMock(), admin_router=AsyncMock(),
+            workgroup_name="wg", admin_pool=MagicMock(), admin_router=AsyncMock(),
             workspace=str(tmp_path), interval_seconds=60, yolo=True,
         )
 
@@ -373,7 +373,7 @@ class TestHeartbeatTick:
         dc._ensure_webhook = AsyncMock(return_value=wh)
 
         hb = HeartbeatManager(
-            wg_name="wg", admin_pool=MagicMock(), admin_router=AsyncMock(),
+            workgroup_name="wg", admin_pool=MagicMock(), admin_router=AsyncMock(),
             workspace=str(tmp_path), interval_seconds=60, yolo=True,
             discord_channel=dc, discord_chat_id="12345",
             display_heartbeat=True,
@@ -391,7 +391,7 @@ class TestHeartbeatTick:
 
     async def test_display_heartbeat_via_web_channel_when_no_discord(self, tmp_path):
         """In web-only mode (no Discord), heartbeat _send_display publishes to
-        the WebChannel under chat_id 'heartbeat:<wg_name>' so web UI users can
+        the WebChannel under chat_id 'heartbeat:<workgroup_name>' so web UI users can
         subscribe to inspect heartbeat history."""
         (tmp_path / "HEARTBEAT.md").write_text("- Check tasks")
 
@@ -399,7 +399,7 @@ class TestHeartbeatTick:
         wc.send_text = AsyncMock()
 
         hb = HeartbeatManager(
-            wg_name="my-wg", admin_pool=MagicMock(), admin_router=AsyncMock(),
+            workgroup_name="my-wg", admin_pool=MagicMock(), admin_router=AsyncMock(),
             workspace=str(tmp_path), interval_seconds=60, yolo=True,
             discord_channel=None, discord_chat_id="",
             web_channel=wc,
@@ -413,7 +413,7 @@ class TestHeartbeatTick:
             })
             await hb._tick()
 
-        # Web channel publishes to the synthetic heartbeat:<wg> chat_id.
+        # Web channel publishes to the synthetic heartbeat:<workgroup> chat_id.
         wc.send_text.assert_awaited()
         first = wc.send_text.await_args_list[0]
         assert first.args[0] == "heartbeat:my-wg"
@@ -427,7 +427,7 @@ class TestHeartbeatTick:
         pool._chat_contexts = {"12345": ctx}
 
         hb = HeartbeatManager(
-            wg_name="wg", admin_pool=pool, admin_router=AsyncMock(),
+            workgroup_name="wg", admin_pool=pool, admin_router=AsyncMock(),
             workspace=str(tmp_path), interval_seconds=60,
             discord_chat_id="12345",
         )
@@ -438,7 +438,7 @@ class TestHeartbeatTick:
 
     async def test_find_fork_session_no_pool(self, tmp_path):
         hb = HeartbeatManager(
-            wg_name="wg", admin_pool=None, admin_router=AsyncMock(),
+            workgroup_name="wg", admin_pool=None, admin_router=AsyncMock(),
             workspace=str(tmp_path), interval_seconds=60,
         )
         assert hb._find_fork_session_id() is None
@@ -467,16 +467,16 @@ class TestTemplateIntegration:
     async def test_create_with_template_writes_snapshot_and_appends_prompt(self, tmp_path, monkeypatch):
         # Anchor boxagent_dir to tmp_path so relative path resolution stays inside the test sandbox.
         monkeypatch.setenv("BOX_AGENT_DIR", str(tmp_path))
-        mgr, wg_cfg = _make_manager(tmp_path)
+        mgr, workgroup_config = _make_manager(tmp_path)
         self._wire_mocks(mgr)
-        _seed_template(Path(wg_cfg.workgroup_dir), "planner", "## Planner role\nDecompose tasks.")
+        _seed_template(Path(workgroup_config.workgroup_dir), "planner", "## Planner role\nDecompose tasks.")
 
         result = await mgr.create_specialist(
             "test-wg", "p1", template="planner",
         )
         assert result["ok"] is True
 
-        specialist_config = wg_cfg.specialists["p1"]
+        specialist_config = workgroup_config.specialists["p1"]
         assert specialist_config.template == "planner"
 
         # Snapshot file written
@@ -490,7 +490,7 @@ class TestTemplateIntegration:
 
     async def test_create_with_unknown_template_fails(self, tmp_path, monkeypatch):
         monkeypatch.setenv("BOX_AGENT_DIR", str(tmp_path))
-        mgr, wg_cfg = _make_manager(tmp_path)
+        mgr, workgroup_config = _make_manager(tmp_path)
         self._wire_mocks(mgr)
         result = await mgr.create_specialist(
             "test-wg", "p1", template="does-not-exist",
@@ -502,9 +502,9 @@ class TestTemplateIntegration:
     async def test_template_field_persisted_and_restored(self, tmp_path, monkeypatch):
         monkeypatch.setenv("BOX_AGENT_DIR", str(tmp_path))
         (tmp_path / "local").mkdir(exist_ok=True)
-        mgr, wg_cfg = _make_manager(tmp_path)
+        mgr, workgroup_config = _make_manager(tmp_path)
         self._wire_mocks(mgr)
-        _seed_template(Path(wg_cfg.workgroup_dir), "planner")
+        _seed_template(Path(workgroup_config.workgroup_dir), "planner")
 
         await mgr.create_specialist(
             "test-wg", "p1", template="planner",
@@ -517,9 +517,9 @@ class TestTemplateIntegration:
 
     async def test_list_templates_returns_sorted(self, tmp_path, monkeypatch):
         monkeypatch.setenv("BOX_AGENT_DIR", str(tmp_path))
-        mgr, wg_cfg = _make_manager(tmp_path)
-        _seed_template(Path(wg_cfg.workgroup_dir), "planner")
-        _seed_template(Path(wg_cfg.workgroup_dir), "auditor")
+        mgr, workgroup_config = _make_manager(tmp_path)
+        _seed_template(Path(workgroup_config.workgroup_dir), "planner")
+        _seed_template(Path(workgroup_config.workgroup_dir), "auditor")
 
         result = mgr.list_templates("test-wg")
         assert result["ok"] is True
@@ -527,9 +527,9 @@ class TestTemplateIntegration:
         assert names == ["auditor", "planner"]
 
     async def test_delete_specialist_removes_workspace(self, tmp_path):
-        mgr, wg_cfg = _make_manager(tmp_path, ["dev-1"])
+        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
         # Create a fake workspace so delete has something to wipe.
-        ws_path = Path(wg_cfg.specialists["dev-1"].workspace)
+        ws_path = Path(workgroup_config.specialists["dev-1"].workspace)
         ws_path.mkdir(parents=True, exist_ok=True)
         (ws_path / "marker").write_text("x")
         mgr.routers["dev-1"] = _mock_router()

@@ -46,10 +46,10 @@ def test_null_adapter_chat_id_falls_back_to_wg_prefix():
 def test_null_adapter_methods_are_noops():
     a = NullWorkgroupChannelAdapter()
     specialist = _make_specialist_config()
-    wg = _make_wg_cfg()
+    workgroup = _make_wg_cfg()
     router = MagicMock()
-    asyncio.run(a.setup_specialist("alice", specialist, wg, router))
-    out = asyncio.run(a.provision_specialist("alice", specialist, wg))
+    asyncio.run(a.setup_specialist("alice", specialist, workgroup, router))
+    out = asyncio.run(a.provision_specialist("alice", specialist, workgroup))
     assert out is specialist
     asyncio.run(a.cleanup_specialist("alice", specialist))
     asyncio.run(a.post_task("alice", specialist, "hi", "admin"))

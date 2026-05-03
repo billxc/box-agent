@@ -166,19 +166,19 @@ minutes to explain, it deserves an issue.
 
 ```bash
 # List issues
-yait -P {{wg_name}} list
+yait -P {{workgroup_name}} list
 
 # Create an issue
-yait -P {{wg_name}} new "Title" -t bug
+yait -P {{workgroup_name}} new "Title" -t bug
 
 # Show issue details
-yait -P {{wg_name}} show <ID>
+yait -P {{workgroup_name}} show <ID>
 
 # Update issue status
-yait -P {{wg_name}} update <ID> -s in-progress
+yait -P {{workgroup_name}} update <ID> -s in-progress
 
 # Close an issue
-yait -P {{wg_name}} update <ID> -s done
+yait -P {{workgroup_name}} update <ID> -s done
 ```
 
 ### Task Assignment
