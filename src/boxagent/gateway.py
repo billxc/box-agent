@@ -698,7 +698,7 @@ class Gateway:
         app.router.add_post("/api/workgroup/update_topic", self._handle_update_topic)
         app.router.add_post("/api/workgroup/cancel_task", self._handle_cancel_task)
         app.router.add_post("/api/peer/send", self._handle_peer_send)
-        # NOTE: /api/wg/peer/recv lives on `wapp` (the web UI port) instead of
+        # NOTE: /api/wg/peer/recv lives on `web_app` (the web UI port) instead of
         # `app` (internal API port) because sat_client forwards RPC frames to
         # `127.0.0.1:<local_web_port>` — the web UI port. Registering it here
         # would silently 404 every cross-machine peer message.
@@ -730,31 +730,31 @@ class Gateway:
         """Start a separate aiohttp server for the /web/* UI on its own port."""
         from pathlib import Path as _Path
 
-        wapp = web.Application()
-        wapp.router.add_get("/", self._handle_web_index)
-        wapp.router.add_get("/api/bots", self._handle_web_bots)
-        wapp.router.add_get("/api/machines", self._handle_web_machines)
-        wapp.router.add_get("/api/sessions", self._handle_web_sessions)
-        wapp.router.add_get("/api/history", self._handle_web_history)
-        wapp.router.add_post("/api/send", self._handle_web_send)
-        wapp.router.add_get("/api/stream", self._handle_web_stream)
-        wapp.router.add_get("/api/claude/projects", self._handle_claude_projects)
-        wapp.router.add_get("/api/claude/sessions", self._handle_claude_sessions)
-        wapp.router.add_get("/api/claude/transcript", self._handle_claude_transcript)
-        wapp.router.add_post("/api/claude/resume", self._handle_claude_resume)
+        web_app = web.Application()
+        web_app.router.add_get("/", self._handle_web_index)
+        web_app.router.add_get("/api/bots", self._handle_web_bots)
+        web_app.router.add_get("/api/machines", self._handle_web_machines)
+        web_app.router.add_get("/api/sessions", self._handle_web_sessions)
+        web_app.router.add_get("/api/history", self._handle_web_history)
+        web_app.router.add_post("/api/send", self._handle_web_send)
+        web_app.router.add_get("/api/stream", self._handle_web_stream)
+        web_app.router.add_get("/api/claude/projects", self._handle_claude_projects)
+        web_app.router.add_get("/api/claude/sessions", self._handle_claude_sessions)
+        web_app.router.add_get("/api/claude/transcript", self._handle_claude_transcript)
+        web_app.router.add_post("/api/claude/resume", self._handle_claude_resume)
         # Cluster RPC inbound: sat_client forwards peer-recv RPCs to the web
         # UI port (see _start_http for why this lives here, not on `app`).
-        wapp.router.add_post("/api/wg/peer/recv", self._handle_wg_peer_recv)
+        web_app.router.add_post("/api/wg/peer/recv", self._handle_wg_peer_recv)
         # Hub-and-spoke: WS endpoint for satellite nodes
         if self.config.satellite_token:
             self._sat_registry = SatelliteRegistry(expected_token=self.config.satellite_token)
-            wapp.router.add_get("/api/sat/ws", self._sat_registry.handle_ws)
+            web_app.router.add_get("/api/sat/ws", self._sat_registry.handle_ws)
             logger.info("Cluster: host mode enabled (accepting satellites at /api/sat/ws)")
         web_static = _Path(__file__).parent / "web" / "static"
         if web_static.is_dir():
-            wapp.router.add_static("/", path=str(web_static), show_index=False)
+            web_app.router.add_static("/", path=str(web_static), show_index=False)
 
-        runner = web.AppRunner(wapp)
+        runner = web.AppRunner(web_app)
         await runner.setup()
         self._web_runner = runner
 

@@ -80,4 +80,6 @@ find-and-replace, batched per cluster (e.g. all `dc_*` together, all
 
 | Date | Old → New | Commit |
 |------|-----------|--------|
-| —    | —         | —      |
+| 2026-05-03 | `syn_cfg` → `bot_config` (workgroup/manager.py, 20 refs) | (this batch) |
+| 2026-05-03 | `wapp` → `web_app` (gateway.py, 16 refs + 1 NOTE) | (this batch) |
+| 2026-05-03 | `dt_token` → `devtunnel_token` (cluster/sat_client.py, 2 refs) | (this batch) |

@@ -167,13 +167,13 @@ class SatelliteClient:
                 ws_url = self._derive_ws_url(resolved_url)
                 # Mint a fresh devtunnel connect token each attempt.
                 try:
-                    dt_token = await _devtunnel_connect_token(tname)
+                    devtunnel_token = await _devtunnel_connect_token(tname)
                 except Exception as e:
                     logger.warning("sat: devtunnel token mint failed: %s", e)
                     await asyncio.sleep(min(backoff, 60.0))
                     backoff = min(backoff * 1.5, 60.0)
                     continue
-                headers = {"X-Tunnel-Authorization": f"tunnel {dt_token}"}
+                headers = {"X-Tunnel-Authorization": f"tunnel {devtunnel_token}"}
                 logger.info("sat: connecting to host %s (tunnel %s)", ws_url, tname)
                 async with self._session.ws_connect(
                     ws_url, heartbeat=30.0, autoping=True, headers=headers,

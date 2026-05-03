@@ -237,7 +237,7 @@ class WorkgroupManager:
         template_info: TemplateInfo | None = None,
     ) -> Router:
         """Create backend, pool, router for a single specialist. Returns the Router."""
-        syn_cfg = BotConfig(
+        bot_config = BotConfig(
             name=sp_name,
             ai_backend=sp_cfg.ai_backend,
             workspace=sp_cfg.workspace,
@@ -248,35 +248,35 @@ class WorkgroupManager:
         )
 
         # Prepare workspace BEFORE starting backend
-        if syn_cfg.workspace and self._ensure_git_repo:
-            self._ensure_git_repo(Path(syn_cfg.workspace))
+        if bot_config.workspace and self._ensure_git_repo:
+            self._ensure_git_repo(Path(bot_config.workspace))
         # User-provided extra_skill_dirs (not subject to template filters).
-        if syn_cfg.extra_skill_dirs and self._sync_skills:
-            self._sync_skills(syn_cfg.workspace, syn_cfg.extra_skill_dirs, syn_cfg.ai_backend)
+        if bot_config.extra_skill_dirs and self._sync_skills:
+            self._sync_skills(bot_config.workspace, bot_config.extra_skill_dirs, bot_config.ai_backend)
         # Template-provided skills (inline + filtered external).
         if template_info is not None:
             self._apply_template_skills(
-                syn_cfg.workspace, template_info, syn_cfg.ai_backend
+                bot_config.workspace, template_info, bot_config.ai_backend
             )
             # Snapshot template CLAUDE.md so future restarts replay the same
             # template content even if the source is later modified.
-            write_template_snapshot(syn_cfg.workspace, template_info.read_claude_md())
+            write_template_snapshot(bot_config.workspace, template_info.read_claude_md())
         seed_specialist_workspace(
-            syn_cfg.workspace, sp_name, wg_cfg.name,
-            template_claude_md_text=read_template_snapshot(syn_cfg.workspace),
+            bot_config.workspace, sp_name, wg_cfg.name,
+            template_claude_md_text=read_template_snapshot(bot_config.workspace),
         )
 
-        cli = self._make_backend(syn_cfg)
+        cli = self._make_backend(bot_config)
         cli.start()
         self.procs[sp_name] = cli
 
-        def _factory(cfg=syn_cfg):
+        def _factory(cfg=bot_config):
             return self._make_backend(cfg)
 
         pool = SessionPool(
             size=1,
-            default_model=syn_cfg.model,
-            default_workspace=syn_cfg.workspace,
+            default_model=bot_config.model,
+            default_workspace=bot_config.workspace,
             storage=self.storage,
             bot_name=sp_name,
         )
@@ -290,14 +290,14 @@ class WorkgroupManager:
             storage=self.storage,
             pool=pool,
             bot_name=sp_name,
-            display_name=syn_cfg.display_name,
+            display_name=bot_config.display_name,
             config_dir=self.config_dir,
             node_id=self.node_id,
             local_dir=self.local_dir,
             start_time=self.start_time,
-            workspace=syn_cfg.workspace,
-            extra_skill_dirs=syn_cfg.extra_skill_dirs,
-            ai_backend=syn_cfg.ai_backend,
+            workspace=bot_config.workspace,
+            extra_skill_dirs=bot_config.extra_skill_dirs,
+            ai_backend=bot_config.ai_backend,
         )
         # Adapter wires any inbound channel affordances on the specialist.
         await adapter.setup_specialist(sp_name, sp_cfg, wg_cfg, sp_router)
