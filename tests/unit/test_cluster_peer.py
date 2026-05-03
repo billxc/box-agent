@@ -100,7 +100,7 @@ def test_peer_send_local_admin_dispatches_in_process():
 def test_peer_send_remote_admin_routes_via_cluster_rpc():
     gw = _make_gateway_with_routers()  # nothing local
     sess = MagicMock()
-    sess.call = AsyncMock(return_value={"ok": True})
+    sess.call = AsyncMock(return_value={"status": 200, "body": {"ok": True}})
     bot = SimpleNamespace(name="admin-b", kind="workgroup")
     gw._sat_registry = MagicMock()
     gw._sat_registry.list_bots = MagicMock(return_value=[("sat1", bot)])

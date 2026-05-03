@@ -135,3 +135,13 @@
 
 **原因**: 早期把 `satellite_token` / `host_url` 都放共享 config 会让每台机器都觉得自己是 host；放本地 `local.yaml` 又破坏了"共享配置即真相"的原则。最终方案：拓扑共享，身份本地，角色派生。
 
+## 2026-05-03: Cluster RPC 入站路由必须挂在 web UI app（不是内部 API app）
+
+**决定**: 凡是 `sat_client` 通过 WS RPC 转发回本机 HTTP 的端点（当前是 `/api/wg/peer/recv`，未来类似端点同理），都必须注册到 `_start_web_http()` 创建的 `wapp` 上，而**不是** `_start_http()` 创建的 `app`。
+
+**原因**: gateway 跑两个独立 aiohttp Application：`app` 在内部 API 端口（动态分配），`wapp` 在 web UI 端口（默认 9292）。`sat_client` 用 `local_web_port` 转发 RPC（gateway.py:282 传的是 `web_port`），所以入站只命中 `wapp`。把路由放 `app` 会让每条跨机 peer 消息**沉默 404**。
+
+**配套**: `Gateway.send_peer` 必须检查 `SatelliteSession.call(...)` 返回的 `status` 字段（404/500 都是合法 round-trip，不抛异常）。仅 transport 成功不等于业务成功，应把非 2xx 当失败上抛，避免 admin AI 收到 "Message sent" 但对端从未收到。
+
+**回归测试**: `tests/unit/test_cluster_peer_e2e.py::test_peer_recv_route_registered_on_web_app_not_api_app` + `::test_send_peer_surfaces_404_from_sat_recv`。
+

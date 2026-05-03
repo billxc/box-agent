@@ -697,7 +697,10 @@ class Gateway:
         app.router.add_post("/api/workgroup/update_topic", self._handle_update_topic)
         app.router.add_post("/api/workgroup/cancel_task", self._handle_cancel_task)
         app.router.add_post("/api/peer/send", self._handle_peer_send)
-        app.router.add_post("/api/wg/peer/recv", self._handle_wg_peer_recv)
+        # NOTE: /api/wg/peer/recv lives on `wapp` (the web UI port) instead of
+        # `app` (internal API port) because sat_client forwards RPC frames to
+        # `127.0.0.1:<local_web_port>` — the web UI port. Registering it here
+        # would silently 404 every cross-machine peer message.
 
         runner = web.AppRunner(app)
         await runner.setup()
@@ -738,6 +741,9 @@ class Gateway:
         wapp.router.add_get("/api/claude/sessions", self._handle_claude_sessions)
         wapp.router.add_get("/api/claude/transcript", self._handle_claude_transcript)
         wapp.router.add_post("/api/claude/resume", self._handle_claude_resume)
+        # Cluster RPC inbound: sat_client forwards peer-recv RPCs to the web
+        # UI port (see _start_http for why this lives here, not on `app`).
+        wapp.router.add_post("/api/wg/peer/recv", self._handle_wg_peer_recv)
         # Hub-and-spoke: WS endpoint for satellite nodes
         if self.config.satellite_token:
             self._sat_registry = SatelliteRegistry(expected_token=self.config.satellite_token)
@@ -1083,14 +1089,27 @@ class Gateway:
                 if sess is None:
                     continue
                 try:
-                    await sess.call(
+                    rpc_result = await sess.call(
                         "POST", "/api/wg/peer/recv",
                         body={"target_workgroup": target, "sender": sender, "body": message},
                     )
-                    return {"ok": True, "via": "rpc", "machine": machine_id}
                 except Exception as e:
                     logger.error("Peer RPC to %s failed: %s", machine_id, e)
                     return {"ok": False, "via": "rpc", "error": f"rpc failed: {e}"}
+                # Don't trust SatelliteSession.call's transport-level success —
+                # the sat-side handler may have returned 404/500 (e.g. wrong
+                # port, unknown workgroup). Surface non-2xx as a real failure
+                # so callers (and the admin AI) don't think the message was
+                # delivered when it wasn't.
+                status = int(rpc_result.get("status") or 0)
+                if 200 <= status < 300:
+                    return {"ok": True, "via": "rpc", "machine": machine_id}
+                body = rpc_result.get("body") or {}
+                err = body.get("error") if isinstance(body, dict) else None
+                return {
+                    "ok": False, "via": "rpc", "machine": machine_id,
+                    "error": f"sat returned status={status}: {err or body}",
+                }
         return {
             "ok": False, "via": "none",
             "error": f"no workgroup '{target}' found locally or in cluster",
