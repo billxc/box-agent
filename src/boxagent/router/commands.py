@@ -26,9 +26,9 @@ def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
         return
     pid = proc.pid
     if sys.platform == "win32":
-        import subprocess as sp
+        import subprocess
         try:
-            sp.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
                    capture_output=True, timeout=5)
         except Exception:
             proc.kill()

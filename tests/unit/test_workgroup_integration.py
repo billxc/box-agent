@@ -225,9 +225,9 @@ class TestCreateSpecialist:
         mgr._ensure_git_repo = MagicMock()
 
         await mgr.create_specialist("test-wg", "new-dev")
-        sp = wg_cfg.specialists["new-dev"]
+        specialist = wg_cfg.specialists["new-dev"]
         expected = str(Path(wg_cfg.workgroup_dir) / "specialists" / "new-dev")
-        assert sp.workspace == expected
+        assert specialist.workspace == expected
 
     async def test_persists_specialist(self, tmp_path):
         mgr, wg_cfg = _make_manager(tmp_path)
@@ -476,16 +476,16 @@ class TestTemplateIntegration:
         )
         assert result["ok"] is True
 
-        sp_cfg = wg_cfg.specialists["p1"]
-        assert sp_cfg.template == "planner"
+        specialist_config = wg_cfg.specialists["p1"]
+        assert specialist_config.template == "planner"
 
         # Snapshot file written
-        snapshot = Path(sp_cfg.workspace) / ".boxagent-meta" / "template-snapshot.md"
+        snapshot = Path(specialist_config.workspace) / ".boxagent-meta" / "template-snapshot.md"
         assert snapshot.is_file()
         assert "Decompose tasks" in snapshot.read_text()
 
         # CLAUDE.md includes both system layer (specialist name marker) and template body
-        claude_md = (Path(sp_cfg.workspace) / ".claude" / "CLAUDE.md").read_text()
+        claude_md = (Path(specialist_config.workspace) / ".claude" / "CLAUDE.md").read_text()
         assert "Decompose tasks" in claude_md
 
     async def test_create_with_unknown_template_fails(self, tmp_path, monkeypatch):

@@ -93,7 +93,7 @@ class FakeCLIProcess:
 def _make_manager(tmp_path: Path) -> tuple[WorkgroupManager, dict[str, FakeCLIProcess]]:
     """Build a WorkgroupManager with one workgroup + one specialist, web substrate."""
 
-    sp_cfg = SpecialistConfig(
+    specialist_config = SpecialistConfig(
         name="sp1",
         model="",
         workspace=str(tmp_path / "wg" / "specialists" / "sp1"),
@@ -104,11 +104,11 @@ def _make_manager(tmp_path: Path) -> tuple[WorkgroupManager, dict[str, FakeCLIPr
         name="wg",
         workspace=str(tmp_path / "wg-root"),
         ai_backend="claude-cli",
-        specialists={"sp1": sp_cfg},
+        specialists={"sp1": specialist_config},
     )
     # Workspace dirs
     Path(wg_cfg.admin_workspace).mkdir(parents=True, exist_ok=True)
-    Path(sp_cfg.workspace).mkdir(parents=True, exist_ok=True)
+    Path(specialist_config.workspace).mkdir(parents=True, exist_ok=True)
 
     # Pool.start() creates `size` processes per bot, so we track ALL fakes
     # under each bot name and provide a helper to query across them.

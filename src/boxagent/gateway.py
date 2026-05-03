@@ -1023,18 +1023,18 @@ class Gateway:
             return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
 
         wg_name = body.get("workgroup", "")
-        sp_name = body.get("name", "")
+        specialist_name = body.get("name", "")
         logger.info(
             "create_specialist request: wg=%s name=%s model=%s workspace=%s",
-            wg_name, sp_name, body.get("model", ""), body.get("workspace", ""),
+            wg_name, specialist_name, body.get("model", ""), body.get("workspace", ""),
         )
-        if not wg_name or not sp_name:
+        if not wg_name or not specialist_name:
             return web.json_response(
                 {"ok": False, "error": "missing 'workgroup' or 'name'"}, status=400,
             )
 
         result = await self._workgroup_mgr.create_specialist(
-            wg_name, sp_name,
+            wg_name, specialist_name,
             model=body.get("model", ""),
             workspace=body.get("workspace", ""),
         )

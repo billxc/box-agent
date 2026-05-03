@@ -47,32 +47,32 @@ class WorkgroupChannelAdapter(Protocol):
         adapters that don't drive Router streaming directly."""
         ...
 
-    def get_specialist_chat_id(self, sp_name: str, sp_cfg: SpecialistConfig) -> str:
+    def get_specialist_chat_id(self, specialist_name: str, specialist_config: SpecialistConfig) -> str:
         """The chat_id under which the specialist's pool/transcripts live."""
         ...
 
     async def setup_specialist(
-        self, sp_name: str, sp_cfg: SpecialistConfig,
+        self, specialist_name: str, specialist_config: SpecialistConfig,
         wg_cfg: WorkgroupConfig, router,
     ) -> None:
         """Wire any inbound channel affordances on the specialist's router."""
         ...
 
     async def provision_specialist(
-        self, sp_name: str, sp_cfg: SpecialistConfig, wg_cfg: WorkgroupConfig,
+        self, specialist_name: str, specialist_config: SpecialistConfig, wg_cfg: WorkgroupConfig,
     ) -> SpecialistConfig:
         """Allocate any external resources (e.g. a Discord text channel) and
-        return the (possibly-mutated) sp_cfg. Caller persists the result."""
+        return the (possibly-mutated) specialist_config. Caller persists the result."""
         ...
 
     async def cleanup_specialist(
-        self, sp_name: str, sp_cfg: SpecialistConfig,
+        self, specialist_name: str, specialist_config: SpecialistConfig,
     ) -> None:
         """Tear down whatever provision_specialist created."""
         ...
 
     async def post_task(
-        self, sp_name: str, sp_cfg: SpecialistConfig,
+        self, specialist_name: str, specialist_config: SpecialistConfig,
         text: str, admin_display: str,
     ) -> None:
         """Publish a task into the specialist's visibility channel (e.g. webhook)."""
@@ -89,7 +89,7 @@ class WorkgroupChannelAdapter(Protocol):
 class NullWorkgroupChannelAdapter:
     """Adapter for workgroups with no external channel — pure in-process orchestration.
 
-    All operations are no-ops; chat_id falls back to ``wg:<sp_name>``.
+    All operations are no-ops; chat_id falls back to ``wg:<specialist_name>``.
     """
 
     @property
@@ -99,19 +99,19 @@ class NullWorkgroupChannelAdapter:
     def primary_channel(self) -> object:
         return None
 
-    def get_specialist_chat_id(self, sp_name: str, sp_cfg: SpecialistConfig) -> str:
-        return f"wg:{sp_name}"
+    def get_specialist_chat_id(self, specialist_name: str, specialist_config: SpecialistConfig) -> str:
+        return f"wg:{specialist_name}"
 
-    async def setup_specialist(self, sp_name, sp_cfg, wg_cfg, router) -> None:
+    async def setup_specialist(self, specialist_name, specialist_config, wg_cfg, router) -> None:
         return
 
-    async def provision_specialist(self, sp_name, sp_cfg, wg_cfg) -> SpecialistConfig:
-        return sp_cfg
+    async def provision_specialist(self, specialist_name, specialist_config, wg_cfg) -> SpecialistConfig:
+        return specialist_config
 
-    async def cleanup_specialist(self, sp_name, sp_cfg) -> None:
+    async def cleanup_specialist(self, specialist_name, specialist_config) -> None:
         return
 
-    async def post_task(self, sp_name, sp_cfg, text, admin_display) -> None:
+    async def post_task(self, specialist_name, specialist_config, text, admin_display) -> None:
         return
 
     async def notify_admin(self, chat_id, text) -> None:
@@ -124,7 +124,7 @@ class NullWorkgroupChannelAdapter:
 class WebWorkgroupAdapter:
     """Publishes workgroup events into the host's WebChannel.
 
-    Specialist visibility is achieved by using a virtual chat_id ``wg:<sp_name>``
+    Specialist visibility is achieved by using a virtual chat_id ``wg:<specialist_name>``
     on the SAME WebChannel as the admin — the admin web UI subscribes to that
     chat_id in addition to its own and renders the specialist's stream alongside.
     """
@@ -138,26 +138,26 @@ class WebWorkgroupAdapter:
     def primary_channel(self) -> object:
         return self.web_channel
 
-    def get_specialist_chat_id(self, sp_name: str, sp_cfg: SpecialistConfig) -> str:
-        return f"wg:{sp_name}"
+    def get_specialist_chat_id(self, specialist_name: str, specialist_config: SpecialistConfig) -> str:
+        return f"wg:{specialist_name}"
 
-    async def setup_specialist(self, sp_name, sp_cfg, wg_cfg, router) -> None:
+    async def setup_specialist(self, specialist_name, specialist_config, wg_cfg, router) -> None:
         # Inbound affordance: if a web POST addresses the specialist via its
         # virtual chat_id, the router resolves the channel for replies.
         router._channels["web"] = self.web_channel
 
-    async def provision_specialist(self, sp_name, sp_cfg, wg_cfg) -> SpecialistConfig:
+    async def provision_specialist(self, specialist_name, specialist_config, wg_cfg) -> SpecialistConfig:
         # Nothing to allocate — specialist chat_id is virtual.
-        return sp_cfg
+        return specialist_config
 
-    async def cleanup_specialist(self, sp_name, sp_cfg) -> None:
+    async def cleanup_specialist(self, specialist_name, specialist_config) -> None:
         return
 
-    async def post_task(self, sp_name, sp_cfg, text, admin_display) -> None:
+    async def post_task(self, specialist_name, specialist_config, text, admin_display) -> None:
         # Render the admin's task as a user-role message in the specialist's
         # virtual chat so the web UI shows what was dispatched.
         self.web_channel._publish(
-            f"wg:{sp_name}",
+            f"wg:{specialist_name}",
             {
                 "type": "message",
                 "role": "user",

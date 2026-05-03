@@ -114,23 +114,23 @@ class WorkgroupManager:
                 data = yaml.safe_load(f) or {}
             entries = data.get(wg_name, {})
             result = {}
-            for sp_name, sp_raw in entries.items():
-                result[sp_name] = SpecialistConfig(
-                    name=sp_name,
-                    model=sp_raw.get("model", ""),
-                    workspace=sp_raw.get("workspace", ""),
-                    ai_backend=sp_raw.get("ai_backend", ""),
-                    display_name=sp_raw.get("display_name", sp_name),
-                    discord_channel=int(sp_raw.get("discord_channel", 0)),
-                    extra_skill_dirs=list(sp_raw.get("extra_skill_dirs", []) or []),
-                    template=sp_raw.get("template", "") or "",
+            for specialist_name, specialist_raw in entries.items():
+                result[specialist_name] = SpecialistConfig(
+                    name=specialist_name,
+                    model=specialist_raw.get("model", ""),
+                    workspace=specialist_raw.get("workspace", ""),
+                    ai_backend=specialist_raw.get("ai_backend", ""),
+                    display_name=specialist_raw.get("display_name", specialist_name),
+                    discord_channel=int(specialist_raw.get("discord_channel", 0)),
+                    extra_skill_dirs=list(specialist_raw.get("extra_skill_dirs", []) or []),
+                    template=specialist_raw.get("template", "") or "",
                 )
             return result
         except Exception as e:
             logger.warning("Failed to load saved specialists: %s", e)
             return {}
 
-    def _save_specialist(self, wg_name: str, sp: SpecialistConfig) -> None:
+    def _save_specialist(self, wg_name: str, specialist: SpecialistConfig) -> None:
         """Persist a dynamically created specialist to local storage."""
         path = self._specialists_file()
         data = {}
@@ -140,14 +140,14 @@ class WorkgroupManager:
                     data = yaml.safe_load(f) or {}
             except Exception:
                 pass
-        data.setdefault(wg_name, {})[sp.name] = {
-            "model": sp.model,
-            "workspace": sp.workspace,
-            "ai_backend": sp.ai_backend,
-            "display_name": sp.display_name,
-            "discord_channel": sp.discord_channel,
-            "extra_skill_dirs": list(sp.extra_skill_dirs),
-            "template": sp.template,
+        data.setdefault(wg_name, {})[specialist.name] = {
+            "model": specialist.model,
+            "workspace": specialist.workspace,
+            "ai_backend": specialist.ai_backend,
+            "display_name": specialist.display_name,
+            "discord_channel": specialist.discord_channel,
+            "extra_skill_dirs": list(specialist.extra_skill_dirs),
+            "template": specialist.template,
         }
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
@@ -232,19 +232,19 @@ class WorkgroupManager:
                 )
 
     async def _create_specialist_agent(
-        self, sp_name: str, sp_cfg, wg_cfg: WorkgroupConfig,
+        self, specialist_name: str, specialist_config, wg_cfg: WorkgroupConfig,
         adapter: WorkgroupChannelAdapter,
         template_info: TemplateInfo | None = None,
     ) -> Router:
         """Create backend, pool, router for a single specialist. Returns the Router."""
         bot_config = BotConfig(
-            name=sp_name,
-            ai_backend=sp_cfg.ai_backend,
-            workspace=sp_cfg.workspace,
-            model=sp_cfg.model,
+            name=specialist_name,
+            ai_backend=specialist_config.ai_backend,
+            workspace=specialist_config.workspace,
+            model=specialist_config.model,
             yolo=wg_cfg.yolo,
-            extra_skill_dirs=sp_cfg.extra_skill_dirs,
-            display_name=sp_cfg.display_name,
+            extra_skill_dirs=specialist_config.extra_skill_dirs,
+            display_name=specialist_config.display_name,
         )
 
         # Prepare workspace BEFORE starting backend
@@ -262,13 +262,13 @@ class WorkgroupManager:
             # template content even if the source is later modified.
             write_template_snapshot(bot_config.workspace, template_info.read_claude_md())
         seed_specialist_workspace(
-            bot_config.workspace, sp_name, wg_cfg.name,
+            bot_config.workspace, specialist_name, wg_cfg.name,
             template_claude_md_text=read_template_snapshot(bot_config.workspace),
         )
 
         cli_process = self._make_backend(bot_config)
         cli_process.start()
-        self.procs[sp_name] = cli_process
+        self.procs[specialist_name] = cli_process
 
         def _factory(cfg=bot_config):
             return self._make_backend(cfg)
@@ -278,18 +278,18 @@ class WorkgroupManager:
             default_model=bot_config.model,
             default_workspace=bot_config.workspace,
             storage=self.storage,
-            bot_name=sp_name,
+            bot_name=specialist_name,
         )
         pool.start(_factory)
-        self.pools[sp_name] = pool
+        self.pools[specialist_name] = pool
 
-        sp_router = Router(
+        specialist_router = Router(
             cli_process=cli_process,
             channel=adapter.primary_channel(),
             allowed_users=wg_cfg.allowed_users,
             storage=self.storage,
             pool=pool,
-            bot_name=sp_name,
+            bot_name=specialist_name,
             display_name=bot_config.display_name,
             config_dir=self.config_dir,
             node_id=self.node_id,
@@ -300,9 +300,9 @@ class WorkgroupManager:
             ai_backend=bot_config.ai_backend,
         )
         # Adapter wires any inbound channel affordances on the specialist.
-        await adapter.setup_specialist(sp_name, sp_cfg, wg_cfg, sp_router)
-        self.routers[sp_name] = sp_router
-        return sp_router
+        await adapter.setup_specialist(specialist_name, specialist_config, wg_cfg, specialist_router)
+        self.routers[specialist_name] = specialist_router
+        return specialist_router
 
     def _build_adapter(self, wg_cfg: WorkgroupConfig) -> WorkgroupChannelAdapter:
         """Pick the workgroup's internal message adapter.
@@ -346,9 +346,9 @@ class WorkgroupManager:
         # Load saved dynamic specialists BEFORE seeding workspace so
         # CLAUDE.md lists all specialists.
         saved = self._load_saved_specialists(wg_name)
-        for sp_name, sp_cfg in saved.items():
-            wg_cfg.specialists[sp_name] = sp_cfg
-            logger.info("Workgroup '%s': restored saved specialist '%s'", wg_name, sp_name)
+        for specialist_name, specialist_config in saved.items():
+            wg_cfg.specialists[specialist_name] = specialist_config
+            logger.info("Workgroup '%s': restored saved specialist '%s'", wg_name, specialist_name)
 
         # Prepare admin workspace BEFORE starting backend
         if admin_ws and self._ensure_git_repo:
@@ -449,12 +449,12 @@ class WorkgroupManager:
 
         # --- Create specialists (already merged above) ---
         specialist_names = []
-        for sp_name, sp_cfg in wg_cfg.specialists.items():
-            await self._create_specialist_agent(sp_name, sp_cfg, wg_cfg, adapter)
-            specialist_names.append(sp_name)
+        for specialist_name, specialist_config in wg_cfg.specialists.items():
+            await self._create_specialist_agent(specialist_name, specialist_config, wg_cfg, adapter)
+            specialist_names.append(specialist_name)
             logger.info(
                 "Workgroup '%s': specialist '%s' started (model=%s)",
-                wg_name, sp_name, sp_cfg.model,
+                wg_name, specialist_name, specialist_config.model,
             )
 
         admin_router.workgroup_agents = specialist_names
@@ -504,18 +504,18 @@ class WorkgroupManager:
 
         # Resolve the workgroup that owns this specialist + its adapter
         adapter: WorkgroupChannelAdapter = NullWorkgroupChannelAdapter()
-        sp_cfg = None
+        specialist_config = None
         wg_display = from_bot or "admin"
         wg_name = ""
         for name, wg_cfg in self.config.items():
             if target in wg_cfg.specialists:
-                sp_cfg = wg_cfg.specialists[target]
+                specialist_config = wg_cfg.specialists[target]
                 adapter = self.adapters.get(name) or NullWorkgroupChannelAdapter()
                 wg_display = wg_cfg.display_name or from_bot or "admin"
                 wg_name = name
                 break
 
-        chat_id = adapter.get_specialist_chat_id(target, sp_cfg) if sp_cfg else f"wg:{target}"
+        chat_id = adapter.get_specialist_chat_id(target, specialist_config) if specialist_config else f"wg:{target}"
 
         # Wrap admin's message with system instruction for XML-tagged response
         wrapped_text = (
@@ -533,8 +533,8 @@ class WorkgroupManager:
             result = ""
             try:
                 # Post task in specialist's visibility channel (e.g. Discord webhook)
-                if sp_cfg is not None:
-                    await adapter.post_task(target, sp_cfg, text, wg_display)
+                if specialist_config is not None:
+                    await adapter.post_task(target, specialist_config, text, wg_display)
 
                 raw_result = await router.dispatch_sync(wrapped_text, chat_id, from_bot=from_bot)
                 result = _extract_specialist_response(raw_result)
@@ -598,21 +598,21 @@ class WorkgroupManager:
         for name, wg_cfg in self.config.items():
             if wg_name and name != wg_name:
                 continue
-            for sp_name, sp_cfg in wg_cfg.specialists.items():
+            for specialist_name, specialist_config in wg_cfg.specialists.items():
                 # Check running tasks
                 running_tasks = [
                     tid for tid, info in self._task_results.items()
-                    if tid.startswith(f"{sp_name}-") and info.get("status") == "running"
+                    if tid.startswith(f"{specialist_name}-") and info.get("status") == "running"
                 ]
                 specialists.append({
-                    "name": sp_name,
+                    "name": specialist_name,
                     "workgroup": name,
-                    "model": sp_cfg.model,
-                    "workspace": sp_cfg.workspace,
-                    "ai_backend": sp_cfg.ai_backend,
-                    "display_name": sp_cfg.display_name,
-                    "discord_channel": sp_cfg.discord_channel,
-                    "template": sp_cfg.template,
+                    "model": specialist_config.model,
+                    "workspace": specialist_config.workspace,
+                    "ai_backend": specialist_config.ai_backend,
+                    "display_name": specialist_config.display_name,
+                    "discord_channel": specialist_config.discord_channel,
+                    "template": specialist_config.template,
                     "running_tasks": running_tasks,
                 })
         return {"ok": True, "specialists": specialists}
@@ -679,8 +679,8 @@ class WorkgroupManager:
             # Find session_id for this specialist
             for wg_cfg in self.config.values():
                 if target in wg_cfg.specialists:
-                    sp = wg_cfg.specialists[target]
-                    chat_id = str(sp.discord_channel) if sp.discord_channel else f"wg:{target}"
+                    specialist = wg_cfg.specialists[target]
+                    chat_id = str(specialist.discord_channel) if specialist.discord_channel else f"wg:{target}"
                     sid = pool.get_session_id(chat_id)
                     if sid:
                         transcript_path = self.local_dir / "transcripts" / f"{sid}.jsonl"
@@ -769,15 +769,15 @@ class WorkgroupManager:
         # chat_id used by send_to_specialist
         for wg_cfg in self.config.values():
             if target in wg_cfg.specialists:
-                sp = wg_cfg.specialists[target]
-                chat_id = str(sp.discord_channel) if sp.discord_channel else f"wg:{target}"
+                specialist = wg_cfg.specialists[target]
+                chat_id = str(specialist.discord_channel) if specialist.discord_channel else f"wg:{target}"
                 pool.clear_session(chat_id)
                 logger.info("Reset session for specialist '%s' (chat_id=%s)", target, chat_id)
                 return {"ok": True}
         return {"ok": False, "error": f"specialist '{target}' not in any workgroup"}
 
     async def create_specialist(
-        self, wg_name: str, sp_name: str,
+        self, wg_name: str, specialist_name: str,
         model: str = "", workspace: str = "",
         template: str = "",
         extra_skill_dirs: list[str] | None = None,
@@ -788,8 +788,8 @@ class WorkgroupManager:
         if wg_cfg is None:
             return {"ok": False, "error": f"workgroup '{wg_name}' not found"}
 
-        if sp_name in self.routers:
-            return {"ok": False, "error": f"specialist '{sp_name}' already exists"}
+        if specialist_name in self.routers:
+            return {"ok": False, "error": f"specialist '{specialist_name}' already exists"}
 
         # Resolve template (fail loud if requested but not found).
         template_info: TemplateInfo | None = None
@@ -816,29 +816,29 @@ class WorkgroupManager:
         # Reuse the workgroup's adapter (built at start_workgroup time).
         adapter = self.adapters.get(wg_name) or self._build_adapter(wg_cfg)
 
-        sp_cfg = SpecialistConfig(
-            name=sp_name,
+        specialist_config = SpecialistConfig(
+            name=specialist_name,
             model=model or wg_cfg.model,
-            workspace=workspace or wg_cfg.specialist_workspace(sp_name),
+            workspace=workspace or wg_cfg.specialist_workspace(specialist_name),
             ai_backend=wg_cfg.ai_backend,
-            display_name=display_name or sp_name,
+            display_name=display_name or specialist_name,
             discord_channel=0,
             extra_skill_dirs=resolved_user_dirs,
             template=template,
         )
 
         # Adapter allocates any external resource (e.g. Discord text channel)
-        # and may mutate sp_cfg.discord_channel.
-        sp_cfg = await adapter.provision_specialist(sp_name, sp_cfg, wg_cfg)
-        discord_channel_id = sp_cfg.discord_channel
+        # and may mutate specialist_config.discord_channel.
+        specialist_config = await adapter.provision_specialist(specialist_name, specialist_config, wg_cfg)
+        discord_channel_id = specialist_config.discord_channel
 
         await self._create_specialist_agent(
-            sp_name, sp_cfg, wg_cfg, adapter, template_info=template_info,
+            specialist_name, specialist_config, wg_cfg, adapter, template_info=template_info,
         )
 
         # Persist
-        wg_cfg.specialists[sp_name] = sp_cfg
-        self._save_specialist(wg_name, sp_cfg)
+        wg_cfg.specialists[specialist_name] = specialist_config
+        self._save_specialist(wg_name, specialist_config)
 
         # Update admin's agent list
         admin_router = self.routers.get(wg_name)
@@ -847,59 +847,59 @@ class WorkgroupManager:
 
         logger.info(
             "Workgroup '%s': dynamically created specialist '%s' (channel=%d, model=%s, workspace=%s)",
-            wg_name, sp_name, discord_channel_id, sp_cfg.model, sp_cfg.workspace,
+            wg_name, specialist_name, discord_channel_id, specialist_config.model, specialist_config.workspace,
         )
         return {"ok": True, "channel_id": discord_channel_id}
 
-    async def delete_specialist(self, sp_name: str) -> dict:
+    async def delete_specialist(self, specialist_name: str) -> dict:
         """Delete a specialist.
 
         Stops its process and pool, removes its workspace directory,
         deletes its Discord channel, and removes the persisted entry.
         """
-        if sp_name not in self.routers:
-            return {"ok": False, "error": f"specialist '{sp_name}' not found"}
+        if specialist_name not in self.routers:
+            return {"ok": False, "error": f"specialist '{specialist_name}' not found"}
 
         # Find which workgroup owns this specialist
         wg_name = ""
-        sp_cfg = None
-        sp_workspace = ""
+        specialist_config = None
+        specialist_workspace = ""
         for name, wg_cfg in self.config.items():
-            if sp_name in wg_cfg.specialists:
+            if specialist_name in wg_cfg.specialists:
                 wg_name = name
-                sp_cfg = wg_cfg.specialists[sp_name]
-                sp_workspace = sp_cfg.workspace
+                specialist_config = wg_cfg.specialists[specialist_name]
+                specialist_workspace = specialist_config.workspace
                 break
 
         # Tear down any external resource via the adapter (Discord channel etc.).
-        if sp_cfg is not None and wg_name:
+        if specialist_config is not None and wg_name:
             adapter = self.adapters.get(wg_name) or NullWorkgroupChannelAdapter()
-            await adapter.cleanup_specialist(sp_name, sp_cfg)
+            await adapter.cleanup_specialist(specialist_name, specialist_config)
 
         # Stop process
-        cli_process = self.procs.pop(sp_name, None)
+        cli_process = self.procs.pop(specialist_name, None)
         if cli_process:
             try:
                 await cli_process.stop()
             except Exception as e:
-                logger.warning("Error stopping specialist CLI '%s': %s", sp_name, e)
+                logger.warning("Error stopping specialist CLI '%s': %s", specialist_name, e)
 
         # Stop pool
-        pool = self.pools.pop(sp_name, None)
+        pool = self.pools.pop(specialist_name, None)
         if pool:
             try:
                 await pool.stop()
             except Exception as e:
-                logger.warning("Error stopping specialist pool '%s': %s", sp_name, e)
+                logger.warning("Error stopping specialist pool '%s': %s", specialist_name, e)
 
         # Remove router
-        self.routers.pop(sp_name, None)
+        self.routers.pop(specialist_name, None)
 
         # Remove from config and saved file
         if wg_name:
             wg_cfg = self.config[wg_name]
-            wg_cfg.specialists.pop(sp_name, None)
-            self._remove_saved_specialist(wg_name, sp_name)
+            wg_cfg.specialists.pop(specialist_name, None)
+            self._remove_saved_specialist(wg_name, specialist_name)
 
             # Update admin's specialist list
             admin_router = self.routers.get(wg_name)
@@ -907,8 +907,8 @@ class WorkgroupManager:
                 admin_router.workgroup_agents = list(wg_cfg.specialists.keys())
 
         # Remove workspace directory (after process stop, after persistence cleanup).
-        if sp_workspace:
-            ws_path = Path(sp_workspace)
+        if specialist_workspace:
+            ws_path = Path(specialist_workspace)
             if ws_path.is_dir():
                 import shutil
                 try:
@@ -919,10 +919,10 @@ class WorkgroupManager:
                         "Failed to remove specialist workspace '%s': %s", ws_path, e
                     )
 
-        logger.info("Deleted specialist '%s' from workgroup '%s'", sp_name, wg_name)
+        logger.info("Deleted specialist '%s' from workgroup '%s'", specialist_name, wg_name)
         return {"ok": True}
 
-    def _remove_saved_specialist(self, wg_name: str, sp_name: str) -> None:
+    def _remove_saved_specialist(self, wg_name: str, specialist_name: str) -> None:
         """Remove a specialist from the saved workgroup_specialists.yaml."""
         path = self._specialists_file()
         if not path.is_file():
@@ -931,12 +931,12 @@ class WorkgroupManager:
             with open(path, encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
             wg_data = data.get(wg_name, {})
-            if sp_name in wg_data:
-                del wg_data[sp_name]
+            if specialist_name in wg_data:
+                del wg_data[specialist_name]
                 with open(path, "w", encoding="utf-8") as f:
                     yaml.dump(data, f, default_flow_style=False)
         except Exception as e:
-            logger.warning("Failed to remove saved specialist '%s': %s", sp_name, e)
+            logger.warning("Failed to remove saved specialist '%s': %s", specialist_name, e)
 
     async def stop(self) -> None:
         """Stop all workgroup processes, pools, and heartbeats."""

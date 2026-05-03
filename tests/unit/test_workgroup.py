@@ -283,7 +283,7 @@ class TestTemplateFormat:
 
     def test_specialist_claude_md(self):
         result = SPECIALIST_CLAUDE_MD.format(
-            sp_name="dev-1", wg_name="wg",
+            specialist_name="dev-1", wg_name="wg",
             supercrew_ref=SUPERCREW_REF, worktrees_dir="/tmp/wt",
         )
         assert "dev-1" in result
@@ -374,8 +374,8 @@ class TestWorkgroupManagerPureMethods:
         mgr = self._make_manager(tmp_path)
         (tmp_path / "local").mkdir(exist_ok=True)
         from boxagent.config import SpecialistConfig
-        sp = SpecialistConfig(name="dynamic-1", model="haiku", workspace="/tmp/dyn")
-        mgr._save_specialist("test-wg", sp)
+        specialist = SpecialistConfig(name="dynamic-1", model="haiku", workspace="/tmp/dyn")
+        mgr._save_specialist("test-wg", specialist)
         loaded = mgr._load_saved_specialists("test-wg")
         assert "dynamic-1" in loaded
         assert loaded["dynamic-1"].model == "haiku"
@@ -384,8 +384,8 @@ class TestWorkgroupManagerPureMethods:
         mgr = self._make_manager(tmp_path)
         (tmp_path / "local").mkdir(exist_ok=True)
         from boxagent.config import SpecialistConfig
-        sp = SpecialistConfig(name="dynamic-1", model="haiku")
-        mgr._save_specialist("test-wg", sp)
+        specialist = SpecialistConfig(name="dynamic-1", model="haiku")
+        mgr._save_specialist("test-wg", specialist)
         mgr._remove_saved_specialist("test-wg", "dynamic-1")
         loaded = mgr._load_saved_specialists("test-wg")
         assert "dynamic-1" not in loaded

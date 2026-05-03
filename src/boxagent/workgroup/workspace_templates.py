@@ -142,7 +142,7 @@ def seed_admin_workspace(
 
 def seed_specialist_workspace(
     workspace: str,
-    sp_name: str,
+    specialist_name: str,
     wg_name: str,
     template_claude_md_text: str | None = None,
 ) -> list[str]:
@@ -169,7 +169,7 @@ def seed_specialist_workspace(
 
     # .claude/CLAUDE.md
     content = SPECIALIST_CLAUDE_MD.format(
-        sp_name=sp_name,
+        specialist_name=specialist_name,
         wg_name=wg_name,
         supercrew_ref=SUPERCREW_REF,
         worktrees_dir=worktrees_dir,
@@ -193,7 +193,7 @@ def seed_specialist_workspace(
         written.append(".claude/skills/supercrew/references/templates.md")
 
     if written:
-        logger.info("Seeded specialist workspace %s (%s): %s", workspace, sp_name, written)
+        logger.info("Seeded specialist workspace %s (%s): %s", workspace, specialist_name, written)
     return written
 
 

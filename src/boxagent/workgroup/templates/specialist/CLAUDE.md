@@ -1,4 +1,4 @@
-# Specialist — {sp_name}
+# Specialist — {specialist_name}
 
 > Workgroup: {wg_name}
 

@@ -110,10 +110,10 @@ class WorkgroupConfig:
     def admin_workspace(self) -> str:
         return str(Path(self.workgroup_dir) / "admin") if self.workgroup_dir else ""
 
-    def specialist_workspace(self, sp_name: str) -> str:
+    def specialist_workspace(self, specialist_name: str) -> str:
         if not self.workgroup_dir:
             return ""
-        return str(Path(self.workgroup_dir) / "specialists" / sp_name)
+        return str(Path(self.workgroup_dir) / "specialists" / specialist_name)
 
 
 @dataclass

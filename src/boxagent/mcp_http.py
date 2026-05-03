@@ -224,17 +224,17 @@ def _register_admin_tools(mcp: FastMCP) -> None:
         if not specialists:
             return "No specialists found in this workgroup."
         lines = []
-        for sp in specialists:
-            parts = [f"**{sp['name']}**"]
-            if sp.get("display_name") and sp["display_name"] != sp["name"]:
-                parts.append(f"({sp['display_name']})")
-            parts.append(f"— model: {sp.get('model', 'default')}")
-            if sp.get("template"):
-                parts.append(f"| template: {sp['template']}")
-            if sp.get("workspace"):
-                parts.append(f"| workspace: {sp['workspace']}")
-            if sp.get("running_tasks"):
-                parts.append(f"| running: {', '.join(sp['running_tasks'])}")
+        for specialist in specialists:
+            parts = [f"**{specialist['name']}**"]
+            if specialist.get("display_name") and specialist["display_name"] != specialist["name"]:
+                parts.append(f"({specialist['display_name']})")
+            parts.append(f"— model: {specialist.get('model', 'default')}")
+            if specialist.get("template"):
+                parts.append(f"| template: {specialist['template']}")
+            if specialist.get("workspace"):
+                parts.append(f"| workspace: {specialist['workspace']}")
+            if specialist.get("running_tasks"):
+                parts.append(f"| running: {', '.join(specialist['running_tasks'])}")
             lines.append(" ".join(parts))
         return f"Specialists ({len(specialists)}):\n" + "\n".join(lines)
 
