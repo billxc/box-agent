@@ -514,17 +514,17 @@ class Scheduler:
         return self.telegram_bots.get(task.bot, "")
 
     def _find_active_bot_ref_by_token(self, token: str) -> BotRef | None:
-        """Return the active bot ref using the given Telegram token, if any."""
+        """Return the active bot bot_ref using the given Telegram token, if any."""
         if not token:
             return None
-        for ref in self.bot_refs.values():
-            if ref.telegram_token == token:
-                return ref
+        for bot_ref in self.bot_refs.values():
+            if bot_ref.telegram_token == token:
+                return bot_ref
         return None
 
     def _resolve_unique_notify_chat_id(self) -> str:
         """Return the unique active chat id if there is exactly one."""
-        chat_ids = {ref.chat_id for ref in self.bot_refs.values() if ref.chat_id}
+        chat_ids = {bot_ref.chat_id for bot_ref in self.bot_refs.values() if bot_ref.chat_id}
         if len(chat_ids) == 1:
             return next(iter(chat_ids))
         return ""
@@ -569,8 +569,8 @@ class Scheduler:
 
     async def _execute_append(self, task: ScheduleTask) -> str:
         """Queue the prompt into a bot's primary CLIProcess."""
-        ref = self.bot_refs.get(task.bot)
-        if not ref:
+        bot_ref = self.bot_refs.get(task.bot)
+        if not bot_ref:
             raise ValueError(f"Schedule '{task.id}': bot '{task.bot}' not found")
 
         logger.info("Schedule '%s' starting (append to %s)", task.id, task.bot)
@@ -580,17 +580,17 @@ class Scheduler:
             effective_model="",
         )
         prompt = f"{append_system_prompt}\n{user_prompt}"
-        await ref.channel.send_text(
-            ref.chat_id,
+        await bot_ref.channel.send_text(
+            bot_ref.chat_id,
             f"🤖【*Append*】*{task.id}*, prompt:\n\n{task.prompt}",
         )
         callback = _SchedulerCallback(
-            channel=ref.channel, chat_id=ref.chat_id, task_id=task.id,
+            channel=bot_ref.channel, chat_id=bot_ref.chat_id, task_id=task.id,
         )
         # append 模式始终沿用目标 bot 当前 backend/model/session；
         # task.ai_backend / task.model 仅供 isolate 模式使用，这里忽略。
         try:
-            await ref.cli_process.send(user_prompt, callback, chat_id=ref.chat_id, append_system_prompt=append_system_prompt)
+            await bot_ref.cli_process.send(user_prompt, callback, chat_id=bot_ref.chat_id, append_system_prompt=append_system_prompt)
             await callback.send_result()
         except Exception as e:
             self._append_run_log(task, prompt=prompt, error=str(e))
@@ -618,8 +618,8 @@ class Scheduler:
             )
             return
 
-        ref = self._find_active_bot_ref_by_token(token)
-        chat_id = ref.chat_id if ref and ref.chat_id else self._resolve_unique_notify_chat_id()
+        bot_ref = self._find_active_bot_ref_by_token(token)
+        chat_id = bot_ref.chat_id if bot_ref and bot_ref.chat_id else self._resolve_unique_notify_chat_id()
         if not chat_id:
             logger.warning(
                 "Bot '%s' resolved to a token for schedule '%s', but no unique notify chat_id is available",

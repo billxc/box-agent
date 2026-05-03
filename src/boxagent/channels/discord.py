@@ -94,12 +94,12 @@ class DiscordChannel:
             on_message: Async callback ``(IncomingMessage) -> None``.
             categories: List of guild category IDs (int) or ``DM_CATEGORY``.
         """
-        for cat in categories:
-            if cat in self._category_map:
+        for category in categories:
+            if category in self._category_map:
                 raise ValueError(
-                    f"Discord category {cat!r} is already registered to another route"
+                    f"Discord category {category!r} is already registered to another route"
                 )
-            self._category_map[cat] = on_message
+            self._category_map[category] = on_message
 
     def register_channel_route(
         self,

@@ -157,13 +157,13 @@ def _validate_discord_categories(bots: dict[str, BotConfig]) -> None:
             keys: list[object] = list(cfg.discord_allowed_categories)
             if cfg.discord_dm:
                 keys.append("DM")
-            for cat in keys:
-                if cat in seen:
+            for category in keys:
+                if category in seen:
                     raise ConfigError(
-                        f"Discord category {cat!r} claimed by both "
-                        f"'{seen[cat]}' and '{bot_name}'"
+                        f"Discord category {category!r} claimed by both "
+                        f"'{seen[category]}' and '{bot_name}'"
                     )
-                seen[cat] = bot_name
+                seen[category] = bot_name
 
 
 def _validate_workgroups(
@@ -183,13 +183,13 @@ def _validate_workgroups(
 
         # Discord category uniqueness (if configured)
         if wg.admin_discord_category:
-            cat = wg.admin_discord_category
-            if cat in seen_categories:
+            category = wg.admin_discord_category
+            if category in seen_categories:
                 raise ConfigError(
-                    f"Workgroup '{wg_name}': Discord category {cat} "
-                    f"already used by '{seen_categories[cat]}'"
+                    f"Workgroup '{wg_name}': Discord category {category} "
+                    f"already used by '{seen_categories[category]}'"
                 )
-            seen_categories[cat] = wg_name
+            seen_categories[category] = wg_name
 
 
 def load_config(

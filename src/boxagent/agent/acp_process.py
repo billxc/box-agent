@@ -67,8 +67,8 @@ class _BoxAgentACPClient(Client):
         self._updates_drained.set()
         self._suppress_updates = False
 
-    def set_callback(self, cb: AgentCallback | None) -> None:
-        self._callback = cb
+    def set_callback(self, callback: AgentCallback | None) -> None:
+        self._callback = callback
         self._streamed_any = False
         self._pending_updates = 0
         self._updates_drained.set()
@@ -137,21 +137,21 @@ class _BoxAgentACPClient(Client):
             async with self._update_lock:
                 if self._suppress_updates:
                     return
-                cb = self._callback
-                if not cb:
+                callback = self._callback
+                if not callback:
                     return
 
                 if isinstance(update, AgentMessageChunk):
                     content = update.content
                     if isinstance(content, TextContentBlock) and content.text:
                         self._streamed_any = True
-                        await cb.on_stream(content.text)
+                        await callback.on_stream(content.text)
                 elif isinstance(update, AgentThoughtChunk):
                     content = update.content
                     if isinstance(content, TextContentBlock) and content.text:
-                        await cb.on_stream(f"💭 {content.text}")
+                        await callback.on_stream(f"💭 {content.text}")
                 elif isinstance(update, ToolCallStart):
-                    await cb.on_tool_update(
+                    await callback.on_tool_update(
                         tool_call_id=update.tool_call_id,
                         title=self._display_tool_title(
                             update.tool_call_id, update.title or "tool"
@@ -161,7 +161,7 @@ class _BoxAgentACPClient(Client):
                         output=getattr(update, "raw_output", None),
                     )
                 elif isinstance(update, ToolCallProgress):
-                    await cb.on_tool_update(
+                    await callback.on_tool_update(
                         tool_call_id=update.tool_call_id,
                         title=self._display_tool_title(
                             update.tool_call_id, update.title

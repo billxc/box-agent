@@ -90,3 +90,6 @@ find-and-replace, batched per cluster (e.g. all `dc_*` together, all
 | 2026-05-04 | `web_ch` → `web_channel` (gateway.py + workgroup/manager.py, 11 sites) | (this batch) |
 | 2026-05-04 | `hb` → `heartbeat` (workgroup/manager.py, 5 sites) | (this batch) |
 | 2026-05-04 | `ch_id` → `channel_id` (mcp_http.py, 3 sites — was discord channel id, not chat_id; corrected from earlier proposal) | (this batch) |
+| 2026-05-04 | `cb` → `callback` (acp_process.py, 8 sites) | (this batch) |
+| 2026-05-04 | `ref` → `bot_ref` (scheduler/engine.py, 19 sites incl. docstring) | (this batch) |
+| 2026-05-04 | `cat` → `category` (discord.py + config.py, 14 sites) | (this batch) |
