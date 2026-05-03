@@ -16,11 +16,7 @@ Suspect identifiers (short or matching known-offender tokens). Each row:
 | `cfg` | 35 | 10 | src/boxagent/config.py:148 (loop); src/boxagent/config.py:156 (loop); src/boxagent/gateway.py:516 (attr) |
 | `wg` | 35 | 10 | src/boxagent/config.py:176 (loop); src/boxagent/gateway.py:782 (attr); src/boxagent/gateway.py:826 (attr) |
 | `sp` | 28 | 4 | src/boxagent/mcp_http.py:227 (loop); src/boxagent/workgroup/manager.py:133 (param); src/boxagent/workgroup/manager.py:682 (attr) |
-| `dc_channel` | 23 | 6 | src/boxagent/gateway.py:383 (attr); src/boxagent/gateway.py:1101 (attr); src/boxagent/gateway.py:1104 (attr) |
-| `syn_cfg` | 20 | 1 | src/boxagent/workgroup/manager.py:240 (attr) |
-| `cli` | 18 | 7 | src/boxagent/gateway.py:334 (attr); src/boxagent/gateway.py:1837 (loop); src/boxagent/scheduler/cli.py:0 (module) |
 | `ref` | 16 | 4 | src/boxagent/scheduler/engine.py:520 (loop); src/boxagent/scheduler/engine.py:527 (comp); src/boxagent/scheduler/engine.py:572 (attr) |
-| `wapp` | 16 | 1 | src/boxagent/gateway.py:733 (attr) |
 | `web_ch` | 14 | 4 | src/boxagent/gateway.py:431 (attr); src/boxagent/gateway.py:586 (attr); src/boxagent/workgroup/manager.py:316 (attr) |
 | `wh` | 14 | 4 | src/boxagent/channels/discord.py:155 (loop); src/boxagent/channels/discord.py:161 (attr); src/boxagent/channels/discord.py:175 (attr) |
 | `cat` | 14 | 3 | src/boxagent/channels/discord.py:97 (loop); src/boxagent/config.py:160 (loop); src/boxagent/config.py:186 (attr) |
@@ -45,11 +41,9 @@ Suspect identifiers (short or matching known-offender tokens). Each row:
 | `gap` | 5 | 2 | src/boxagent/scheduler/engine.py:341 (attr); src/boxagent/scheduler/engine.py:346 (attr) |
 | `hb` | 5 | 2 | src/boxagent/workgroup/manager.py:469 (attr); src/boxagent/workgroup/manager.py:943 (loop) |
 | `req` | 5 | 1 | src/boxagent/cluster/sat_client.py:227 (param) |
-| `tname` | 5 | 1 | src/boxagent/cluster/sat_client.py:144 (attr) |
 | `h` | 4 | 3 | src/boxagent/channels/discord.py:452 (param); src/boxagent/channels/telegram.py:207 (param); src/boxagent/sessions/cli.py:519 (attr) |
 | `dc` | 4 | 2 | src/boxagent/gateway.py:1103 (loop); src/boxagent/mcp_http.py:418 (loop) |
 | `via` | 4 | 2 | src/boxagent/gateway.py:1198 (attr); src/boxagent/mcp_http.py:473 (attr) |
-| `dc_user_id` | 4 | 1 | src/boxagent/gateway.py:472 (attr) |
 | `run` | 4 | 1 | src/boxagent/scheduler/cli.py:85 (attr) |
 | `pl` | 3 | 2 | src/boxagent/sessions/cli.py:457 (attr); src/boxagent/sessions/cli.py:477 (attr) |
 | `btn` | 3 | 1 | src/boxagent/channels/discord.py:352 (attr) |
@@ -70,7 +64,6 @@ Suspect identifiers (short or matching known-offender tokens). Each row:
 | `dc_key` | 2 | 1 | src/boxagent/gateway.py:231 (loop) |
 | `dm` | 2 | 1 | src/boxagent/channels/discord.py:286 (attr) |
 | `dt` | 2 | 1 | src/boxagent/sessions/cli.py:279 (attr) |
-| `dt_token` | 2 | 1 | src/boxagent/cluster/sat_client.py:170 (attr) |
 | `fh` | 2 | 1 | src/boxagent/scheduler/cli.py:397 (with) |
 | `rem` | 2 | 1 | src/boxagent/workgroup/heartbeat.py:41 (attr) |
 | `rid` | 2 | 1 | src/boxagent/router/commands.py:364 (attr) |
@@ -90,7 +83,8 @@ Suspect identifiers (short or matching known-offender tokens). Each row:
 | `e2` | 1 | 1 | src/boxagent/channels/telegram.py:363 (except) |
 | `opt` | 1 | 1 | src/boxagent/agent/acp_process.py:111 (comp) |
 | `kw` | 0 | 9 | src/boxagent/agent/acp_process.py:182 (param); src/boxagent/agent/acp_process.py:185 (param); src/boxagent/agent/acp_process.py:188 (param) |
+| `cli` | 0 | 2 | src/boxagent/scheduler/cli.py:0 (module); src/boxagent/sessions/cli.py:0 (module) |
 | `get` | 0 | 1 | src/boxagent/cluster/registry.py:138 (func) |
 | `sat_client` | 0 | 1 | src/boxagent/cluster/sat_client.py:0 (module) |
 
-Total suspect identifiers: **85**.
+Total suspect identifiers: **79**.

@@ -428,10 +428,10 @@ class Gateway:
 
         # --- Web channel (optional) ---
         if bot_cfg.web_enabled:
-            web_ch = WebChannel(bot_name=name)
-            web_ch.on_message = router.handle_message
-            self._web_channels[name] = web_ch
-            router._channels["web"] = web_ch
+            web_channel = WebChannel(bot_name=name)
+            web_channel.on_message = router.handle_message
+            self._web_channels[name] = web_channel
+            router._channels["web"] = web_channel
             logger.info("Bot '%s' web channel enabled", name)
 
         self._routers[name] = router
@@ -583,10 +583,10 @@ class Gateway:
             passthrough=True,
         )
 
-        web_ch = WebChannel(bot_name=name)
-        web_ch.on_message = router.handle_message
-        self._web_channels[name] = web_ch
-        router._channels["web"] = web_ch
+        web_channel = WebChannel(bot_name=name)
+        web_channel.on_message = router.handle_message
+        self._web_channels[name] = web_channel
+        router._channels["web"] = web_channel
 
         self._routers[name] = router
         logger.info("Bot 'raw' (passthrough, web-only) registered")

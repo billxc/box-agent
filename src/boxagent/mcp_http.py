@@ -362,12 +362,12 @@ def _register_admin_tools(mcp: FastMCP) -> None:
                 display_name=display_name,
             )
             if result.get("ok"):
-                ch_id = result.get("channel_id", 0)
+                channel_id = result.get("channel_id", 0)
                 msg = f"Created specialist '{name}'"
                 if template:
                     msg += f" from template '{template}'"
-                if ch_id:
-                    msg += f" with Discord channel (ID: {ch_id})"
+                if channel_id:
+                    msg += f" with Discord channel (ID: {channel_id})"
                 return msg
             return f"Error: {result.get('error', 'unknown error')}"
         except Exception as e:

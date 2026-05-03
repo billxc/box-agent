@@ -83,7 +83,10 @@ find-and-replace, batched per cluster (e.g. all `dc_*` together, all
 | 2026-05-03 | `syn_cfg` → `bot_config` (workgroup/manager.py, 20 refs) | 1ba97bb |
 | 2026-05-03 | `wapp` → `web_app` (gateway.py, 16 refs + 1 NOTE) | 1ba97bb |
 | 2026-05-03 | `dt_token` → `devtunnel_token` (cluster/sat_client.py, 2 refs) | 1ba97bb |
-| 2026-05-04 | `cli` → `cli_process` (gateway.py + workgroup/manager.py, 12 sites) | (this batch) |
-| 2026-05-04 | `dc_channel` → `discord_channel` (gateway.py + manager.py + mcp_http.py, 21 sites) | (this batch) |
-| 2026-05-04 | `dc_user_id` → `discord_user_id` (gateway.py, 4 sites) | (this batch) |
-| 2026-05-04 | `tname` → `effective_tunnel_name` (cluster/sat_client.py, 5 sites) | (this batch) |
+| 2026-05-04 | `cli` → `cli_process` (gateway.py + workgroup/manager.py, 12 sites) | 46e19cd |
+| 2026-05-04 | `dc_channel` → `discord_channel` (gateway.py + manager.py + mcp_http.py, 21 sites) | 46e19cd |
+| 2026-05-04 | `dc_user_id` → `discord_user_id` (gateway.py, 4 sites) | 46e19cd |
+| 2026-05-04 | `tname` → `effective_tunnel_name` (cluster/sat_client.py, 5 sites) | 46e19cd |
+| 2026-05-04 | `web_ch` → `web_channel` (gateway.py + workgroup/manager.py, 11 sites) | (this batch) |
+| 2026-05-04 | `hb` → `heartbeat` (workgroup/manager.py, 5 sites) | (this batch) |
+| 2026-05-04 | `ch_id` → `channel_id` (mcp_http.py, 3 sites — was discord channel id, not chat_id; corrected from earlier proposal) | (this batch) |

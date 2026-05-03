@@ -313,9 +313,9 @@ class WorkgroupManager:
         message bus. Falls back to NullWorkgroupChannelAdapter if no
         WebChannel exists yet.
         """
-        web_ch = self.web_channels.get(wg_cfg.name)
-        if web_ch is not None:
-            return WebWorkgroupAdapter(web_channel=web_ch)
+        web_channel = self.web_channels.get(wg_cfg.name)
+        if web_channel is not None:
+            return WebWorkgroupAdapter(web_channel=web_channel)
         return NullWorkgroupChannelAdapter()
 
     async def start_workgroup(self, wg_name: str, wg_cfg: WorkgroupConfig) -> None:
@@ -402,9 +402,9 @@ class WorkgroupManager:
         self.routers[wg_name] = admin_router
 
         # --- Web channel inbound wiring (the workgroup substrate). ---
-        web_ch = self.web_channels[wg_name]
-        web_ch.on_message = admin_router.handle_message
-        admin_router._channels["web"] = web_ch
+        web_channel = self.web_channels[wg_name]
+        web_channel.on_message = admin_router.handle_message
+        admin_router._channels["web"] = web_channel
         logger.info("Workgroup '%s': web channel enabled", wg_name)
 
         # --- Discord ingress (optional, no longer a workgroup substrate). ---
@@ -466,7 +466,7 @@ class WorkgroupManager:
             # publish is no longer wired (Discord-only path retired). The
             # HeartbeatManager keeps its discord_channel param for direct-test
             # use; we always pass None here.
-            hb = HeartbeatManager(
+            heartbeat = HeartbeatManager(
                 wg_name=wg_name,
                 admin_pool=admin_pool,
                 admin_router=admin_router,
@@ -482,8 +482,8 @@ class WorkgroupManager:
                 start_time=self.start_time,
                 get_running_tasks=lambda wg=wg_name: self._get_running_tasks(wg),
             )
-            hb.start()
-            self._heartbeats[wg_name] = hb
+            heartbeat.start()
+            self._heartbeats[wg_name] = heartbeat
 
     async def send_to_specialist(
         self, target: str, text: str, from_bot: str = "",
@@ -940,8 +940,8 @@ class WorkgroupManager:
 
     async def stop(self) -> None:
         """Stop all workgroup processes, pools, and heartbeats."""
-        for name, hb in self._heartbeats.items():
-            hb.stop()
+        for name, heartbeat in self._heartbeats.items():
+            heartbeat.stop()
         self._heartbeats.clear()
         for name, cli_process in self.procs.items():
             try:
