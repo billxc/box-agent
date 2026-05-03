@@ -92,4 +92,7 @@ find-and-replace, batched per cluster (e.g. all `dc_*` together, all
 | 2026-05-04 | `ch_id` → `channel_id` (mcp_http.py, 3 sites — was discord channel id, not chat_id; corrected from earlier proposal) | (this batch) |
 | 2026-05-04 | `cb` → `callback` (acp_process.py, 8 sites) | (this batch) |
 | 2026-05-04 | `ref` → `bot_ref` (scheduler/engine.py, 19 sites incl. docstring) | (this batch) |
-| 2026-05-04 | `cat` → `category` (discord.py + config.py, 14 sites) | (this batch) |
+| 2026-05-04 | `cat` → `category` (discord.py + config.py, 14 sites) | 43895bd |
+| 2026-05-04 | `sp_*` → `specialist_*` (workgroup/manager + mcp_http + 4 tests, 340 sites; +template `{sp_name}` placeholder; dropped `import subprocess as sp` alias) | ff0e209 |
+| 2026-05-04 | `wg_*` → `workgroup_*` (config + gateway + manager + 5 tests, 570 sites; +template `{wg_name}` placeholder; preserved wire `wg:` chat_id and `/api/wg/peer/recv`) | b3db003 |
+| 2026-05-04 | `cid` split (channel_id in discord.py, chat_id in gateway/heartbeat, 5 sites) | (this batch) |

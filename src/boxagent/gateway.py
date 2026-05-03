@@ -461,9 +461,9 @@ class Gateway:
         # Telegram: send asynchronously so the next bot's startup isn't blocked on this HTTPS call
         tg_chat_id = str(bot_cfg.telegram_allowed_users[0]) if bot_cfg.telegram_token and bot_cfg.telegram_allowed_users else ""
         if tg_chat_id and name in self._channels:
-            async def _send_tg_notify(ch=self._channels[name], cid=tg_chat_id, text=notify_text, bot_name=name):
+            async def _send_tg_notify(ch=self._channels[name], chat_id=tg_chat_id, text=notify_text, bot_name=name):
                 try:
-                    await ch.send_text(cid, text)
+                    await ch.send_text(chat_id, text)
                 except Exception as e:
                     logger.warning("Failed to send Telegram startup notification for '%s': %s", bot_name, e)
             asyncio.create_task(_send_tg_notify())

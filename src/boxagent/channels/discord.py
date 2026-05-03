@@ -274,11 +274,11 @@ class DiscordChannel:
 
     async def _resolve_channel(self, chat_id: str):
         """Resolve a chat_id to a messageable channel."""
-        cid = int(chat_id)
-        channel = self._client.get_channel(cid)
+        channel_id = int(chat_id)
+        channel = self._client.get_channel(channel_id)
         if channel is not None:
             return channel
-        return await self._client.fetch_channel(cid)
+        return await self._client.fetch_channel(channel_id)
 
     async def send_dm(self, user_id: str, text: str) -> str:
         """Send a direct message to a user by ID."""

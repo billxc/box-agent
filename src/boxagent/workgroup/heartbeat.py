@@ -303,11 +303,11 @@ class HeartbeatManager:
                 return ctx.session_id
 
         # Fall back to any existing session in the pool
-        for cid, ctx in pool._chat_contexts.items():
+        for chat_id, ctx in pool._chat_contexts.items():
             if ctx.session_id:
                 logger.info(
                     "Heartbeat '%s': found session via pool scan chat_id=%s: %s",
-                    self.workgroup_name, cid, ctx.session_id,
+                    self.workgroup_name, chat_id, ctx.session_id,
                 )
                 return ctx.session_id
 
