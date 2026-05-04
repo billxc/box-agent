@@ -462,10 +462,9 @@ class WorkgroupManager:
 
         # --- Start heartbeat (if configured) ---
         if workgroup_config.heartbeat_interval_seconds > 0:
-            # Heartbeat is admin context refresh; the visible "─── heartbeat ───"
-            # publish is no longer wired (Discord-only path retired). The
-            # HeartbeatManager keeps its discord_channel param for direct-test
-            # use; we always pass None here.
+            # Heartbeat is admin context refresh. It forks the admin's main
+            # chat (via main_chat_id_provider) and dispatches actionable
+            # decisions back to that same chat. Display goes to web only.
             storage = self.storage
             wg_name = workgroup_name
 
@@ -488,8 +487,6 @@ class WorkgroupManager:
                 ai_backend=workgroup_config.ai_backend,
                 model=workgroup_config.model,
                 yolo=workgroup_config.yolo,
-                discord_channel=None,
-                discord_chat_id="",
                 web_channel=self.web_channels.get(workgroup_name),
                 display_heartbeat=workgroup_config.display_heartbeat,
                 start_time=self.start_time,

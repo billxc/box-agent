@@ -365,34 +365,9 @@ class TestHeartbeatTick:
             await hb._tick()
             mock_fork.assert_not_called()
 
-    async def test_display_heartbeat_via_webhook(self, tmp_path):
-        (tmp_path / "HEARTBEAT.md").write_text("- Check tasks")
-
-        dc = AsyncMock()
-        wh = AsyncMock()
-        dc._ensure_webhook = AsyncMock(return_value=wh)
-
-        hb = HeartbeatManager(
-            workgroup_name="wg", admin_pool=MagicMock(), admin_router=AsyncMock(),
-            workspace=str(tmp_path), interval_seconds=60, yolo=True,
-            discord_channel=dc, discord_chat_id="12345",
-            display_heartbeat=True,
-        )
-
-        with patch.object(hb, "_fork_and_decide", new_callable=AsyncMock) as mock_fork:
-            mock_fork.return_value = ("NO_REPLY", {
-                "source_session_id": "", "fork_session_id": "",
-                "raw_response": "", "prompt": "",
-            })
-            await hb._tick()
-
-        # Webhook should be used for display
-        dc._ensure_webhook.assert_called()
-
-    async def test_display_heartbeat_via_web_channel_when_no_discord(self, tmp_path):
-        """In web-only mode (no Discord), heartbeat _send_display publishes to
-        the WebChannel under chat_id 'heartbeat:<workgroup_name>' so web UI users can
-        subscribe to inspect heartbeat history."""
+    async def test_display_heartbeat_via_web_channel(self, tmp_path):
+        """Heartbeat display publishes to WebChannel under
+        chat_id 'heartbeat:<workgroup_name>'."""
         (tmp_path / "HEARTBEAT.md").write_text("- Check tasks")
 
         wc = AsyncMock()
@@ -401,7 +376,6 @@ class TestHeartbeatTick:
         hb = HeartbeatManager(
             workgroup_name="my-wg", admin_pool=MagicMock(), admin_router=AsyncMock(),
             workspace=str(tmp_path), interval_seconds=60, yolo=True,
-            discord_channel=None, discord_chat_id="",
             web_channel=wc,
             display_heartbeat=True,
         )
@@ -413,28 +387,60 @@ class TestHeartbeatTick:
             })
             await hb._tick()
 
-        # Web channel publishes to the synthetic heartbeat:<workgroup> chat_id.
         wc.send_text.assert_awaited()
         first = wc.send_text.await_args_list[0]
         assert first.args[0] == "heartbeat:my-wg"
 
-    async def test_find_fork_session_from_pool(self, tmp_path):
+    async def test_find_fork_session_via_main_chat_provider(self, tmp_path):
+        """Fork source = pool ctx for the chat_id returned by main_chat_id_provider."""
         from boxagent.sessions.pool import SessionPool, ChatContext
 
         pool = MagicMock(spec=SessionPool)
-        ctx = ChatContext(session_id="sess-123")
+        ctx = ChatContext(session_id="sess-main")
         pool._get_ctx = MagicMock(return_value=ctx)
-        pool._chat_contexts = {"12345": ctx}
+        pool._chat_contexts = {}
 
         hb = HeartbeatManager(
             workgroup_name="wg", admin_pool=pool, admin_router=AsyncMock(),
             workspace=str(tmp_path), interval_seconds=60,
-            discord_chat_id="12345",
+            main_chat_id_provider=lambda: "main-wg-1",
         )
 
-        sid = hb._find_fork_session_id()
-        assert sid == "sess-123"
-        pool._get_ctx.assert_called_once_with("12345")
+        assert hb._find_fork_session_id() == "sess-main"
+        pool._get_ctx.assert_called_once_with("main-wg-1")
+
+    async def test_find_fork_session_no_provider_does_not_scan_pool(self, tmp_path):
+        """No provider → return None without scanning pool (no silent fallback)."""
+        from boxagent.sessions.pool import SessionPool, ChatContext
+
+        pool = MagicMock(spec=SessionPool)
+        pool._get_ctx = MagicMock(return_value=ChatContext(session_id="should-not-be-used"))
+        pool._chat_contexts = {"some-chat": ChatContext(session_id="should-not-be-used")}
+
+        hb = HeartbeatManager(
+            workgroup_name="wg", admin_pool=pool, admin_router=AsyncMock(),
+            workspace=str(tmp_path), interval_seconds=60,
+        )
+
+        assert hb._find_fork_session_id() is None
+        pool._get_ctx.assert_not_called()
+
+    async def test_find_fork_session_main_chat_has_no_session(self, tmp_path):
+        """Provider returns chat_id but ctx has no session yet → None, no pool scan."""
+        from boxagent.sessions.pool import SessionPool, ChatContext
+
+        pool = MagicMock(spec=SessionPool)
+        pool._get_ctx = MagicMock(return_value=ChatContext(session_id=""))
+        pool._chat_contexts = {"other": ChatContext(session_id="leak")}
+
+        hb = HeartbeatManager(
+            workgroup_name="wg", admin_pool=pool, admin_router=AsyncMock(),
+            workspace=str(tmp_path), interval_seconds=60,
+            main_chat_id_provider=lambda: "main-wg-1",
+        )
+
+        assert hb._find_fork_session_id() is None
+        pool._get_ctx.assert_called_once_with("main-wg-1")
 
     async def test_find_fork_session_no_pool(self, tmp_path):
         hb = HeartbeatManager(

@@ -102,9 +102,7 @@ class HeartbeatManager:
     ai_backend: str = "claude-cli"
     model: str = ""
     yolo: bool = False
-    discord_channel: object | None = None  # DiscordChannel
-    discord_chat_id: str = ""  # legacy Discord text channel id (display path only)
-    web_channel: object | None = None  # WebChannel — published to as fallback when Discord absent
+    web_channel: object | None = None  # WebChannel — display target for heartbeat banner
     display_heartbeat: bool = False
     start_time: float = 0.0
     get_running_tasks: object = None  # Callable[[], list[dict]]
@@ -123,8 +121,8 @@ class HeartbeatManager:
         self._running = True
         self._task = asyncio.ensure_future(self._loop())
         logger.info(
-            "Heartbeat started for workgroup '%s' (every %ds, chat_id=%s)",
-            self.workgroup_name, self.interval_seconds, self.discord_chat_id,
+            "Heartbeat started for workgroup '%s' (every %ds)",
+            self.workgroup_name, self.interval_seconds,
         )
 
     def stop(self) -> None:
@@ -137,13 +135,6 @@ class HeartbeatManager:
 
     async def _loop(self) -> None:
         """Main loop: tick then sleep."""
-        # Wait for Discord to be ready before first tick
-        if self.discord_channel:
-            client = getattr(self.discord_channel, "_client", None)
-            if client:
-                await client.wait_until_ready()
-                logger.info("Heartbeat '%s': Discord ready, starting ticks", self.workgroup_name)
-
         while self._running:
             try:
                 await self._tick()
@@ -154,39 +145,15 @@ class HeartbeatManager:
                 break
 
     async def _send_display(self, text: str) -> None:
-        """Send a heartbeat display message.
-
-        Discord path (legacy): _ensure_webhook + send so the message is
-        filtered out by _handle_incoming and never reaches the admin router.
-        Falls back to send_text for DM channels.
-
-        Web path: publish to a synthetic ``heartbeat:<workgroup_name>`` chat_id on
-        the host's WebChannel. Web UI users can open this chat to inspect
-        heartbeat history.
-        """
-        if self.discord_channel:
-            try:
-                wh = await self.discord_channel._ensure_webhook("Heartbeat", self.discord_chat_id)
-                if wh:
-                    from boxagent.channels.splitter import split_message
-                    for chunk in split_message(text, 2000):
-                        await wh.send(chunk, wait=True)
-                    return
-            except Exception:
-                pass
-            try:
-                await self.discord_channel.send_text(
-                    self.discord_chat_id, f"───── heartbeat ─────\n{text}\n─────────────────────",
-                )
-                return
-            except Exception as e:
-                logger.warning("Heartbeat '%s': failed to send display: %s", self.workgroup_name, e)
-                return
-        if self.web_channel is not None:
-            try:
-                await self.web_channel.send_text(f"heartbeat:{self.workgroup_name}", text)
-            except Exception as e:
-                logger.warning("Heartbeat '%s': web display failed: %s", self.workgroup_name, e)
+        """Publish heartbeat banner to the synthetic ``heartbeat:<workgroup_name>``
+        chat_id on the host's WebChannel. Web UI users can open this chat to
+        inspect heartbeat history."""
+        if self.web_channel is None:
+            return
+        try:
+            await self.web_channel.send_text(f"heartbeat:{self.workgroup_name}", text)
+        except Exception as e:
+            logger.warning("Heartbeat '%s': web display failed: %s", self.workgroup_name, e)
 
     async def _tick(self) -> None:
         """Single heartbeat cycle."""
@@ -204,7 +171,7 @@ class HeartbeatManager:
 
         try:
             # Display heartbeat prompt (if configured)
-            if self.display_heartbeat and ((self.discord_channel and self.discord_chat_id) or self.web_channel):
+            if self.display_heartbeat and self.web_channel:
                 now = datetime.datetime.now().strftime("%H:%M")
                 await self._send_display(
                     f"**[Heartbeat {now}]**\n```\n{content.strip()}\n```",
@@ -218,7 +185,7 @@ class HeartbeatManager:
 
             if is_silent_reply(decision):
                 logger.debug("Heartbeat silent reply from '%s'", self.workgroup_name)
-                if self.display_heartbeat and ((self.discord_channel and self.discord_chat_id) or self.web_channel):
+                if self.display_heartbeat and self.web_channel:
                     await self._send_display("_Heartbeat: nothing to do._")
                 return
 
@@ -227,7 +194,7 @@ class HeartbeatManager:
                 "Heartbeat action for '%s': %s",
                 self.workgroup_name, decision[:200],
             )
-            if self.display_heartbeat and ((self.discord_channel and self.discord_chat_id) or self.web_channel):
+            if self.display_heartbeat and self.web_channel:
                 preview = decision[:500] + "..." if len(decision) > 500 else decision
                 await self._send_display(f"**[Heartbeat decision]**\n{preview}")
 
@@ -238,7 +205,7 @@ class HeartbeatManager:
                 except Exception as e:
                     logger.warning("Heartbeat '%s': main_chat_id_provider failed: %s", self.workgroup_name, e)
             if not chat_id:
-                chat_id = self.discord_chat_id or f"heartbeat:{self.workgroup_name}"
+                chat_id = f"heartbeat:{self.workgroup_name}"
             await self.admin_router.dispatch_sync(
                 decision, chat_id, from_bot="heartbeat",
             )
@@ -297,32 +264,45 @@ class HeartbeatManager:
             await proc.stop()
 
     def _find_fork_session_id(self) -> str | None:
-        """Find a session_id from the admin pool to fork from."""
+        """Find admin's main-session id to fork from.
+
+        Source of truth = ``main_chat_id_provider()`` (the workgroup's
+        persisted main chat). No silent pool scan: if the provider is
+        missing or the resolved chat has no session, return None and warn.
+        """
         pool = self.admin_pool
         if pool is None:
             logger.warning("Heartbeat '%s': admin_pool is None", self.workgroup_name)
             return None
 
-        # Trigger lazy load from storage for the heartbeat chat_id
-        if self.discord_chat_id:
-            ctx = pool._get_ctx(self.discord_chat_id)
-            if ctx.session_id:
-                logger.info(
-                    "Heartbeat '%s': found session via chat_id %s: %s",
-                    self.workgroup_name, self.discord_chat_id, ctx.session_id,
+        chat_id = ""
+        if callable(self.main_chat_id_provider):
+            try:
+                chat_id = self.main_chat_id_provider() or ""
+            except Exception as e:
+                logger.warning(
+                    "Heartbeat '%s': main_chat_id_provider failed: %s",
+                    self.workgroup_name, e,
                 )
-                return ctx.session_id
+        if not chat_id:
+            logger.warning(
+                "Heartbeat '%s': no main_chat_id available — fork will start a fresh session",
+                self.workgroup_name,
+            )
+            return None
 
-        # Fall back to any existing session in the pool
-        for chat_id, ctx in pool._chat_contexts.items():
-            if ctx.session_id:
-                logger.info(
-                    "Heartbeat '%s': found session via pool scan chat_id=%s: %s",
-                    self.workgroup_name, chat_id, ctx.session_id,
-                )
-                return ctx.session_id
+        ctx = pool._get_ctx(chat_id)
+        if ctx.session_id:
+            logger.info(
+                "Heartbeat '%s': fork source via main chat_id=%s session=%s",
+                self.workgroup_name, chat_id, ctx.session_id,
+            )
+            return ctx.session_id
 
-        logger.info("Heartbeat '%s': no session found in pool", self.workgroup_name)
+        logger.warning(
+            "Heartbeat '%s': main chat_id=%s has no session yet — fork will start fresh",
+            self.workgroup_name, chat_id,
+        )
         return None
 
     def _write_heartbeat_log(self, decision: str, meta: dict) -> None:
