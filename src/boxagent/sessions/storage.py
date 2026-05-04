@@ -196,11 +196,23 @@ class Storage:
     def set_main_chat_id(self, bot_id: str, chat_id: str) -> None:
         with self._main_lock:
             data = dict(self._load_main_sessions())  # copy to avoid in-place mutation of cache
+            old = data.get(bot_id, "")
+            if old == chat_id:
+                return  # no-op, don't churn the file
             if chat_id:
                 data[bot_id] = chat_id
             else:
                 data.pop(bot_id, None)
             self._save_main_sessions(data)
+            # Caller stack helps diagnose "main keeps flipping" — without it
+            # we can't tell whether heartbeat, peer recv, or webui set it.
+            import traceback
+            stack = traceback.extract_stack(limit=6)
+            caller = " > ".join(f"{Path(f.filename).name}:{f.lineno}" for f in stack[-5:-1])
+            logger.warning(
+                "main_chat_id changed bot=%s old=%s new=%s caller=%s",
+                bot_id, old or "(empty)", chat_id or "(empty)", caller,
+            )
 
     def _session_history_path(self) -> Path:
         self._ensure_dir()
