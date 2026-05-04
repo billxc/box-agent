@@ -85,7 +85,7 @@
   }
 
   function platformIcon(p) {
-    return ({ telegram: "✈︎", discord: "◈", web: "◉", heartbeat: "♥", claude: "✦", other: "•", unknown: "•" })[p] || "•";
+    return ({ telegram: "✈︎", discord: "◈", web: "◉", heartbeat: "♥", main: "★", claude: "✦", other: "•", unknown: "•" })[p] || "•";
   }
 
   function setConn(state_) {
@@ -173,6 +173,7 @@
       merged.set(s.chat_id, {
         chat_id: s.chat_id,
         platform: s.platform || "unknown",
+        is_main: !!s.is_main,
         title: (local[s.chat_id] && local[s.chat_id].title) || defaultTitle(s),
         preview: s.preview || "",
         ts: (s.last_ts ? s.last_ts * 1000 : 0) || (local[s.chat_id] && local[s.chat_id].ts) || 0,
@@ -195,7 +196,8 @@
   }
 
   function defaultTitle(s) {
-    if (s.platform === "heartbeat") {
+    if (s.is_main) return `★ Main session`;
+    if (s.platform === "heartbeat" || s.platform === "main") {
       const wg = s.chat_id.startsWith("heartbeat:") ? s.chat_id.slice("heartbeat:".length) : "admin";
       return `♥ Heartbeat · ${wg}`;
     }
@@ -221,13 +223,41 @@
       if (meta.chat_id === state.chatId) li.classList.add("active");
       const title = document.createElement("div");
       title.className = "sess-title";
-      title.innerHTML = `<span class="plat" title="${meta.platform}">${platformIcon(meta.platform)}</span> ${escapeHtml(meta.title)}`;
+      const mainBadge = meta.is_main ? `<span class="main-badge" title="Main session">★</span> ` : "";
+      title.innerHTML = `${mainBadge}<span class="plat" title="${meta.platform}">${platformIcon(meta.platform)}</span> ${escapeHtml(meta.title)}`;
       const preview = document.createElement("div");
       preview.className = "sess-preview";
       preview.textContent = meta.preview || "(no messages yet)";
+      const actions = document.createElement("div");
+      actions.className = "sess-actions";
+      if (!meta.is_main) {
+        const setMain = document.createElement("a");
+        setMain.href = "#";
+        setMain.className = "sess-action";
+        setMain.textContent = "set as main";
+        setMain.title = "Heartbeat ticks and incoming peer messages will route into this session";
+        setMain.onclick = (e) => { e.stopPropagation(); e.preventDefault(); setMainSession(meta.chat_id); };
+        actions.appendChild(setMain);
+      }
       li.appendChild(title); li.appendChild(preview);
+      if (actions.children.length) li.appendChild(actions);
       li.onclick = () => { switchChat(meta.chat_id); closeSidebar(); };
       sessionList.appendChild(li);
+    }
+  }
+
+  async function setMainSession(chatId) {
+    try {
+      const r = await api("sessions/set_main", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bot: state.bot, machine: state.botMachine, chat_id: chatId }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      await loadServerSessions();
+      refreshSessionList();
+    } catch (e) {
+      alert(`Failed to set main session: ${e.message || e}`);
     }
   }
 

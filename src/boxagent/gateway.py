@@ -735,6 +735,7 @@ class Gateway:
         web_app.router.add_get("/api/bots", self._handle_web_bots)
         web_app.router.add_get("/api/machines", self._handle_web_machines)
         web_app.router.add_get("/api/sessions", self._handle_web_sessions)
+        web_app.router.add_post("/api/sessions/set_main", self._handle_set_main_session)
         web_app.router.add_get("/api/history", self._handle_web_history)
         web_app.router.add_post("/api/send", self._handle_web_send)
         web_app.router.add_get("/api/stream", self._handle_web_stream)
@@ -1292,12 +1293,28 @@ class Gateway:
         from boxagent.channels.base import IncomingMessage
         msg = IncomingMessage(
             channel="internal",
-            chat_id=f"heartbeat:{target}",
+            chat_id=self._get_or_create_main_chat_id(target),
             user_id=sender,
             text=envelope,
             trusted=True,
         )
         await admin_router.handle_message(msg)
+
+    def _get_or_create_main_chat_id(self, bot: str) -> str:
+        """Return the persisted main chat_id for a bot, minting one if unset.
+
+        Used for heartbeat ticks and incoming peer messages so they always
+        land in the admin's designated main session. Web UI can override
+        via /api/sessions/set_main.
+        """
+        if self._storage is None:
+            return f"heartbeat:{bot}"
+        cid = self._storage.get_main_chat_id(bot)
+        if cid:
+            return cid
+        cid = f"heartbeat:{bot}-{int(time.time())}"
+        self._storage.set_main_chat_id(bot, cid)
+        return cid
 
     async def _handle_wg_peer_recv(self, request: web.Request) -> web.Response:
         """Handle POST /api/wg/peer/recv — receive a peer message from another node.
@@ -1451,21 +1468,17 @@ class Gateway:
 
         sessions = self._storage.list_chat_sessions(bot)
 
-        # Workgroup heartbeat: admin uses admin_discord_channel as the chat_id
-        # for periodic ticks, so flag that one specifically.
-        workgroup = self.config.workgroups.get(bot)
-        heartbeat_chat_id = ""
-        if workgroup is not None:
-            if workgroup.heartbeat_interval_seconds and workgroup.admin_discord_channel:
-                heartbeat_chat_id = str(workgroup.admin_discord_channel)
-            elif workgroup.heartbeat_interval_seconds:
-                heartbeat_chat_id = f"heartbeat:{bot}"
+        # The "main" chat_id is persisted per-bot in main_sessions.yaml and
+        # set by either the web UI or first-time heartbeat/peer arrival.
+        # Old admin_discord_channel-based heartbeat tagging has been retired.
+        main_chat_id = self._storage.get_main_chat_id(bot)
 
         for s in sessions:
             sid = s.get("session_id") or ""
             s["platform"] = _infer_platform(s["chat_id"])
-            if heartbeat_chat_id and s["chat_id"] == heartbeat_chat_id:
-                s["platform"] = "heartbeat"
+            s["is_main"] = bool(main_chat_id and s["chat_id"] == main_chat_id)
+            if s["is_main"]:
+                s["platform"] = "main"
             s["preview"] = ""
             s["last_ts"] = 0
             if not sid:
@@ -1505,6 +1518,32 @@ class Gateway:
 
         sessions.sort(key=lambda x: x.get("last_ts") or 0, reverse=True)
         return web.json_response({"ok": True, "sessions": sessions})
+
+    async def _handle_set_main_session(self, request: web.Request) -> web.Response:
+        """POST /api/sessions/set_main {bot, machine, chat_id} — pin main chat_id.
+
+        Empty chat_id clears the pin. Remote machines proxy to the owning sat.
+        """
+        if not self._web_authorized(request):
+            return self._web_unauthorized()
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "invalid json"}, status=400)
+        bot = str(data.get("bot") or "").strip()
+        machine = str(data.get("machine") or "").strip()
+        chat_id = str(data.get("chat_id") or "").strip()
+        if not bot or not machine:
+            return web.json_response({"ok": False, "error": "missing bot/machine"}, status=400)
+        if machine != self._local_machine_id():
+            sess = self._remote_session_for(machine, bot)
+            if sess is None:
+                return web.json_response({"ok": False, "error": "unknown machine/bot"}, status=404)
+            return await self._proxy_to_remote(sess, "POST", "/api/sessions/set_main", request, body=data)
+        if self._storage is None:
+            return web.json_response({"ok": False, "error": "no storage"}, status=500)
+        self._storage.set_main_chat_id(bot, chat_id)
+        return web.json_response({"ok": True, "main_chat_id": chat_id})
 
     def _local_machine_id(self) -> str:
         return self.config.machine_id or self.config.node_id or "local"

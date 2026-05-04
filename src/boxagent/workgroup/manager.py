@@ -466,6 +466,19 @@ class WorkgroupManager:
             # publish is no longer wired (Discord-only path retired). The
             # HeartbeatManager keeps its discord_channel param for direct-test
             # use; we always pass None here.
+            storage = self.storage
+            wg_name = workgroup_name
+
+            def _main_chat_id_provider(_storage=storage, _name=wg_name):
+                if _storage is None:
+                    return f"heartbeat:{_name}"
+                cid = _storage.get_main_chat_id(_name)
+                if cid:
+                    return cid
+                cid = f"heartbeat:{_name}-{int(time.time())}"
+                _storage.set_main_chat_id(_name, cid)
+                return cid
+
             heartbeat = HeartbeatManager(
                 workgroup_name=workgroup_name,
                 admin_pool=admin_pool,
@@ -481,6 +494,7 @@ class WorkgroupManager:
                 display_heartbeat=workgroup_config.display_heartbeat,
                 start_time=self.start_time,
                 get_running_tasks=lambda workgroup=workgroup_name: self._get_running_tasks(workgroup),
+                main_chat_id_provider=_main_chat_id_provider,
             )
             heartbeat.start()
             self._heartbeats[workgroup_name] = heartbeat

@@ -103,11 +103,15 @@ class HeartbeatManager:
     model: str = ""
     yolo: bool = False
     discord_channel: object | None = None  # DiscordChannel
-    discord_chat_id: str = ""  # actual text channel ID (not category)
+    discord_chat_id: str = ""  # legacy Discord text channel id (display path only)
     web_channel: object | None = None  # WebChannel — published to as fallback when Discord absent
     display_heartbeat: bool = False
     start_time: float = 0.0
     get_running_tasks: object = None  # Callable[[], list[dict]]
+    # Provider for the dispatch chat_id (the workgroup's "main" session).
+    # Manager wires this to a closure over Storage.get/set_main_chat_id; the
+    # provider mints + persists a fresh `heartbeat:<wg>-<ts>` if none set.
+    main_chat_id_provider: object = None  # Callable[[], str]
     _running: bool = field(default=False, repr=False)
     _is_ticking: bool = field(default=False, repr=False)
     _task: asyncio.Task | None = field(default=None, repr=False)
@@ -227,7 +231,14 @@ class HeartbeatManager:
                 preview = decision[:500] + "..." if len(decision) > 500 else decision
                 await self._send_display(f"**[Heartbeat decision]**\n{preview}")
 
-            chat_id = self.discord_chat_id or f"heartbeat:{self.workgroup_name}"
+            chat_id = ""
+            if callable(self.main_chat_id_provider):
+                try:
+                    chat_id = self.main_chat_id_provider() or ""
+                except Exception as e:
+                    logger.warning("Heartbeat '%s': main_chat_id_provider failed: %s", self.workgroup_name, e)
+            if not chat_id:
+                chat_id = self.discord_chat_id or f"heartbeat:{self.workgroup_name}"
             await self.admin_router.dispatch_sync(
                 decision, chat_id, from_bot="heartbeat",
             )

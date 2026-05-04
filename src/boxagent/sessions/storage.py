@@ -141,6 +141,39 @@ class Storage:
         sessions.pop(self._session_key(bot_id, chat_id), None)
         self._save_sessions(sessions)
 
+    # --- Main session per bot/workgroup ---
+    # Persists which chat_id is the bot's "main" session. Heartbeat ticks
+    # and incoming peer messages dispatch into this chat_id so they share
+    # the admin's primary conversation. Web UI can update it; if unset,
+    # the first heartbeat/peer event mints a new chat_id and pins it here.
+
+    def _main_sessions_path(self) -> Path:
+        self._ensure_dir()
+        return self._local_dir / "main_sessions.yaml"
+
+    def _load_main_sessions(self) -> dict:
+        path = self._main_sessions_path()
+        if not path.exists():
+            return {}
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        return data or {}
+
+    def _save_main_sessions(self, data: dict) -> None:
+        with open(self._main_sessions_path(), "w") as f:
+            yaml.safe_dump(data, f)
+
+    def get_main_chat_id(self, bot_id: str) -> str:
+        return str(self._load_main_sessions().get(bot_id) or "")
+
+    def set_main_chat_id(self, bot_id: str, chat_id: str) -> None:
+        data = self._load_main_sessions()
+        if chat_id:
+            data[bot_id] = chat_id
+        else:
+            data.pop(bot_id, None)
+        self._save_main_sessions(data)
+
     def _session_history_path(self) -> Path:
         self._ensure_dir()
         return self._local_dir / "session_history.yaml"
