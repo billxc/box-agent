@@ -145,12 +145,15 @@ class SatelliteClient:
         except Exception as e:
             logger.debug("sat: bots_update failed: %s", e)
 
-    async def fetch_host_json(self, path: str, query: dict | None = None) -> dict:
-        """Issue a one-shot HTTPS GET against the host's web app and return JSON.
+    async def fetch_host_json(
+        self, path: str, query: dict | None = None,
+        method: str = "GET", body: dict | None = None,
+    ) -> dict:
+        """Issue a one-shot HTTPS request against the host's web app and return JSON.
 
         Uses the same devtunnel auth flow as the WS connection. Lets sat-side
-        endpoints (e.g. /api/version?cluster=1) reach back through the host
-        without inventing a reverse-RPC channel.
+        endpoints (e.g. /api/version?cluster=1, /api/peer/send) reach back
+        through the host without inventing a reverse-RPC channel.
         """
         if self._session is None:
             self._session = ClientSession()
@@ -166,7 +169,10 @@ class SatelliteClient:
         if self.host_token:
             headers["Authorization"] = f"Bearer {self.host_token}"
         url = f"{base}{path}"
-        async with self._session.get(url, params=query or {}, headers=headers) as resp:
+        kwargs: dict = {"params": query or {}, "headers": headers}
+        if body is not None:
+            kwargs["json"] = body
+        async with self._session.request(method, url, **kwargs) as resp:
             try:
                 return await resp.json(content_type=None)
             except Exception:

@@ -1243,6 +1243,24 @@ class Gateway:
                     "ok": False, "via": "rpc", "machine": machine_id,
                     "error": f"sat returned status={status}: {err or body}",
                 }
+        # Sat mode: not host, can't see registry — forward to host's
+        # /api/peer/send and let host resolve. Without this, sats can only
+        # peer-message workgroups they host themselves.
+        if self._sat_client is not None:
+            try:
+                result = await self._sat_client.fetch_host_json(
+                    "/api/peer/send", method="POST",
+                    body={"target": target, "from": sender, "message": message},
+                )
+            except Exception as e:
+                logger.error("Peer fwd to host failed: %s", e)
+                return {"ok": False, "via": "host-fwd", "error": f"host fwd failed: {e}"}
+            if result.get("ok"):
+                return {"ok": True, "via": "host-fwd", "machine": result.get("machine", "")}
+            return {
+                "ok": False, "via": "host-fwd",
+                "error": result.get("error") or "host returned not-ok",
+            }
         return {
             "ok": False, "via": "none",
             "error": f"no workgroup '{target}' found locally or in cluster",
