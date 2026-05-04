@@ -745,6 +745,10 @@ class Gateway:
         # Cluster RPC inbound: sat_client forwards peer-recv RPCs to the web
         # UI port (see _start_http for why this lives here, not on `app`).
         web_app.router.add_post("/api/wg/peer/recv", self._handle_wg_peer_recv)
+        # /api/peer/send also exposed on web_app so sats can forward
+        # cross-node send_to_peer calls back to host via devtunnel
+        # (sat_client.fetch_host_json hits web_app, not app).
+        web_app.router.add_post("/api/peer/send", self._handle_peer_send)
         # Hub-and-spoke: WS endpoint for satellite nodes
         if self.config.satellite_token:
             self._sat_registry = SatelliteRegistry(
