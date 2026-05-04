@@ -23,6 +23,11 @@ class Storage:
         if codex_sessions_dir is None:
             codex_sessions_dir = Path.home() / ".codex" / "sessions"
         self._codex_sessions_dir = Path(codex_sessions_dir).expanduser()
+        # main_sessions cache + lock — concurrent heartbeat/peer/webui calls
+        # would otherwise race on the yaml file and lose the pinned chat_id.
+        import threading
+        self._main_lock = threading.Lock()
+        self._main_cache: dict | None = None
 
     @property
     def local_dir(self) -> Path:
@@ -146,33 +151,56 @@ class Storage:
     # and incoming peer messages dispatch into this chat_id so they share
     # the admin's primary conversation. Web UI can update it; if unset,
     # the first heartbeat/peer event mints a new chat_id and pins it here.
+    #
+    # Cache + atomic-write because heartbeat / peer recv / webui set_main
+    # can all hit set_main_chat_id concurrently. Without atomic writes a
+    # mid-write read sees a truncated file → safe_load returns None →
+    # callers think "no main pinned" and mint a fresh `main-<bot>-<ts>`,
+    # so the main session appears to flap on every event.
 
     def _main_sessions_path(self) -> Path:
         self._ensure_dir()
         return self._local_dir / "main_sessions.yaml"
 
     def _load_main_sessions(self) -> dict:
+        if self._main_cache is not None:
+            return self._main_cache
         path = self._main_sessions_path()
         if not path.exists():
-            return {}
-        with open(path) as f:
-            data = yaml.safe_load(f)
-        return data or {}
+            self._main_cache = {}
+            return self._main_cache
+        try:
+            with open(path) as f:
+                data = yaml.safe_load(f)
+            self._main_cache = data or {}
+        except Exception as e:
+            logger.warning("main_sessions.yaml read failed (%s); treating as empty", e)
+            self._main_cache = {}
+        return self._main_cache
 
     def _save_main_sessions(self, data: dict) -> None:
-        with open(self._main_sessions_path(), "w") as f:
+        # Atomic write: dump to temp file, then rename. POSIX rename is
+        # atomic so concurrent readers either see the old or new file,
+        # never a half-written one.
+        path = self._main_sessions_path()
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        with open(tmp, "w") as f:
             yaml.safe_dump(data, f)
+        tmp.replace(path)
+        self._main_cache = data
 
     def get_main_chat_id(self, bot_id: str) -> str:
-        return str(self._load_main_sessions().get(bot_id) or "")
+        with self._main_lock:
+            return str(self._load_main_sessions().get(bot_id) or "")
 
     def set_main_chat_id(self, bot_id: str, chat_id: str) -> None:
-        data = self._load_main_sessions()
-        if chat_id:
-            data[bot_id] = chat_id
-        else:
-            data.pop(bot_id, None)
-        self._save_main_sessions(data)
+        with self._main_lock:
+            data = dict(self._load_main_sessions())  # copy to avoid in-place mutation of cache
+            if chat_id:
+                data[bot_id] = chat_id
+            else:
+                data.pop(bot_id, None)
+            self._save_main_sessions(data)
 
     def _session_history_path(self) -> Path:
         self._ensure_dir()
