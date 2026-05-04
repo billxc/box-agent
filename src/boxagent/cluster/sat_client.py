@@ -145,6 +145,33 @@ class SatelliteClient:
         except Exception as e:
             logger.debug("sat: bots_update failed: %s", e)
 
+    async def fetch_host_json(self, path: str, query: dict | None = None) -> dict:
+        """Issue a one-shot HTTPS GET against the host's web app and return JSON.
+
+        Uses the same devtunnel auth flow as the WS connection. Lets sat-side
+        endpoints (e.g. /api/version?cluster=1) reach back through the host
+        without inventing a reverse-RPC channel.
+        """
+        if self._session is None:
+            self._session = ClientSession()
+        effective_tunnel_name = self.tunnel_name or _tunnel_name_from_url(self.host_url)
+        if not effective_tunnel_name:
+            raise RuntimeError("sat: cannot derive tunnel name for fetch_host_json")
+        if self.host_url:
+            base = self.host_url.rstrip("/")
+        else:
+            base = (await _devtunnel_resolve_url(effective_tunnel_name, port=self.local_web_port)).rstrip("/")
+        devtunnel_token = await _devtunnel_connect_token(effective_tunnel_name)
+        headers = {"X-Tunnel-Authorization": f"tunnel {devtunnel_token}"}
+        if self.host_token:
+            headers["Authorization"] = f"Bearer {self.host_token}"
+        url = f"{base}{path}"
+        async with self._session.get(url, params=query or {}, headers=headers) as resp:
+            try:
+                return await resp.json(content_type=None)
+            except Exception:
+                return {"ok": False, "error": f"non-json response status={resp.status}"}
+
     async def _run_forever(self) -> None:
         effective_tunnel_name = self.tunnel_name or _tunnel_name_from_url(self.host_url)
         if not effective_tunnel_name:

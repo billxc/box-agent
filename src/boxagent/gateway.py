@@ -1561,16 +1561,25 @@ class Gateway:
         }
         if request.query.get("cluster") not in ("1", "true", "yes"):
             return web.json_response({"ok": True, **local})
-        if self._sat_registry is None:
-            return web.json_response({"ok": True, "self": local, "sats": {}})
-        sats: dict[str, object] = {}
-        for machine_id, sess in list(self._sat_registry.sessions.items()):
+        # Host mode: ask each connected sat via cluster RPC.
+        if self._sat_registry is not None:
+            sats: dict[str, object] = {}
+            for machine_id, sess in list(self._sat_registry.sessions.items()):
+                try:
+                    result = await sess.call("GET", "/api/version", timeout=5.0)
+                    sats[machine_id] = result.get("body") or {"error": "no body"}
+                except Exception as e:
+                    sats[machine_id] = {"error": str(e)}
+            return web.json_response({"ok": True, "self": local, "sats": sats})
+        # Sat mode: ask host via tunnel HTTP, merge.
+        if self._sat_client is not None:
             try:
-                result = await sess.call("GET", "/api/version", timeout=5.0)
-                sats[machine_id] = result.get("body") or {"error": "no body"}
+                host_result = await self._sat_client.fetch_host_json("/api/version", {"cluster": "1"})
             except Exception as e:
-                sats[machine_id] = {"error": str(e)}
-        return web.json_response({"ok": True, "self": local, "sats": sats})
+                host_result = {"error": str(e)}
+            return web.json_response({"ok": True, "self": local, "host": host_result})
+        # Standalone (no cluster): same shape, empty.
+        return web.json_response({"ok": True, "self": local, "sats": {}})
 
     def _local_machine_id(self) -> str:
         return self.config.machine_id or self.config.node_id or "local"
