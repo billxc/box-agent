@@ -735,6 +735,8 @@ class Gateway:
         web_app.router.add_get("/api/sessions", self._handle_web_sessions)
         web_app.router.add_post("/api/sessions/set_main", self._handle_set_main_session)
         web_app.router.add_get("/api/version", self._handle_version)
+        web_app.router.add_post("/api/admin/restart", self._handle_admin_restart)
+        web_app.router.add_post("/api/admin/cluster_restart", self._handle_admin_cluster_restart)
         web_app.router.add_get("/api/history", self._handle_web_history)
         web_app.router.add_post("/api/send", self._handle_web_send)
         web_app.router.add_get("/api/stream", self._handle_web_stream)
@@ -1602,6 +1604,61 @@ class Gateway:
             return web.json_response({"ok": True, "self": local, "host": host_result})
         # Standalone (no cluster): same shape, empty.
         return web.json_response({"ok": True, "self": local, "sats": {}})
+
+    async def _handle_admin_restart(self, request: web.Request) -> web.Response:
+        """POST /api/admin/restart — gracefully exit; supervisor (easy-service)
+        is expected to restart the process. Sends SIGTERM to ourselves after
+        a short delay so the HTTP response can flush first.
+        """
+        if not self._web_authorized(request):
+            return self._web_unauthorized()
+        import os
+        import signal as _signal
+        loop = asyncio.get_event_loop()
+        loop.call_later(0.2, lambda: os.kill(os.getpid(), _signal.SIGTERM))
+        return web.json_response({
+            "ok": True, "restarting": self._local_machine_id(),
+            "note": "SIGTERM scheduled in 0.2s; supervisor must relaunch",
+        })
+
+    async def _handle_admin_cluster_restart(self, request: web.Request) -> web.Response:
+        """POST /api/admin/cluster_restart — restart every connected sat (and
+        self if ?include_self=1). Host-only; sat without _sat_registry returns
+        an error.
+
+        Body / query: ``include_self=1`` to also SIGTERM this host process.
+        Without it, only the sats restart (host stays up to relay).
+        """
+        if not self._web_authorized(request):
+            return self._web_unauthorized()
+        if self._sat_registry is None:
+            return web.json_response(
+                {"ok": False, "error": "not in host mode"}, status=400,
+            )
+        include_self = request.query.get("include_self") in ("1", "true", "yes")
+        try:
+            data = await request.json()
+            if not include_self:
+                include_self = bool(data.get("include_self"))
+        except Exception:
+            pass
+        results: dict[str, object] = {}
+        for machine_id, sess in list(self._sat_registry.sessions.items()):
+            try:
+                rpc = await sess.call("POST", "/api/admin/restart", timeout=5.0)
+                results[machine_id] = rpc.get("body") or {"status": rpc.get("status")}
+            except Exception as e:
+                results[machine_id] = {"error": str(e)}
+        if include_self:
+            import os
+            import signal as _signal
+            asyncio.get_event_loop().call_later(
+                1.0, lambda: os.kill(os.getpid(), _signal.SIGTERM),
+            )
+            results[self._local_machine_id()] = {
+                "scheduled": True, "delay_seconds": 1.0,
+            }
+        return web.json_response({"ok": True, "results": results})
 
     def _local_machine_id(self) -> str:
         return self.config.machine_id or self.config.node_id or "local"
