@@ -134,6 +134,11 @@ class SatelliteRegistry:
     # Machines we've seen this process lifetime; survives disconnect so the
     # web UI can show an offline tile instead of the row vanishing.
     history: dict[str, dict] = field(default_factory=dict)  # machine_id → {bots: [...], last_seen}
+    # Optional: called by handle_ws after a sat's hello/bots_update, and after
+    # any sat disconnects. Lets the host push a peers_snapshot to all (or just
+    # the changed) sats so each sat learns about the other workgroups in the
+    # cluster. None = no push.
+    on_topology_change: object = None  # async Callable[[machine_id|None], None]
 
     def get(self, machine_id: str) -> SatelliteSession | None:
         return self.sessions.get(machine_id)
@@ -238,6 +243,11 @@ class SatelliteRegistry:
                     self.sessions[machine_id] = sess
                     logger.info("satellite '%s' connected with %d bot(s)", machine_id, len(bots))
                     await ws.send_json({"type": "welcome"})
+                    if callable(self.on_topology_change):
+                        try:
+                            await self.on_topology_change(machine_id)
+                        except Exception as e:
+                            logger.warning("on_topology_change(hello) failed: %s", e)
                     continue
 
                 if t == "ping":
@@ -269,6 +279,11 @@ class SatelliteRegistry:
                         for b in bots_raw
                         if isinstance(b, dict) and b.get("name")
                     ]
+                    if callable(self.on_topology_change):
+                        try:
+                            await self.on_topology_change(sess.machine_id)
+                        except Exception as e:
+                            logger.warning("on_topology_change(bots_update) failed: %s", e)
         finally:
             if sess is not None and not sess._closed:
                 self.sessions.pop(sess.machine_id, None)
@@ -282,4 +297,9 @@ class SatelliteRegistry:
                     "last_seen": time.time(),
                 }
                 logger.info("satellite '%s' disconnected", sess.machine_id)
+                if callable(self.on_topology_change):
+                    try:
+                        await self.on_topology_change(None)
+                    except Exception as e:
+                        logger.warning("on_topology_change(disconnect) failed: %s", e)
         return ws

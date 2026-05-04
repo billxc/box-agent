@@ -747,7 +747,10 @@ class Gateway:
         web_app.router.add_post("/api/wg/peer/recv", self._handle_wg_peer_recv)
         # Hub-and-spoke: WS endpoint for satellite nodes
         if self.config.satellite_token:
-            self._sat_registry = SatelliteRegistry(expected_token=self.config.satellite_token)
+            self._sat_registry = SatelliteRegistry(
+                expected_token=self.config.satellite_token,
+                on_topology_change=self._push_peers_snapshot_to_sats,
+            )
             web_app.router.add_get("/api/sat/ws", self._sat_registry.handle_ws)
             logger.info("Cluster: host mode enabled (accepting satellites at /api/sat/ws)")
         web_static = _Path(__file__).parent / "web" / "static"
@@ -807,14 +810,12 @@ class Gateway:
           (``self._sat_registry.list_bots()``)
         - Remote workgroup-kind bots from disconnected-but-known satellites
           (``self._sat_registry.history``) — flagged ``online=False``
+        - On a satellite (no local registry): ``self._satellite_client.remote_peers``
+          pushed by host via ``peers_snapshot`` frames.
 
         Each entry: ``{name, machine, online, kind, description}``. Used by
         Router.get_peers → AgentEnv.peers → context block; admin AI uses the
         *name* field as the ``send_to_peer(target=…)`` argument.
-
-        Note (yait #67): on satellites the registry is None, so this returns
-        local-only — sat admins won't see cross-machine peers until sat→host
-        peer-list RPC lands.
         """
         out: list[dict] = []
         if self._workgroup_mgr is not None:
@@ -857,7 +858,77 @@ class Gateway:
                         "kind": "workgroup",
                         "description": b.get("display_name") or "",
                     })
+        elif self._sat_client is not None:
+            # Satellite mode: registry is None, but host pushes peers_snapshot
+            # frames containing the cross-cluster workgroup peer list.
+            for p in self._sat_client.remote_peers:
+                if not isinstance(p, dict):
+                    continue
+                if p.get("name") == exclude:
+                    continue
+                out.append({
+                    "name": p.get("name", ""),
+                    "machine": p.get("machine", ""),
+                    "online": bool(p.get("online", True)),
+                    "kind": p.get("kind", "workgroup"),
+                    "description": p.get("description", ""),
+                })
         return out
+
+    async def _push_peers_snapshot_to_sats(self, changed_machine_id: str | None) -> None:
+        """Send each connected satellite a `peers_snapshot` frame so its admin
+        can see workgroups elsewhere in the cluster.
+
+        Triggered by SatelliteRegistry on hello / bots_update / disconnect.
+        Each sat receives a list filtered to exclude its own workgroup-kind
+        bots (so it doesn't see itself as a peer).
+
+        ``changed_machine_id`` is just informational (which sat's state moved);
+        we always re-broadcast to everyone since one sat's change affects what
+        the others can route to.
+        """
+        if self._sat_registry is None:
+            return
+        # Collect per-sat exclusion sets up front (avoid recompute per send).
+        for machine_id, sess in list(self._sat_registry.sessions.items()):
+            self_workgroup_names = {
+                b.name for b in sess.bots if b.kind == "workgroup"
+            }
+            peers: list[dict] = []
+            # Host's own local workgroups
+            if self._workgroup_mgr is not None:
+                for wg_name in self._workgroup_mgr.routers:
+                    if wg_name in self_workgroup_names:
+                        continue
+                    if wg_name not in self.config.workgroups:
+                        continue
+                    workgroup = self.config.workgroups[wg_name]
+                    peers.append({
+                        "name": wg_name,
+                        "machine": self.config.node_id or "host",
+                        "online": True,
+                        "kind": "workgroup",
+                        "description": workgroup.display_name or "",
+                    })
+            # Other sats' workgroup-kind bots
+            for other_mid, other_bot in self._sat_registry.list_bots():
+                if other_mid == machine_id:
+                    continue  # don't tell a sat about itself
+                if other_bot.kind != "workgroup":
+                    continue
+                if other_bot.name in self_workgroup_names:
+                    continue
+                peers.append({
+                    "name": other_bot.name,
+                    "machine": other_mid,
+                    "online": True,
+                    "kind": "workgroup",
+                    "description": other_bot.display_name or "",
+                })
+            try:
+                await sess.ws.send_json({"type": "peers_snapshot", "peers": peers})
+            except Exception as e:
+                logger.warning("peers_snapshot push to %s failed: %s", machine_id, e)
 
     async def _stop_http(self) -> None:
         """Stop the HTTP API server."""
@@ -1205,6 +1276,11 @@ class Gateway:
 
         Wraps `body` in the historical envelope (matches the old Discord peer
         path so admin sees the same shape regardless of transport).
+
+        Routed to the same chat_id heartbeat dispatches into
+        (``heartbeat:<target>``) so the message lands in the admin's main
+        session — not a separate ``peer:<sender>`` chat that would spawn a
+        fresh, context-less session each time.
         """
         admin_router = self._workgroup_mgr.routers[target]
         envelope = (
@@ -1216,7 +1292,7 @@ class Gateway:
         from boxagent.channels.base import IncomingMessage
         msg = IncomingMessage(
             channel="internal",
-            chat_id=f"peer:{sender}",
+            chat_id=f"heartbeat:{target}",
             user_id=sender,
             text=envelope,
             trusted=True,
