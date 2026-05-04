@@ -451,7 +451,7 @@ def _register_admin_tools(mcp: FastMCP) -> None:
 def _register_peer_tools(mcp: FastMCP) -> None:
 
     @mcp.tool()
-    async def send_to_peer(target: str, message: str) -> str:
+    async def send_to_peer(target: str, message: str, wait: bool = False) -> str:
         """Send a message to another admin bot.
 
         Routes via cluster RPC: if the target lives on this machine the
@@ -459,15 +459,30 @@ def _register_peer_tools(mcp: FastMCP) -> None:
         satellite WS to the node that owns the target. Discord shared
         channels are no longer used.
 
+        Default is fire-and-forget: returns "queued" immediately, lets the
+        target admin process the message in the background. Pass wait=True
+        when you specifically need confirmation that the send chain
+        succeeded (target resolved, RPC accepted) — that still does NOT
+        wait for the target admin to actually reply.
+
         Args:
             target: Name of the target workgroup admin (e.g. "alpha", "beta")
             message: The message to send
+            wait: If True, await the full delivery chain before returning.
+                  Default False for low-latency fire-and-forget.
         """
         if not _gateway:
             return "Error: gateway not available"
         bot_name = _ctx_bot_name.get()
         if not bot_name:
             return "Error: bot_name not set"
+        if not wait:
+            import asyncio as _asyncio
+            _asyncio.create_task(
+                _gateway.send_peer(target, bot_name, message),
+                name=f"send_to_peer:{target}",
+            )
+            return f"Queued message to {target} (fire-and-forget; pass wait=True for confirmation)."
         result = await _gateway.send_peer(target, bot_name, message)
         if result.get("ok"):
             via = result.get("via", "?")
