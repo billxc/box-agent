@@ -145,8 +145,9 @@ body.sidebar-dragging * { user-select: none !important; }
 .machine-bots li.specialist.active { color: var(--text); background: var(--bg); outline: 1px solid var(--accent); }
 
 /* Tool call card (folded by default; expand to see args). */
-.tool-card { margin: 6px 0; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel-2); color: var(--text); font-size: 12px; }
-.tool-card-header { cursor: pointer; user-select: none; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; outline: none; }
+.tool-card { margin: 6px 0; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel-2); color: var(--text); font-size: 12px; width: 100%; align-self: stretch; box-sizing: border-box; min-width: 0; }
+.tool-card-header { cursor: pointer; user-select: none; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; outline: none; word-break: break-word; overflow-wrap: anywhere; }
+.tool-card[open] > .tool-card-header { white-space: normal; overflow: visible; text-overflow: clip; word-break: break-word; }
 .tool-card-header:hover { color: var(--accent); }
 .tool-card-body { margin: 6px 0 0 0; padding: 8px; background: var(--panel); color: var(--text); font-size: 11px; max-height: 240px; overflow: auto; white-space: pre-wrap; border-radius: 3px; border: 1px solid var(--border); }
 .tool-card-result { margin-top: 6px; padding: 6px 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; white-space: pre-wrap; max-height: 240px; overflow: auto; border-radius: 3px; background: var(--panel); color: var(--text); border: 1px solid var(--border); }
