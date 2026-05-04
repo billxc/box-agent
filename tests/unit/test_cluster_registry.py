@@ -33,26 +33,18 @@ def session():
 
 
 class TestSatelliteRegistry:
-    def test_find_bot_returns_owner(self):
+    def test_get_bot_returns_owner(self):
         reg = SatelliteRegistry()
         sess = SatelliteSession(machine_id="pc", ws=_FakeWS(),
                                 bots=[RemoteBot(name="bot1")])
         reg.sessions["pc"] = sess
-        hit = reg.find_bot("bot1")
+        hit = reg.get_bot("pc", "bot1")
         assert hit is not None
-        assert hit[0] == "pc"
-        assert hit[1].name == "bot1"
+        assert hit.name == "bot1"
 
-    def test_find_bot_missing_returns_none(self):
+    def test_get_bot_missing_returns_none(self):
         reg = SatelliteRegistry()
-        assert reg.find_bot("nope") is None
-
-    def test_find_bot_ambiguous_raises(self):
-        reg = SatelliteRegistry()
-        reg.sessions["a"] = SatelliteSession("a", _FakeWS(), [RemoteBot(name="x")])
-        reg.sessions["b"] = SatelliteSession("b", _FakeWS(), [RemoteBot(name="x")])
-        with pytest.raises(ValueError, match="ambiguous"):
-            reg.find_bot("x")
+        assert reg.get_bot("pc", "nope") is None
 
     def test_list_bots_aggregates_machines(self):
         reg = SatelliteRegistry()
