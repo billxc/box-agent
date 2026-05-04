@@ -734,6 +734,7 @@ class Gateway:
         web_app.router.add_get("/api/machines", self._handle_web_machines)
         web_app.router.add_get("/api/sessions", self._handle_web_sessions)
         web_app.router.add_post("/api/sessions/set_main", self._handle_set_main_session)
+        web_app.router.add_get("/api/version", self._handle_version)
         web_app.router.add_get("/api/history", self._handle_web_history)
         web_app.router.add_post("/api/send", self._handle_web_send)
         web_app.router.add_get("/api/stream", self._handle_web_stream)
@@ -1540,6 +1541,36 @@ class Gateway:
             return web.json_response({"ok": False, "error": "no storage"}, status=500)
         self._storage.set_main_chat_id(bot, chat_id)
         return web.json_response({"ok": True, "main_chat_id": chat_id})
+
+    async def _handle_version(self, request: web.Request) -> web.Response:
+        """GET /api/version — return this node's version, optionally aggregated.
+
+        Without ``?cluster=1``: just this process's commit/version.
+        With ``?cluster=1`` (host only): also queries every connected sat via
+        cluster RPC and returns ``{self, sats: {machine_id: ...}}``.
+        """
+        if not self._web_authorized(request):
+            return self._web_unauthorized()
+        from boxagent._version import __version__, _git_commit, version_string
+
+        local = {
+            "machine_id": self._local_machine_id(),
+            "version": __version__,
+            "commit": _git_commit(),
+            "version_string": version_string(),
+        }
+        if request.query.get("cluster") not in ("1", "true", "yes"):
+            return web.json_response({"ok": True, **local})
+        if self._sat_registry is None:
+            return web.json_response({"ok": True, "self": local, "sats": {}})
+        sats: dict[str, object] = {}
+        for machine_id, sess in list(self._sat_registry.sessions.items()):
+            try:
+                result = await sess.call("GET", "/api/version", timeout=5.0)
+                sats[machine_id] = result.get("body") or {"error": "no body"}
+            except Exception as e:
+                sats[machine_id] = {"error": str(e)}
+        return web.json_response({"ok": True, "self": local, "sats": sats})
 
     def _local_machine_id(self) -> str:
         return self.config.machine_id or self.config.node_id or "local"
