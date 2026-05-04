@@ -250,7 +250,7 @@
         body: JSON.stringify({ bot: state.bot, machine: state.botMachine, chat_id: chatId }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      await loadServerSessions();
+      state.serverSessions[curKey()] = await fetchServerSessions(state.botMachine, state.bot);
       refreshSessionList();
     } catch (e) {
       alert(`Failed to set main session: ${e.message || e}`);
