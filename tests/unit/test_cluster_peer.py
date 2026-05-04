@@ -42,10 +42,11 @@ def test_dispatch_local_peer_envelopes_raw_body():
     handler = gw._workgroup_mgr.routers["admin-a"].handle_message
     handler.assert_awaited_once()
     msg = handler.await_args.args[0]
-    # Peer message routes to the heartbeat chat_id of the target workgroup,
-    # so it lands in the admin's main session — same one heartbeat dispatches
-    # into. NOT a `peer:<sender>` chat (which would spawn fresh sessions).
-    assert msg.chat_id == "heartbeat:admin-a"
+    # Peer message routes to the bot's main chat_id (persisted via Storage,
+    # or auto-minted as `main-<bot>-<ts>` when storage is absent — as in
+    # this test). It lands in the admin's main session — same one heartbeat
+    # dispatches into. NOT a `peer:<sender>` chat.
+    assert msg.chat_id.startswith("main-admin-a")
     assert msg.user_id == "admin-b"
     assert msg.text.startswith("[Peer message from admin-b]\nhello")
     assert 'send_to_peer("admin-b"' in msg.text

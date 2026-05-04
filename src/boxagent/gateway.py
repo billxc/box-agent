@@ -51,8 +51,6 @@ def _infer_platform(chat_id: str) -> str:
     """Best-effort guess for which channel a chat_id originated from."""
     if not chat_id:
         return "unknown"
-    if chat_id.startswith("heartbeat:"):
-        return "heartbeat"
     if chat_id.startswith("claude-"):
         return "claude"
     if chat_id.startswith("web-"):
@@ -1308,11 +1306,11 @@ class Gateway:
         via /api/sessions/set_main.
         """
         if self._storage is None:
-            return f"heartbeat:{bot}"
+            return f"main-{bot}-{int(time.time())}"
         cid = self._storage.get_main_chat_id(bot)
         if cid:
             return cid
-        cid = f"heartbeat:{bot}-{int(time.time())}"
+        cid = f"main-{bot}-{int(time.time())}"
         self._storage.set_main_chat_id(bot, cid)
         return cid
 
@@ -1477,8 +1475,6 @@ class Gateway:
             sid = s.get("session_id") or ""
             s["platform"] = _infer_platform(s["chat_id"])
             s["is_main"] = bool(main_chat_id and s["chat_id"] == main_chat_id)
-            if s["is_main"]:
-                s["platform"] = "main"
             s["preview"] = ""
             s["last_ts"] = 0
             if not sid:

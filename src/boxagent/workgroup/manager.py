@@ -471,11 +471,11 @@ class WorkgroupManager:
 
             def _main_chat_id_provider(_storage=storage, _name=wg_name):
                 if _storage is None:
-                    return f"heartbeat:{_name}"
+                    return f"main-{_name}-{int(time.time())}"
                 cid = _storage.get_main_chat_id(_name)
                 if cid:
                     return cid
-                cid = f"heartbeat:{_name}-{int(time.time())}"
+                cid = f"main-{_name}-{int(time.time())}"
                 _storage.set_main_chat_id(_name, cid)
                 return cid
 
