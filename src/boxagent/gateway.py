@@ -1896,7 +1896,8 @@ class Gateway:
                 return web.json_response({"ok": False, "error": "unknown machine"}, status=404)
             return await self._proxy_to_remote(self._sat_registry.get(machine), "GET", "/api/claude/projects", request)
         from boxagent.sessions import claude_native
-        return web.json_response({"ok": True, "projects": claude_native.list_projects()})
+        projects = await asyncio.to_thread(claude_native.list_projects)
+        return web.json_response({"ok": True, "projects": projects})
 
     async def _handle_claude_sessions(self, request: web.Request) -> web.Response:
         if not self._web_authorized(request):
@@ -1910,9 +1911,10 @@ class Gateway:
                 return web.json_response({"ok": False, "error": "unknown machine"}, status=404)
             return await self._proxy_to_remote(self._sat_registry.get(machine), "GET", "/api/claude/sessions", request)
         from boxagent.sessions import claude_native
+        sessions = await asyncio.to_thread(claude_native.list_sessions, encoded)
         return web.json_response({
             "ok": True,
-            "sessions": claude_native.list_sessions(encoded),
+            "sessions": sessions,
         })
 
     async def _handle_claude_transcript(self, request: web.Request) -> web.Response:
@@ -1928,9 +1930,10 @@ class Gateway:
                 return web.json_response({"ok": False, "error": "unknown machine"}, status=404)
             return await self._proxy_to_remote(self._sat_registry.get(machine), "GET", "/api/claude/transcript", request)
         from boxagent.sessions import claude_native
+        messages = await asyncio.to_thread(claude_native.read_messages, encoded, sid)
         return web.json_response({
             "ok": True,
-            "messages": claude_native.read_messages(encoded, sid),
+            "messages": messages,
         })
 
     async def _handle_claude_resume(self, request: web.Request) -> web.Response:
@@ -1975,7 +1978,7 @@ class Gateway:
             else:
                 backend = (cfg.ai_backend if cfg else None) or (workgroup.ai_backend if workgroup else "claude-cli")
             from boxagent.sessions import claude_native
-            workspace = (claude_native.project_cwd(encoded) if encoded else "") or (
+            workspace = (await asyncio.to_thread(claude_native.project_cwd, encoded) if encoded else "") or (
                 cfg.workspace if cfg else (workgroup.admin_workspace if workgroup else "")
             )
             chat_id = f"{backend.split('-')[0]}-{sid}" if is_raw else f"claude-{sid}"
