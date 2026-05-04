@@ -170,7 +170,10 @@ body.sidebar-dragging * { user-select: none !important; }
 #session-list .sess-title { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #session-list .sess-title .plat { display: inline-block; width: 16px; color: var(--accent); margin-right: 2px; font-weight: 600; }
 #session-list .sess-preview { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#session-list .sess-actions { display: none; }
+#session-list .sess-actions { margin-top: 4px; font-size: 11px; }
+#session-list .sess-action { color: var(--accent); text-decoration: none; cursor: pointer; }
+#session-list .sess-action:hover { text-decoration: underline; }
+#session-list .main-badge { color: gold; font-weight: 600; margin-right: 2px; }
 
 .side-foot {
   display: flex; align-items: center; gap: 8px;
