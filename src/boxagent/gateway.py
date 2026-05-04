@@ -1622,12 +1622,11 @@ class Gateway:
         })
 
     async def _handle_admin_cluster_restart(self, request: web.Request) -> web.Response:
-        """POST /api/admin/cluster_restart — restart every connected sat (and
-        self if ?include_self=1). Host-only; sat without _sat_registry returns
-        an error.
+        """POST /api/admin/cluster_restart — restart sat nodes (and self if asked).
 
-        Body / query: ``include_self=1`` to also SIGTERM this host process.
-        Without it, only the sats restart (host stays up to relay).
+        Body / query options:
+          - ``machines: [id, ...]`` — only restart these sats (default: all)
+          - ``include_self=1`` — also SIGTERM this host process (deferred 1s)
         """
         if not self._web_authorized(request):
             return self._web_unauthorized()
@@ -1636,20 +1635,26 @@ class Gateway:
                 {"ok": False, "error": "not in host mode"}, status=400,
             )
         include_self = request.query.get("include_self") in ("1", "true", "yes")
+        target_filter: list[str] | None = None
         try:
             data = await request.json()
             if not include_self:
                 include_self = bool(data.get("include_self"))
+            raw = data.get("machines")
+            if isinstance(raw, list) and raw:
+                target_filter = [str(m) for m in raw]
         except Exception:
             pass
         results: dict[str, object] = {}
         for machine_id, sess in list(self._sat_registry.sessions.items()):
+            if target_filter is not None and machine_id not in target_filter:
+                continue
             try:
                 rpc = await sess.call("POST", "/api/admin/restart", timeout=5.0)
                 results[machine_id] = rpc.get("body") or {"status": rpc.get("status")}
             except Exception as e:
                 results[machine_id] = {"error": str(e)}
-        if include_self:
+        if include_self and (target_filter is None or self._local_machine_id() in target_filter):
             import os
             import signal as _signal
             asyncio.get_event_loop().call_later(

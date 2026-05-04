@@ -257,6 +257,40 @@
     }
   }
 
+  async function restartMachine(machineId, online) {
+    if (!online) { alert(`${machineId} is offline; nothing to restart`); return; }
+    if (!confirm(`Restart ${machineId}? Supervisor (easy-service) will relaunch.`)) return;
+    try {
+      const r = await api("admin/cluster_restart", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ machines: [machineId], include_self: true }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      const info = (data.results || {})[machineId];
+      alert(`${machineId}: ${JSON.stringify(info || data)}`);
+    } catch (e) {
+      alert(`Restart failed: ${e.message || e}`);
+    }
+  }
+
+  async function restartCluster() {
+    if (!confirm("Restart all sat nodes? Host stays up.\n(Add include_self=1 manually to also restart host.)")) return;
+    try {
+      const r = await api("admin/cluster_restart", { method: "POST" });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      const lines = ["Cluster restart scheduled:"];
+      for (const [mid, info] of Object.entries(data.results || {})) {
+        lines.push(`  ${mid}: ${JSON.stringify(info)}`);
+      }
+      alert(lines.join("\n"));
+    } catch (e) {
+      alert(`Cluster restart failed: ${e.message || e}`);
+    }
+  }
+
   function touchSession(preview) {
     const key = curKey();
     const sessions = state.sessions[key] || {};
@@ -555,8 +589,16 @@
         <span class="name">${escapeHtml(m.machine_id)}</span>
         ${m.role && m.role !== "satellite" ? `<span class="role">${m.role}</span>` : ""}
         <span class="last">${lastSeen}</span>
+        <button class="machine-restart icon-btn" title="Restart this node">⟲</button>
       `;
-      head.onclick = () => toggleMachine(m.machine_id);
+      head.onclick = (e) => {
+        if (e.target.classList.contains("machine-restart")) {
+          e.stopPropagation();
+          restartMachine(m.machine_id, m.online);
+          return;
+        }
+        toggleMachine(m.machine_id);
+      };
       li.appendChild(head);
 
       const bots = document.createElement("ul");
@@ -703,6 +745,7 @@
 
   // ── UI events ──
   $("refresh-machines").onclick = () => loadMachines().catch(() => {});
+  $("restart-all").onclick = () => restartCluster();
 
   // ── Sidebar resize ──
   (function setupResize() {

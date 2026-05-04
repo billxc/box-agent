@@ -123,6 +123,9 @@ body.sidebar-dragging * { user-select: none !important; }
 .machine-head .name { flex: 1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .machine-head .role { font-size: 10px; color: var(--muted); padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; }
 .machine-head .last { font-size: 10px; color: var(--muted); }
+.machine-head .machine-restart { width: 22px; height: 22px; padding: 0; font-size: 12px; opacity: 0.4; }
+.machine-head .machine-restart:hover { opacity: 1; }
+.side-row .row-actions { display: flex; gap: 4px; }
 .machine-bots { list-style: none; margin: 0; padding: 0 0 6px 24px; }
 .machine-bots li {
   padding: 5px 10px;
