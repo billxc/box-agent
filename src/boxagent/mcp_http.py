@@ -496,7 +496,7 @@ def _register_peer_tools(mcp: FastMCP) -> None:
 
 def _register_telegram_tools(mcp: FastMCP) -> None:
 
-    def _send_media(method: str, field: str, file_path: str, caption: str = "") -> str:
+    async def _send_media(method: str, field: str, file_path: str, caption: str = "") -> str:
         """Upload a file to Telegram via Bot API multipart POST."""
         bot_name = _ctx_bot_name.get()
         chat_id = _ctx_chat_id.get()
@@ -506,64 +506,67 @@ def _register_telegram_tools(mcp: FastMCP) -> None:
         if not token:
             return f"Error: no Telegram token for bot '{bot_name}'"
         base_url = f"https://api.telegram.org/bot{token}"
-        with open(file_path, "rb") as f:
-            files = {field: f}
-            data: dict[str, str] = {"chat_id": chat_id}
-            if caption:
-                data["caption"] = caption
-            r = httpx.post(f"{base_url}/{method}", data=data, files=files, timeout=60)
-            r.raise_for_status()
+        # Async httpx so a 60s upload doesn't block the whole event loop
+        # (peer messages, web UI, sat heartbeats all share this loop).
+        async with httpx.AsyncClient(timeout=60) as client:
+            with open(file_path, "rb") as f:
+                files = {field: f}
+                data: dict[str, str] = {"chat_id": chat_id}
+                if caption:
+                    data["caption"] = caption
+                r = await client.post(f"{base_url}/{method}", data=data, files=files)
+                r.raise_for_status()
         return f"Sent {field} to chat {chat_id}"
 
     @mcp.tool()
-    def send_photo(file_path: str, caption: str = "") -> str:
+    async def send_photo(file_path: str, caption: str = "") -> str:
         """Send a photo/image to the user via Telegram.
 
         Args:
             file_path: Absolute path to the image file (jpg, png, etc.)
             caption: Optional caption text
         """
-        return _send_media("sendPhoto", "photo", file_path, caption)
+        return await _send_media("sendPhoto", "photo", file_path, caption)
 
     @mcp.tool()
-    def send_document(file_path: str, caption: str = "") -> str:
+    async def send_document(file_path: str, caption: str = "") -> str:
         """Send a file/document to the user via Telegram.
 
         Args:
             file_path: Absolute path to the file
             caption: Optional caption text
         """
-        return _send_media("sendDocument", "document", file_path, caption)
+        return await _send_media("sendDocument", "document", file_path, caption)
 
     @mcp.tool()
-    def send_video(file_path: str, caption: str = "") -> str:
+    async def send_video(file_path: str, caption: str = "") -> str:
         """Send a video to the user via Telegram.
 
         Args:
             file_path: Absolute path to the video file (mp4, etc.)
             caption: Optional caption text
         """
-        return _send_media("sendVideo", "video", file_path, caption)
+        return await _send_media("sendVideo", "video", file_path, caption)
 
     @mcp.tool()
-    def send_audio(file_path: str, caption: str = "") -> str:
+    async def send_audio(file_path: str, caption: str = "") -> str:
         """Send an audio file to the user via Telegram.
 
         Args:
             file_path: Absolute path to the audio file (mp3, ogg, etc.)
             caption: Optional caption text
         """
-        return _send_media("sendAudio", "audio", file_path, caption)
+        return await _send_media("sendAudio", "audio", file_path, caption)
 
     @mcp.tool()
-    def send_animation(file_path: str, caption: str = "") -> str:
+    async def send_animation(file_path: str, caption: str = "") -> str:
         """Send a GIF animation to the user via Telegram.
 
         Args:
             file_path: Absolute path to the GIF file
             caption: Optional caption text
         """
-        return _send_media("sendAnimation", "animation", file_path, caption)
+        return await _send_media("sendAnimation", "animation", file_path, caption)
 
 
 # ════════════════════════════════════════════════════════════════
