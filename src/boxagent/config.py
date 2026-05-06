@@ -128,12 +128,19 @@ class AppConfig:
     web_trust_header: str = "X-BoxAgent-Trusted"
     machine_id: str = ""
     # Hub-and-spoke clustering (optional):
-    # If guest_token is set, this node is a HOST: it accepts WS
-    # connections at /api/guest/ws from guest nodes that present the same token.
-    guest_token: str = ""
-    # Devtunnel name used by host (manages it) and guests (resolves URL via it)
+    # `host_priority` is the ordered fallback list of candidate hosts. Whoever
+    # comes first in the list and is reachable becomes the active host; lower-
+    # priority candidates run as guests. The active role is decided at runtime
+    # by ClusterRoleManager — not by this config alone.
+    host_priority: list[str] = field(default_factory=list)
+    # Index of this node in host_priority, or -1 if not a candidate at all.
+    my_host_index: int = -1
+    # Devtunnel name shared by every candidate (only one node at a time hosts it).
     cluster_tunnel: str = ""
-    # Shared cluster secret (host validates incoming guest hello frames; guests send it)
+    # Cluster shared secret (used both as guest_token by hosts and as host_token
+    # by guests). Identical content; the role-aware split is a leftover from
+    # when the role was static at parse time.
+    guest_token: str = ""
     host_token: str = ""
     bots: dict[str, BotConfig] = field(default_factory=dict)
     workgroups: dict[str, WorkgroupConfig] = field(default_factory=dict)
@@ -247,23 +254,32 @@ def load_config(
     web_host = str(global_cfg.get("web_host", "127.0.0.1") or "127.0.0.1")
     web_host = os.environ.get("BOXAGENT_WEB_HOST", web_host)
     # Cluster: shared block in config.yaml describes the topology;
-    # each machine self-selects its role by comparing its node_id to cluster.host.
+    # `cluster.host` is an ordered fallback list — first-online wins. Single
+    # string is accepted for back-compat.
     cluster_cfg = effective_raw.get("cluster") or {}
     if not isinstance(cluster_cfg, dict):
         cluster_cfg = {}
-    cluster_host = str(cluster_cfg.get("host", "") or "")
+    raw_host = cluster_cfg.get("host", "") or ""
+    if isinstance(raw_host, str):
+        host_priority = [raw_host] if raw_host else []
+    elif isinstance(raw_host, list):
+        host_priority = [str(h).strip() for h in raw_host if str(h).strip()]
+    else:
+        host_priority = []
     cluster_tunnel_name = str(cluster_cfg.get("tunnel_name", "") or "boxagent-cluster")
     cluster_token = str(cluster_cfg.get("token", "") or "")
     cluster_token = os.environ.get("BOXAGENT_CLUSTER_TOKEN", cluster_token)
-    machine_id = node_id or cluster_host or ""
-    is_host = bool(cluster_host) and node_id == cluster_host
-    # Guest mode is implied by cluster.host being set and not pointing at
-    # this node.  Guests resolve the host's tunnel URL on demand via
-    # `devtunnel show <tunnel_name>` (same Microsoft account → resolvable).
-    is_guest = bool(cluster_host) and not is_host
-    guest_token = cluster_token if is_host else ""
-    host_token = cluster_token if is_guest else ""
-    cluster_tunnel = cluster_tunnel_name if (is_host or is_guest) else ""
+    machine_id = node_id or (host_priority[0] if host_priority else "")
+    my_host_index = host_priority.index(node_id) if (node_id and node_id in host_priority) else -1
+    # Every candidate (anyone in host_priority) carries both tokens — the active
+    # role is decided at runtime by ClusterRoleManager. Non-candidates with
+    # cluster.host configured still get host_token so they can dial in as
+    # permanent guests.
+    is_candidate = my_host_index >= 0
+    has_cluster = bool(host_priority)
+    guest_token = cluster_token if is_candidate else ""
+    host_token = cluster_token if has_cluster else ""
+    cluster_tunnel = cluster_tunnel_name if has_cluster else ""
 
     telegram_bots = _load_telegram_bots(config_dir)
     discord_bots = _load_discord_bots(config_dir)
@@ -307,6 +323,8 @@ def load_config(
         web_port=web_port,
         web_host=web_host,
         machine_id=machine_id,
+        host_priority=host_priority,
+        my_host_index=my_host_index,
         guest_token=guest_token,
         cluster_tunnel=cluster_tunnel,
         host_token=host_token,

@@ -587,7 +587,7 @@
         <span class="caret"></span>
         <span class="dot ${dotCls}"></span>
         <span class="name">${escapeHtml(m.machine_id)}</span>
-        ${m.role && m.role !== "guest" ? `<span class="role">${m.role}</span>` : ""}
+        ${m.role && m.role !== "guest" ? `<span class="role">${m.role}${typeof m.host_index === "number" && m.host_index >= 0 ? `·#${m.host_index + 1}` : ""}</span>` : ""}
         ${m.self ? `<span class="role self">this</span>` : ""}
         <span class="last">${lastSeen}</span>
         <button class="machine-restart icon-btn" title="Restart this node">⟲</button>

@@ -194,6 +194,7 @@ class Gateway:
     _guest_registry: GuestRegistry | None = field(default=None, repr=False)
     _guest_client: GuestClient | None = field(default=None, repr=False)
     _cluster_tunnel: ClusterTunnel | None = field(default=None, repr=False)
+    _role_manager: object | None = field(default=None, repr=False)
     _start_time: float = 0.0
     _workgroup_mgr: WorkgroupManager | None = field(default=None, repr=False)
 
@@ -258,36 +259,12 @@ class Gateway:
         # Start HTTP API
         await self._start_http()
 
-        # If configured as a cluster host, manage our own devtunnel for /api/guest/ws
-        if self.config.guest_token and self.config.cluster_tunnel:
-            self._cluster_tunnel = ClusterTunnel(
-                name=self.config.cluster_tunnel,
-                port=self.config.web_port or 9292,
-            )
-            try:
-                url = await self._cluster_tunnel.start()
-                logger.info("Cluster: host devtunnel ready → %s", url)
-            except Exception as e:
-                logger.error("Cluster: failed to start host devtunnel: %s", e)
-                self._cluster_tunnel = None
-
-        # If configured as a guest, dial the host (URL resolved via tunnel_name)
-        if (not self.config.guest_token) and self.config.cluster_tunnel and self.config.host_token:
-            mid = self.config.machine_id or self.config.node_id or "guest"
-            self._guest_client = GuestClient(
-                host_url="",  # resolved by client via tunnel_name
-                host_token=self.config.host_token,
-                machine_id=mid,
-                local_web_port=self.config.web_port or 9292,
-                local_web_token=self.config.web_token,
-                tunnel_name=self.config.cluster_tunnel,
-                bot_provider=self._local_bot_descriptors,
-            )
-            self._guest_client.start()
-            logger.info(
-                "Cluster: guest mode — will resolve host via tunnel '%s' (machine_id=%s)",
-                self.config.cluster_tunnel, mid,
-            )
+        # Cluster: kick off the role manager (host_priority list determines who
+        # is host vs guest at runtime, with failover when primary disappears).
+        if self.config.cluster_tunnel:
+            from boxagent.cluster.role_manager import ClusterRoleManager
+            self._role_manager = ClusterRoleManager(config=self.config, gateway=self)
+            await self._role_manager.start()
 
         logger.info(
             "Gateway ready: %d bot(s) active", len(self.config.bots)
@@ -751,17 +728,11 @@ class Gateway:
         # cross-node send_to_peer calls back to host via devtunnel
         # (guest_client.fetch_host_json hits web_app, not app).
         web_app.router.add_post("/api/peer/send", self._handle_peer_send)
-        # Hub-and-spoke: WS endpoint for guest nodes
-        if self.config.guest_token:
-            self._guest_registry = GuestRegistry(
-                expected_token=self.config.guest_token,
-                on_topology_change=self._on_topology_change,
-                local_web_port=self.config.web_port if self.config.web_port is not None else 9292,
-                local_web_token=self.config.web_token or "",
-            )
-            web_app.router.add_get("/api/guest/ws", self._guest_registry.handle_ws)
-            web_app.router.add_get("/api/sat/ws", self._guest_registry.handle_ws)  # legacy alias
-            logger.info("Cluster: host mode enabled (accepting guests at /api/guest/ws)")
+        # Hub-and-spoke: /api/guest/ws is always registered. The handler
+        # delegates to the GuestRegistry currently owned by the role manager
+        # (only present when this node is the active host). Non-host nodes
+        # respond with 503 so the dialing peer reconnects elsewhere.
+        web_app.router.add_get("/api/guest/ws", self._handle_guest_ws)
         web_static = _Path(__file__).parent / "web" / "static"
         if web_static.is_dir():
             web_app.router.add_static("/", path=str(web_static), show_index=False)
@@ -954,14 +925,13 @@ class Gateway:
         machine first, then every connected/known guest.
         """
         local_mid = self._local_machine_id()
-        local_role = "host" if self.config.guest_token else (
-            "guest" if self.config.host_token else "single"
-        )
+        local_role = self._local_role()
         machines: list[dict] = [{
             "machine_id": local_mid,
             "online": True,
             "role": local_role,
             "self": True,
+            "host_index": self.config.my_host_index,
             "bots": self._local_bot_descriptors(),
             "last_seen": time.time(),
         }]
@@ -969,6 +939,8 @@ class Gateway:
             for m in self._guest_registry.list_machines():
                 m["role"] = "guest"
                 m["self"] = False
+                mid = m.get("machine_id") or ""
+                m["host_index"] = self.config.host_priority.index(mid) if mid in self.config.host_priority else -1
                 machines.append(m)
         return machines
 
@@ -1602,6 +1574,17 @@ class Gateway:
                     })
         return web.json_response({"bots": bots})
 
+    async def _handle_guest_ws(self, request: web.Request) -> web.WebSocketResponse:
+        """Permanent route — delegates to the GuestRegistry only when this
+        node is the active host; otherwise returns 503 so the dialing peer
+        falls back / reconnects elsewhere."""
+        registry = self._guest_registry
+        if registry is None:
+            return web.json_response(
+                {"ok": False, "error": "not host"}, status=503,
+            )
+        return await registry.handle_ws(request)
+
     async def _handle_web_machines(self, request: web.Request) -> web.Response:
         """Return all known machines (self + connected/disconnected guests)
         so the UI can render a grouped sidebar with online/offline status."""
@@ -1611,7 +1594,7 @@ class Gateway:
             return web.json_response({"machines": self._collect_machines()})
         # Guest role: render local machine + cached snapshot from host.
         local_mid = self._local_machine_id()
-        local_role = "guest" if self.config.host_token else "single"
+        local_role = self._local_role()
         machines: list[dict] = [{
             "machine_id": local_mid,
             "online": True,
@@ -1825,6 +1808,21 @@ class Gateway:
 
     def _local_machine_id(self) -> str:
         return self.config.machine_id or self.config.node_id or "local"
+
+    def _local_role(self) -> str:
+        """Current cluster role of this node — driven by ClusterRoleManager."""
+        rm = self._role_manager
+        if rm is None:
+            return "single"
+        state = getattr(rm, "state", "init")
+        if state == "host":
+            return "host"
+        if state == "guest":
+            return "guest"
+        # init / standalone / unknown
+        if self.config.cluster_tunnel:
+            return "guest"  # default optimistic — manager hasn't promoted yet
+        return "single"
 
     def _remote_session_for(self, machine_id: str, bot: str):
         """Return GuestSession owning `bot` on `machine_id`, or None."""
@@ -2173,7 +2171,16 @@ class Gateway:
         await self._stop_http()
         await self._stop_mcp_http()
 
-        # Stop guest WS client (if running)
+        # Stop role manager — it tears down whichever of guest_client /
+        # cluster_tunnel / guest_registry it currently owns.
+        if self._role_manager is not None:
+            try:
+                await self._role_manager.stop()
+            except Exception as e:
+                logger.error("Error stopping role manager: %s", e)
+            self._role_manager = None
+
+        # Stop guest WS client (if still running — role manager normally owns this)
         if self._guest_client is not None:
             try:
                 await self._guest_client.stop()
@@ -2181,7 +2188,7 @@ class Gateway:
                 logger.error("Error stopping guest client: %s", e)
             self._guest_client = None
 
-        # Stop cluster devtunnel (host only)
+        # Stop cluster devtunnel (host only — likewise normally torn down by role manager)
         if self._cluster_tunnel is not None:
             try:
                 await self._cluster_tunnel.stop()

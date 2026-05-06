@@ -204,6 +204,18 @@ class GuestRegistry:
                 pass
             self._http_session = None
 
+    async def close_all_sessions(self) -> None:
+        """Force-close every connected guest WS. Used by ClusterRoleManager
+        during demote so guests immediately reconnect to the new active host
+        instead of dangling on a soon-to-be-stopped tunnel."""
+        for sess in list(self.sessions.values()):
+            sess._closed = True
+            try:
+                await sess.ws.close()
+            except Exception:
+                pass
+        self.sessions.clear()
+
     async def _serve_inbound_rpc(self, sess: GuestSession, req: dict) -> None:
         """Handle an `rpc` frame coming *from* a guest.
 
