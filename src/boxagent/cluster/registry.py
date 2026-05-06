@@ -1,4 +1,4 @@
-"""Host-side: track connected satellite nodes and proxy RPC to them."""
+"""Host-side: track connected guest nodes and proxy RPC to them."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RemoteBot:
-    """Metadata for a bot owned by a satellite node."""
+    """Metadata for a bot owned by a guest node."""
 
     name: str
     display_name: str = ""
@@ -45,8 +45,8 @@ class _PendingResponse:
 
 
 @dataclass
-class SatelliteSession:
-    """One connected satellite node."""
+class GuestSession:
+    """One connected guest node."""
 
     machine_id: str
     ws: WebSocketResponse
@@ -127,27 +127,27 @@ class SatelliteSession:
 
 
 @dataclass
-class SatelliteRegistry:
-    """Host-side registry of currently-connected satellites."""
+class GuestRegistry:
+    """Host-side registry of currently-connected guests."""
 
     expected_token: str = ""
-    sessions: dict[str, SatelliteSession] = field(default_factory=dict)
+    sessions: dict[str, GuestSession] = field(default_factory=dict)
     # Machines we've seen this process lifetime; survives disconnect so the
     # web UI can show an offline tile instead of the row vanishing.
     history: dict[str, dict] = field(default_factory=dict)  # machine_id → {bots: [...], last_seen}
-    # Optional: called by handle_ws after a sat's hello/bots_update, and after
-    # any sat disconnects. Lets the host push a peers_snapshot to all (or just
-    # the changed) sats so each sat learns about the other workgroups in the
+    # Optional: called by handle_ws after a guest's hello/bots_update, and after
+    # any guest disconnects. Lets the host push a peers_snapshot to all (or just the
+    # the changed) guests so each guest learns about the other workgroups in the
     # cluster. None = no push.
     on_topology_change: object = None  # async Callable[[machine_id|None], None]
-    # Loopback config so the host can serve sat→host reverse RPCs by re-issuing
-    # the request against its own web server (mirrors the satellite-side pattern
-    # in sat_client._handle_rpc). Injected by gateway after web app starts.
+    # Loopback config so the host can serve guest→host reverse RPCs by re-issuing
+    # the request against its own web server (mirrors the guest-side pattern
+    # in guest_client._handle_rpc). Injected by gateway after web app starts.
     local_web_port: int = 0
     local_web_token: str = ""
     _http_session: ClientSession | None = field(default=None, repr=False)
 
-    def get(self, machine_id: str) -> SatelliteSession | None:
+    def get(self, machine_id: str) -> GuestSession | None:
         return self.sessions.get(machine_id)
 
     def list_machines(self) -> list[dict]:
@@ -187,7 +187,7 @@ class SatelliteRegistry:
         return out
 
     def get_bot(self, machine_id: str, name: str) -> RemoteBot | None:
-        """Return the RemoteBot named `name` on satellite `machine_id`, or None."""
+        """Return the RemoteBot named `name` on guest `machine_id`, or None."""
         sess = self.sessions.get(machine_id)
         if sess is None:
             return None
@@ -204,14 +204,14 @@ class SatelliteRegistry:
                 pass
             self._http_session = None
 
-    async def _serve_inbound_rpc(self, sess: SatelliteSession, req: dict) -> None:
-        """Handle an `rpc` frame coming *from* a satellite.
+    async def _serve_inbound_rpc(self, sess: GuestSession, req: dict) -> None:
+        """Handle an `rpc` frame coming *from* a guest.
 
-        Mirrors `SatelliteClient._handle_rpc`: re-issue the request against the
+        Mirrors `GuestClient._handle_rpc`: re-issue the request against the
         host's own web port over loopback, then stream the response back to the
-        sat as `rpc_resp` (or `rpc_stream` + `rpc_end` for SSE). Reusing the
+        guest as `rpc_resp` (or `rpc_stream` + `rpc_end` for SSE). Reusing the
         loopback HTTP path means the host's full `_handle_web_*` logic — which
-        already includes host→sat proxying — handles routing for free.
+        already includes host→guest proxying — handles routing for free.
         """
         rpc_id = str(req.get("id") or "")
         method = str(req.get("method") or "GET").upper()
@@ -275,12 +275,12 @@ class SatelliteRegistry:
                 pass
 
     async def handle_ws(self, request: web.Request) -> web.WebSocketResponse:
-        """Aiohttp handler for /api/sat/ws."""
+        """Aiohttp handler for /api/guest/ws."""
         ws = web.WebSocketResponse(heartbeat=30.0)
         await ws.prepare(request)
 
         # Expect hello
-        sess: SatelliteSession | None = None
+        sess: GuestSession | None = None
         try:
             async for msg in ws:
                 if msg.type != web.WSMsgType.TEXT:
@@ -288,7 +288,7 @@ class SatelliteRegistry:
                 try:
                     payload = json.loads(msg.data)
                 except Exception:
-                    logger.warning("sat ws: invalid JSON frame")
+                    logger.warning("guest ws: invalid JSON frame")
                     continue
                 t = payload.get("type")
 
@@ -315,9 +315,9 @@ class SatelliteRegistry:
                         for b in bots_raw
                         if isinstance(b, dict) and b.get("name")
                     ]
-                    sess = SatelliteSession(machine_id=machine_id, ws=ws, bots=bots)
+                    sess = GuestSession(machine_id=machine_id, ws=ws, bots=bots)
                     # If a previous session with this machine_id is still around,
-                    # evict it (a satellite reconnect).
+                    # evict it (a guest reconnect).
                     old = self.sessions.get(machine_id)
                     if old is not None:
                         old._closed = True
@@ -326,7 +326,7 @@ class SatelliteRegistry:
                         except Exception:
                             pass
                     self.sessions[machine_id] = sess
-                    logger.info("satellite '%s' connected with %d bot(s)", machine_id, len(bots))
+                    logger.info("guest '%s' connected with %d bot(s)", machine_id, len(bots))
                     await ws.send_json({"type": "welcome"})
                     if callable(self.on_topology_change):
                         try:
@@ -338,9 +338,9 @@ class SatelliteRegistry:
                 if t == "ping":
                     await ws.send_json({"type": "pong"})
                 elif t == "rpc":
-                    # Sat → host reverse RPC: serve via localhost loopback so
+                    # Guest → host reverse RPC: serve via localhost loopback so
                     # we reuse all of host's existing _handle_web_* logic
-                    # (incl. host→sat proxy if the target is yet another sat).
+                    # (incl. host→guest proxy if the target is yet another guest).
                     asyncio.create_task(self._serve_inbound_rpc(sess, payload))
                 elif t == "rpc_resp":
                     sess._resolve(
@@ -356,7 +356,7 @@ class SatelliteRegistry:
                 elif t == "rpc_end":
                     sess._end_stream(str(payload.get("id") or ""))
                 elif t == "bots_update":
-                    # Satellite re-announces its bot list (e.g. after dynamic create)
+                    # Guest re-announces its bot list (e.g. after dynamic create)
                     bots_raw = payload.get("bots") or []
                     sess.bots = [
                         RemoteBot(
@@ -386,7 +386,7 @@ class SatelliteRegistry:
                     ],
                     "last_seen": time.time(),
                 }
-                logger.info("satellite '%s' disconnected", sess.machine_id)
+                logger.info("guest '%s' disconnected", sess.machine_id)
                 if callable(self.on_topology_change):
                     try:
                         await self.on_topology_change(None)

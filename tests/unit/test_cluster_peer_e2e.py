@@ -1,5 +1,5 @@
-"""Real two-process cluster e2e: SatelliteClient dials a real aiohttp
-SatelliteRegistry endpoint, host RPCs the sat's local HTTP, and the
+"""Real two-process cluster e2e: GuestClient dials a real aiohttp
+GuestRegistry endpoint, host RPCs the guest's local HTTP, and the
 peer-recv path is exercised end-to-end (yait #8 + #13 Gap 1).
 
 Bypasses only what would require external infra: devtunnel CLI is
@@ -16,22 +16,22 @@ import json
 import pytest
 from aiohttp import web
 
-from boxagent.cluster import sat_client as sat_client_mod
-from boxagent.cluster.registry import SatelliteRegistry
-from boxagent.cluster.sat_client import SatelliteClient
+from boxagent.cluster import guest_client as guest_client_mod
+from boxagent.cluster.registry import GuestRegistry
+from boxagent.cluster.guest_client import GuestClient
 
 
 # ---------------------------------------------------------------------------
-# Fixtures: host (registry) and sat (local HTTP target)
+# Fixtures: host (registry) and guest (local HTTP target)
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
 async def host_registry_app():
-    """Real aiohttp app exposing /api/sat/ws → SatelliteRegistry.handle_ws."""
-    registry = SatelliteRegistry(expected_token="cluster-secret")
+    """Real aiohttp app exposing /api/guest/ws → GuestRegistry.handle_ws."""
+    registry = GuestRegistry(expected_token="cluster-secret")
     app = web.Application()
-    app.router.add_get("/api/sat/ws", registry.handle_ws)
+    app.router.add_get("/api/guest/ws", registry.handle_ws)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0)
@@ -43,7 +43,7 @@ async def host_registry_app():
 
 @pytest.fixture
 async def sat_local_app():
-    """Tiny aiohttp app on the satellite acting as that node's local web
+    """Tiny aiohttp app on the guest acting as that node's local web
     server. Records every POST to /api/wg/peer/recv and replies 200 OK."""
     received: list[dict] = []
 
@@ -71,7 +71,7 @@ def _stub_devtunnel(monkeypatch):
         return "fake-jwt"
 
     monkeypatch.setattr(
-        sat_client_mod, "_devtunnel_connect_token", _fake_token,
+        guest_client_mod, "_devtunnel_connect_token", _fake_token,
     )
 
 
@@ -92,14 +92,14 @@ async def _wait_until(predicate, *, timeout: float = 3.0, interval: float = 0.02
 
 @pytest.mark.asyncio
 async def test_sat_dial_host_and_register(host_registry_app, sat_local_app):
-    """Sat connects, hello passes token, host sees the workgroup bot listed."""
+    """Guest connects, hello passes token, host sees the workgroup bot listed."""
     registry, host_port = host_registry_app
     received, sat_port = sat_local_app
 
-    sat = SatelliteClient(
+    guest = GuestClient(
         host_url=f"http://127.0.0.1:{host_port}",
         host_token="cluster-secret",
-        machine_id="sat-1",
+        machine_id="guest-1",
         local_web_port=sat_port,
         tunnel_name="dummy-tunnel",
         local_web_token="",
@@ -108,34 +108,34 @@ async def test_sat_dial_host_and_register(host_registry_app, sat_local_app):
              "backend": "claude-cli", "kind": "workgroup"},
         ],
     )
-    sat.start()
+    guest.start()
     try:
-        await _wait_until(lambda: "sat-1" in registry.sessions, timeout=3.0)
+        await _wait_until(lambda: "guest-1" in registry.sessions, timeout=3.0)
         bots = registry.list_bots()
-        assert ("sat-1", ) == tuple(m for m, b in bots)
+        assert ("guest-1", ) == tuple(m for m, b in bots)
         assert bots[0][1].name == "remote-wg"
         assert bots[0][1].kind == "workgroup"
     finally:
-        await sat.stop()
+        await guest.stop()
 
 
 @pytest.mark.asyncio
 async def test_send_to_peer_round_trip_via_cluster_rpc(
     host_registry_app, sat_local_app,
 ):
-    """Smoking gun for yait #8 + #13: host calls SatelliteSession.call() to
-    POST /api/wg/peer/recv on the sat side; sat_client forwards it to the
-    sat's local HTTP server which records the body.
+    """Smoking gun for yait #8 + #13: host calls GuestSession.call() to
+    POST /api/wg/peer/recv on the guest side; guest_client forwards it to the
+    guest's local HTTP server which records the body.
 
     This is the exact path the MCP `send_to_peer` tool takes when the
     target admin lives on a different machine."""
     registry, host_port = host_registry_app
     received, sat_port = sat_local_app
 
-    sat = SatelliteClient(
+    guest = GuestClient(
         host_url=f"http://127.0.0.1:{host_port}",
         host_token="cluster-secret",
-        machine_id="sat-1",
+        machine_id="guest-1",
         local_web_port=sat_port,
         tunnel_name="dummy-tunnel",
         local_web_token="",
@@ -144,10 +144,10 @@ async def test_send_to_peer_round_trip_via_cluster_rpc(
              "backend": "claude-cli", "kind": "workgroup"},
         ],
     )
-    sat.start()
+    guest.start()
     try:
-        await _wait_until(lambda: "sat-1" in registry.sessions, timeout=3.0)
-        sess = registry.sessions["sat-1"]
+        await _wait_until(lambda: "guest-1" in registry.sessions, timeout=3.0)
+        sess = registry.sessions["guest-1"]
 
         result = await sess.call(
             "POST", "/api/wg/peer/recv",
@@ -163,7 +163,7 @@ async def test_send_to_peer_round_trip_via_cluster_rpc(
         assert result["status"] == 200, result
         assert result["body"].get("ok") is True
 
-        # 2) Sat's local HTTP actually received the POST with the full body
+        # 2) Guest's local HTTP actually received the POST with the full body
         await _wait_until(lambda: bool(received), timeout=2.0)
         assert received[0] == {
             "target_workgroup": "remote-wg",
@@ -171,7 +171,7 @@ async def test_send_to_peer_round_trip_via_cluster_rpc(
             "body": "ping from local",
         }, received
     finally:
-        await sat.stop()
+        await guest.stop()
 
 
 @pytest.mark.asyncio
@@ -179,16 +179,16 @@ async def test_host_send_peer_falls_through_to_sat_when_target_not_local(
     host_registry_app, sat_local_app,
 ):
     """The exact decision in gateway.send_peer: if target NOT in local
-    routers AND sat_registry has a workgroup-kind bot named target, it
+    routers AND guest_registry has a workgroup-kind bot named target, it
     must fall through to RPC. Reproduces the pure routing logic without
     needing a full Gateway."""
     registry, host_port = host_registry_app
     received, sat_port = sat_local_app
 
-    sat = SatelliteClient(
+    guest = GuestClient(
         host_url=f"http://127.0.0.1:{host_port}",
         host_token="cluster-secret",
-        machine_id="sat-1",
+        machine_id="guest-1",
         local_web_port=sat_port,
         tunnel_name="dummy-tunnel",
         local_web_token="",
@@ -197,9 +197,9 @@ async def test_host_send_peer_falls_through_to_sat_when_target_not_local(
              "backend": "claude-cli", "kind": "workgroup"},
         ],
     )
-    sat.start()
+    guest.start()
     try:
-        await _wait_until(lambda: "sat-1" in registry.sessions, timeout=3.0)
+        await _wait_until(lambda: "guest-1" in registry.sessions, timeout=3.0)
 
         # Replicate gateway.send_peer's decision tree (target NOT local).
         target = "remote-wg"
@@ -226,13 +226,13 @@ async def test_host_send_peer_falls_through_to_sat_when_target_not_local(
         assert received[0]["sender"] == sender
         assert received[0]["body"] == message
     finally:
-        await sat.stop()
+        await guest.stop()
 
 
 # ---------------------------------------------------------------------------
 # Pre-existing failure cleanup (per yait #13)
 # ---------------------------------------------------------------------------
-# Note: test_cluster_registry.py still references SatelliteRegistry.find_bot,
+# Note: test_cluster_registry.py still references GuestRegistry.find_bot,
 # which has been removed in favor of list_bots() + get_bot(). Those 3 dead
 # tests are tracked separately in #13 and intentionally NOT touched by this
 # file — they need their own dedicated cleanup commit.
@@ -246,7 +246,7 @@ async def test_host_send_peer_falls_through_to_sat_when_target_not_local(
 def test_peer_recv_route_registered_on_web_app_not_api_app():
     """Production bug (heartbeat-discovered, 2026-05-03):
     `/api/wg/peer/recv` was registered on the internal API aiohttp app
-    (port 9390-ish) but sat_client forwards RPC frames to the WEB UI port
+    (port 9390-ish) but guest_client forwards RPC frames to the WEB UI port
     (9292). Result: every cross-machine peer message silently 404'd.
 
     This test guards the wiring by booting the same two route-registration
@@ -270,7 +270,7 @@ def test_peer_recv_route_registered_on_web_app_not_api_app():
 
     assert "/api/wg/peer/recv" in web_paths, (
         "regression: /api/wg/peer/recv must live on the web UI app — "
-        "sat_client forwards RPCs to the web port, not the API port"
+        "guest_client forwards RPCs to the web port, not the API port"
     )
     assert "/api/wg/peer/recv" not in api_paths, (
         "regression: /api/wg/peer/recv must NOT be on the internal API app "
@@ -287,8 +287,8 @@ def test_peer_recv_route_registered_on_web_app_not_api_app():
 async def test_send_peer_surfaces_404_from_sat_recv():
     """Second half of the same production bug: even if the route move above
     regresses again, send_peer must NOT pretend the message landed when the
-    sat side returned a non-2xx status. Calls Gateway.send_peer directly
-    with a fake sat that returns 404.
+    guest side returned a non-2xx status. Calls Gateway.send_peer directly
+    with a fake guest that returns 404.
     """
     # Inline a minimal Gateway-like with just the send_peer method.
     from boxagent.gateway import Gateway
@@ -300,16 +300,16 @@ async def test_send_peer_surfaces_404_from_sat_recv():
     class _FakeRegistry:
         def list_bots(self):
             from boxagent.cluster.registry import RemoteBot
-            return [("sat-x", RemoteBot(name="remote-wg", kind="workgroup"))]
+            return [("guest-x", RemoteBot(name="remote-wg", kind="workgroup"))]
 
         def get(self, mid):
-            return _FakeSession() if mid == "sat-x" else None
+            return _FakeSession() if mid == "guest-x" else None
 
     # Construct a minimal Gateway just for the helper method; don't start
     # any HTTP servers.
     gw = Gateway.__new__(Gateway)
     gw._workgroup_mgr = None       # target not local
-    gw._sat_registry = _FakeRegistry()
+    gw._guest_registry = _FakeRegistry()
 
     result = await gw.send_peer("remote-wg", "local-wg", "hello")
     assert result["ok"] is False, f"send_peer must NOT report success on 404; got {result}"
@@ -325,8 +325,8 @@ async def test_send_peer_surfaces_404_from_sat_recv():
 
 def test_build_peer_descriptors_combines_local_and_remote():
     """Replaces the old peers.yaml read. Source = local workgroup_mgr.routers
-    + remote sat_registry.list_bots() + offline history. Self is excluded."""
-    from boxagent.cluster.registry import RemoteBot, SatelliteRegistry
+    + remote guest_registry.list_bots() + offline history. Self is excluded."""
+    from boxagent.cluster.registry import RemoteBot, GuestRegistry
     from boxagent.config import AppConfig, WorkgroupConfig
     from boxagent.gateway import Gateway
 
@@ -343,19 +343,19 @@ def test_build_peer_descriptors_combines_local_and_remote():
 
     gw._workgroup_mgr = _FakeMgr()
 
-    reg = SatelliteRegistry()
-    # Online sat with one workgroup + one regular bot (regular must be excluded)
+    reg = GuestRegistry()
+    # Online guest with one workgroup + one regular bot (regular must be excluded)
     sess = type("S", (), {"bots": [
         RemoteBot(name="mac-mini-wg", display_name="MM Admin", kind="workgroup"),
         RemoteBot(name="claude", display_name="Claude bot", kind="bot"),
     ]})()
     reg.sessions["macmini"] = sess
-    # Offline sat (history only)
+    # Offline guest (history only)
     reg.history["old-mbp"] = {
         "bots": [{"name": "old-mbp-wg", "display_name": "Old", "kind": "workgroup"}],
         "last_seen": 0,
     }
-    gw._sat_registry = reg
+    gw._guest_registry = reg
 
     peers = gw._build_peer_descriptors(exclude="war-room")
 
@@ -372,19 +372,19 @@ def test_build_peer_descriptors_combines_local_and_remote():
     assert by_name["old-mbp-wg"]["online"] is False
 
 
-def test_build_peer_descriptors_satellite_node_returns_local_only():
-    """On a satellite node sat_registry is None — return local workgroups
-    only, until sat→host peer-list RPC lands (yait #67)."""
+def test_build_peer_descriptors_guest_node_returns_local_only():
+    """On a guest node guest_registry is None — return local workgroups
+    only, until guest→host peer-list RPC lands (yait #67)."""
     from boxagent.config import AppConfig, WorkgroupConfig
     from boxagent.gateway import Gateway
 
     gw = Gateway.__new__(Gateway)
     gw.config = AppConfig(workgroups={
-        "sat-wg": WorkgroupConfig(name="sat-wg", display_name="Sat WG"),
+        "guest-wg": WorkgroupConfig(name="guest-wg", display_name="Guest WG"),
     })
-    gw._workgroup_mgr = type("M", (), {"routers": {"sat-wg": object()}})()
-    gw._sat_registry = None
+    gw._workgroup_mgr = type("M", (), {"routers": {"guest-wg": object()}})()
+    gw._guest_registry = None
 
     peers = gw._build_peer_descriptors(exclude="")
-    assert [p["name"] for p in peers] == ["sat-wg"]
+    assert [p["name"] for p in peers] == ["guest-wg"]
     assert peers[0]["machine"] == "local"

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from boxagent.cluster.registry import RemoteBot, SatelliteRegistry, SatelliteSession
+from boxagent.cluster.registry import RemoteBot, GuestRegistry, GuestSession
 
 
 class _FakeWS:
@@ -25,17 +25,17 @@ class _FakeWS:
 
 @pytest.fixture
 def session():
-    return SatelliteSession(
+    return GuestSession(
         machine_id="pc",
         ws=_FakeWS(),
         bots=[RemoteBot(name="bot1", display_name="Bot 1", backend="claude-cli")],
     )
 
 
-class TestSatelliteRegistry:
+class TestGuestRegistry:
     def test_get_bot_returns_owner(self):
-        reg = SatelliteRegistry()
-        sess = SatelliteSession(machine_id="pc", ws=_FakeWS(),
+        reg = GuestRegistry()
+        sess = GuestSession(machine_id="pc", ws=_FakeWS(),
                                 bots=[RemoteBot(name="bot1")])
         reg.sessions["pc"] = sess
         hit = reg.get_bot("pc", "bot1")
@@ -43,13 +43,13 @@ class TestSatelliteRegistry:
         assert hit.name == "bot1"
 
     def test_get_bot_missing_returns_none(self):
-        reg = SatelliteRegistry()
+        reg = GuestRegistry()
         assert reg.get_bot("pc", "nope") is None
 
     def test_list_bots_aggregates_machines(self):
-        reg = SatelliteRegistry()
-        reg.sessions["a"] = SatelliteSession("a", _FakeWS(), [RemoteBot(name="x"), RemoteBot(name="y")])
-        reg.sessions["b"] = SatelliteSession("b", _FakeWS(), [RemoteBot(name="z")])
+        reg = GuestRegistry()
+        reg.sessions["a"] = GuestSession("a", _FakeWS(), [RemoteBot(name="x"), RemoteBot(name="y")])
+        reg.sessions["b"] = GuestSession("b", _FakeWS(), [RemoteBot(name="z")])
         rows = reg.list_bots()
         assert len(rows) == 3
         assert {(m, b.name) for (m, b) in rows} == {("a", "x"), ("a", "y"), ("b", "z")}
@@ -94,7 +94,7 @@ class TestRpcRoundtrip:
 
 class TestHelloHandshake:
     async def test_rejects_bad_token(self):
-        reg = SatelliteRegistry(expected_token="secret")
+        reg = GuestRegistry(expected_token="secret")
 
         # Fake aiohttp request → ws prepare flow with a stub ws
         class _StubWS:
@@ -135,13 +135,13 @@ class TestHelloHandshake:
         assert "pc" not in reg.sessions
 
     async def test_session_replaces_on_reconnect(self):
-        reg = SatelliteRegistry(expected_token="t")
+        reg = GuestRegistry(expected_token="t")
         old_ws = _FakeWS()
-        reg.sessions["pc"] = SatelliteSession("pc", old_ws, [])
+        reg.sessions["pc"] = GuestSession("pc", old_ws, [])
         # Simulate a new session installing itself (the handler does this)
         new_ws = _FakeWS()
         reg.sessions["pc"]._closed = True
         await reg.sessions["pc"].ws.close()
-        reg.sessions["pc"] = SatelliteSession("pc", new_ws, [RemoteBot(name="b")])
+        reg.sessions["pc"] = GuestSession("pc", new_ws, [RemoteBot(name="b")])
         assert old_ws.closed
         assert reg.sessions["pc"].ws is new_ws

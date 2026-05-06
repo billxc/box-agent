@@ -7,61 +7,54 @@ Suspect identifiers (short or matching known-offender tokens). Each row:
 
 | name | refs | defs | sample locations |
 |------|-----:|-----:|------------------|
-| `web` | 143 | 1 | src/boxagent/channels/web.py:0 (module) |
-| `ch` | 78 | 20 | src/boxagent/channels/discord.py:742 (param); src/boxagent/gateway.py:464 (param); src/boxagent/gateway.py:474 (param) |
-| `mid` | 76 | 15 | src/boxagent/channels/discord.py:433 (attr); src/boxagent/channels/discord.py:459 (attr); src/boxagent/channels/discord.py:590 (attr) |
-| `bot` | 60 | 20 | src/boxagent/doctor.py:235 (comp); src/boxagent/gateway.py:835 (loop); src/boxagent/gateway.py:1147 (loop) |
+| `web` | 171 | 1 | src/boxagent/channels/web.py:0 (module) |
+| `mid` | 81 | 16 | src/boxagent/channels/discord.py:433 (attr); src/boxagent/channels/discord.py:459 (attr); src/boxagent/channels/discord.py:590 (attr) |
+| `ch` | 78 | 20 | src/boxagent/channels/discord.py:742 (param); src/boxagent/gateway.py:462 (param); src/boxagent/gateway.py:472 (param) |
+| `bot` | 61 | 22 | src/boxagent/doctor.py:235 (comp); src/boxagent/gateway.py:845 (loop); src/boxagent/gateway.py:1365 (loop) |
 | `st` | 54 | 15 | src/boxagent/sessions/raw_pool.py:54 (attr); src/boxagent/sessions/raw_pool.py:56 (attr); src/boxagent/sessions/raw_pool.py:73 (attr) |
-| `b` | 36 | 8 | src/boxagent/cluster/registry.py:154 (comp); src/boxagent/cluster/registry.py:173 (loop); src/boxagent/cluster/registry.py:182 (loop) |
-| `cfg` | 35 | 10 | src/boxagent/config.py:148 (loop); src/boxagent/config.py:156 (loop); src/boxagent/gateway.py:516 (attr) |
-| `wg` | 35 | 10 | src/boxagent/config.py:176 (loop); src/boxagent/gateway.py:782 (attr); src/boxagent/gateway.py:826 (attr) |
-| `sp` | 28 | 4 | src/boxagent/mcp_http.py:227 (loop); src/boxagent/workgroup/manager.py:133 (param); src/boxagent/workgroup/manager.py:682 (attr) |
-| `ref` | 16 | 4 | src/boxagent/scheduler/engine.py:520 (loop); src/boxagent/scheduler/engine.py:527 (comp); src/boxagent/scheduler/engine.py:572 (attr) |
-| `web_ch` | 14 | 4 | src/boxagent/gateway.py:431 (attr); src/boxagent/gateway.py:586 (attr); src/boxagent/workgroup/manager.py:316 (attr) |
-| `wh` | 14 | 4 | src/boxagent/channels/discord.py:155 (loop); src/boxagent/channels/discord.py:161 (attr); src/boxagent/channels/discord.py:175 (attr) |
-| `cat` | 14 | 3 | src/boxagent/channels/discord.py:97 (loop); src/boxagent/config.py:160 (loop); src/boxagent/config.py:186 (attr) |
+| `b` | 44 | 10 | src/boxagent/cluster/registry.py:166 (comp); src/boxagent/cluster/registry.py:185 (loop); src/boxagent/cluster/registry.py:194 (loop) |
+| `cfg` | 35 | 10 | src/boxagent/config.py:148 (loop); src/boxagent/config.py:156 (loop); src/boxagent/gateway.py:514 (attr) |
+| `old` | 13 | 3 | src/boxagent/cluster/registry.py:321 (attr); src/boxagent/sessions/storage.py:75 (attr); src/boxagent/sessions/storage.py:199 (attr) |
 | `d` | 12 | 7 | src/boxagent/channels/discord.py:354 (param); src/boxagent/config.py:572 (loop); src/boxagent/config.py:646 (loop) |
+| `cid` | 12 | 4 | src/boxagent/gateway.py:1476 (attr); src/boxagent/gateway.py:1479 (attr); src/boxagent/workgroup/manager.py:474 (attr) |
 | `add` | 12 | 1 | src/boxagent/scheduler/cli.py:40 (attr) |
-| `err` | 11 | 5 | src/boxagent/cluster/sat_client.py:29 (attr); src/boxagent/cluster/sat_client.py:65 (attr); src/boxagent/cluster/tunnel.py:127 (attr) |
+| `err` | 11 | 5 | src/boxagent/cluster/guest_client.py:32 (attr); src/boxagent/cluster/guest_client.py:68 (attr); src/boxagent/cluster/tunnel.py:127 (attr) |
+| `wh` | 11 | 3 | src/boxagent/channels/discord.py:155 (loop); src/boxagent/channels/discord.py:161 (attr); src/boxagent/channels/discord.py:175 (attr) |
 | `att` | 11 | 2 | src/boxagent/channels/discord.py:694 (loop); src/boxagent/router/core.py:618 (loop) |
-| `old` | 10 | 2 | src/boxagent/cluster/registry.py:231 (attr); src/boxagent/sessions/storage.py:70 (attr) |
+| `req` | 10 | 2 | src/boxagent/cluster/guest_client.py:370 (param); src/boxagent/cluster/registry.py:207 (param) |
 | `idx` | 9 | 4 | src/boxagent/router/commands.py:160 (attr); src/boxagent/router/commands.py:162 (attr); src/boxagent/router/core.py:250 (attr) |
 | `npm` | 9 | 3 | src/boxagent/doctor.py:94 (attr); src/boxagent/doctor.py:114 (attr); src/boxagent/doctor.py:129 (attr) |
-| `txt` | 9 | 3 | src/boxagent/gateway.py:1416 (attr); src/boxagent/sessions/claude_native.py:237 (attr); src/boxagent/sessions/claude_native.py:295 (attr) |
+| `txt` | 9 | 3 | src/boxagent/gateway.py:1683 (attr); src/boxagent/sessions/claude_native.py:251 (attr); src/boxagent/sessions/claude_native.py:309 (attr) |
 | `sub` | 9 | 2 | src/boxagent/doctor.py:161 (loop); src/boxagent/router/commands.py:341 (attr) |
 | `pos` | 8 | 4 | src/boxagent/channels/md_format.py:46 (attr); src/boxagent/channels/md_format.py:84 (attr); src/boxagent/channels/md_format.py:112 (attr) |
 | `fix` | 8 | 2 | src/boxagent/doctor.py:177 (param); src/boxagent/doctor.py:309 (param) |
-| `cb` | 7 | 2 | src/boxagent/agent/acp_process.py:70 (param); src/boxagent/agent/acp_process.py:140 (attr) |
 | `ls` | 7 | 2 | src/boxagent/scheduler/cli.py:61 (attr); src/boxagent/sessions/cli.py:22 (attr) |
-| `cid` | 6 | 3 | src/boxagent/channels/discord.py:277 (attr); src/boxagent/gateway.py:464 (param); src/boxagent/workgroup/heartbeat.py:306 (loop) |
-| `blk` | 6 | 1 | src/boxagent/sessions/claude_native.py:272 (loop) |
-| `u` | 6 | 1 | src/boxagent/cluster/sat_client.py:204 (attr) |
-| `__all__` | 5 | 5 | src/boxagent/cluster/__init__.py:33 (attr); src/boxagent/router/__init__.py:7 (attr); src/boxagent/scheduler/__init__.py:5 (attr) |
+| `blk` | 6 | 1 | src/boxagent/sessions/claude_native.py:286 (loop) |
+| `u` | 6 | 1 | src/boxagent/cluster/guest_client.py:318 (attr) |
+| `__all__` | 5 | 5 | src/boxagent/cluster/__init__.py:34 (attr); src/boxagent/router/__init__.py:7 (attr); src/boxagent/scheduler/__init__.py:5 (attr) |
 | `c` | 5 | 2 | src/boxagent/doctor.py:34 (loop); src/boxagent/mcp_http.py:295 (loop) |
 | `gap` | 5 | 2 | src/boxagent/scheduler/engine.py:341 (attr); src/boxagent/scheduler/engine.py:346 (attr) |
-| `hb` | 5 | 2 | src/boxagent/workgroup/manager.py:469 (attr); src/boxagent/workgroup/manager.py:943 (loop) |
-| `req` | 5 | 1 | src/boxagent/cluster/sat_client.py:227 (param) |
 | `h` | 4 | 3 | src/boxagent/channels/discord.py:452 (param); src/boxagent/channels/telegram.py:207 (param); src/boxagent/sessions/cli.py:519 (attr) |
-| `dc` | 4 | 2 | src/boxagent/gateway.py:1103 (loop); src/boxagent/mcp_http.py:418 (loop) |
-| `via` | 4 | 2 | src/boxagent/gateway.py:1198 (attr); src/boxagent/mcp_http.py:473 (attr) |
+| `dc` | 4 | 2 | src/boxagent/gateway.py:1321 (loop); src/boxagent/mcp_http.py:418 (loop) |
+| `via` | 4 | 2 | src/boxagent/gateway.py:1434 (attr); src/boxagent/mcp_http.py:488 (attr) |
 | `run` | 4 | 1 | src/boxagent/scheduler/cli.py:85 (attr) |
 | `pl` | 3 | 2 | src/boxagent/sessions/cli.py:457 (attr); src/boxagent/sessions/cli.py:477 (attr) |
 | `btn` | 3 | 1 | src/boxagent/channels/discord.py:352 (attr) |
-| `ch_id` | 3 | 1 | src/boxagent/mcp_http.py:365 (attr) |
 | `dis` | 3 | 1 | src/boxagent/scheduler/cli.py:75 (attr) |
 | `dl` | 3 | 1 | src/boxagent/scheduler/cli.py:65 (attr) |
 | `en` | 3 | 1 | src/boxagent/scheduler/cli.py:70 (attr) |
-| `ev` | 3 | 1 | src/boxagent/gateway.py:1415 (attr) |
+| `ev` | 3 | 1 | src/boxagent/gateway.py:1682 (attr) |
 | `gw` | 3 | 1 | src/boxagent/main.py:144 (attr) |
 | `rc` | 3 | 1 | src/boxagent/cluster/tunnel.py:131 (attr) |
-| `wd` | 3 | 1 | src/boxagent/gateway.py:497 (attr) |
-| `_run` | 2 | 3 | src/boxagent/cluster/tunnel.py:121 (func); src/boxagent/main.py:143 (func); src/boxagent/workgroup/manager.py:532 (func) |
+| `tmp` | 3 | 1 | src/boxagent/sessions/storage.py:186 (attr) |
+| `wd` | 3 | 1 | src/boxagent/gateway.py:495 (attr) |
+| `_run` | 2 | 3 | src/boxagent/cluster/tunnel.py:121 (func); src/boxagent/main.py:143 (func); src/boxagent/workgroup/manager.py:543 (func) |
 | `bl` | 2 | 2 | src/boxagent/sessions/cli.py:422 (attr); src/boxagent/sessions/cli.py:427 (attr) |
 | `exc` | 2 | 2 | src/boxagent/agent/acp_process.py:420 (except); src/boxagent/doctor.py:193 (except) |
 | `cb_chat_type` | 2 | 1 | src/boxagent/channels/telegram.py:483 (attr) |
 | `cmd` | 2 | 1 | src/boxagent/agent/acp_process.py:44 (param) |
-| `dc_ch` | 2 | 1 | src/boxagent/gateway.py:231 (loop) |
-| `dc_key` | 2 | 1 | src/boxagent/gateway.py:231 (loop) |
+| `dc_ch` | 2 | 1 | src/boxagent/gateway.py:229 (loop) |
+| `dc_key` | 2 | 1 | src/boxagent/gateway.py:229 (loop) |
 | `dm` | 2 | 1 | src/boxagent/channels/discord.py:286 (attr) |
 | `dt` | 2 | 1 | src/boxagent/sessions/cli.py:279 (attr) |
 | `fh` | 2 | 1 | src/boxagent/scheduler/cli.py:397 (with) |
@@ -74,17 +67,14 @@ Suspect identifiers (short or matching known-offender tokens). Each row:
 | `_all` | 1 | 1 | src/boxagent/sessions/pool.py:39 (attr) |
 | `_bot` | 1 | 1 | src/boxagent/channels/telegram.py:35 (attr) |
 | `_dp` | 1 | 1 | src/boxagent/channels/telegram.py:36 (attr) |
-| `_sat_client` | 1 | 1 | src/boxagent/gateway.py:197 (attr) |
-| `_sat_registry` | 1 | 1 | src/boxagent/gateway.py:196 (attr) |
-| `_workgroup_mgr` | 1 | 1 | src/boxagent/gateway.py:200 (attr) |
-| `bc` | 1 | 1 | src/boxagent/gateway.py:491 (param) |
+| `_workgroup_mgr` | 1 | 1 | src/boxagent/gateway.py:198 (attr) |
+| `bc` | 1 | 1 | src/boxagent/gateway.py:489 (param) |
 | `cl` | 1 | 1 | src/boxagent/sessions/cli.py:409 (attr) |
 | `cnt` | 1 | 1 | src/boxagent/scheduler/engine.py:230 (comp) |
 | `e2` | 1 | 1 | src/boxagent/channels/telegram.py:363 (except) |
 | `opt` | 1 | 1 | src/boxagent/agent/acp_process.py:111 (comp) |
 | `kw` | 0 | 9 | src/boxagent/agent/acp_process.py:182 (param); src/boxagent/agent/acp_process.py:185 (param); src/boxagent/agent/acp_process.py:188 (param) |
 | `cli` | 0 | 2 | src/boxagent/scheduler/cli.py:0 (module); src/boxagent/sessions/cli.py:0 (module) |
-| `get` | 0 | 1 | src/boxagent/cluster/registry.py:138 (func) |
-| `sat_client` | 0 | 1 | src/boxagent/cluster/sat_client.py:0 (module) |
+| `get` | 0 | 1 | src/boxagent/cluster/registry.py:150 (func) |
 
-Total suspect identifiers: **79**.
+Total suspect identifiers: **69**.

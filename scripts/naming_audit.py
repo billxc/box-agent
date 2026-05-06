@@ -51,7 +51,6 @@ WHITELIST = {
 # `dt_token` / `sat_client` / `dc_channel`).  Drop these by either spelling
 # the full word or replacing with a less ambiguous abbreviation.
 KNOWN_OFFENDER_TOKENS = {
-    "sat",       # satellite
     "dt",        # devtunnel
     "dc",        # discord
     "wapp",      # web app

@@ -11,7 +11,7 @@ from pathlib import Path
 from boxagent.agent.claude_process import ClaudeProcess
 from boxagent.channels.base import IncomingMessage
 from boxagent.channels.web import WebChannel
-from boxagent.cluster import ClusterTunnel, SatelliteClient, SatelliteRegistry
+from boxagent.cluster import ClusterTunnel, GuestClient, GuestRegistry
 from boxagent.config import AppConfig, BotConfig, WorkgroupConfig, node_matches
 from boxagent.paths import default_config_dir, default_local_dir, default_workspace_dir
 from boxagent.router import Router
@@ -191,8 +191,8 @@ class Gateway:
     _scheduler: Scheduler | None = field(default=None, repr=False)
     _scheduler_task: asyncio.Task | None = field(default=None, repr=False)
     _http_runner: web.AppRunner | None = field(default=None, repr=False)
-    _sat_registry: SatelliteRegistry | None = field(default=None, repr=False)
-    _sat_client: SatelliteClient | None = field(default=None, repr=False)
+    _guest_registry: GuestRegistry | None = field(default=None, repr=False)
+    _guest_client: GuestClient | None = field(default=None, repr=False)
     _cluster_tunnel: ClusterTunnel | None = field(default=None, repr=False)
     _start_time: float = 0.0
     _workgroup_mgr: WorkgroupManager | None = field(default=None, repr=False)
@@ -258,8 +258,8 @@ class Gateway:
         # Start HTTP API
         await self._start_http()
 
-        # If configured as a cluster host, manage our own devtunnel for /api/sat/ws
-        if self.config.satellite_token and self.config.cluster_tunnel:
+        # If configured as a cluster host, manage our own devtunnel for /api/guest/ws
+        if self.config.guest_token and self.config.cluster_tunnel:
             self._cluster_tunnel = ClusterTunnel(
                 name=self.config.cluster_tunnel,
                 port=self.config.web_port or 9292,
@@ -271,10 +271,10 @@ class Gateway:
                 logger.error("Cluster: failed to start host devtunnel: %s", e)
                 self._cluster_tunnel = None
 
-        # If configured as a satellite, dial the host (URL resolved via tunnel_name)
-        if (not self.config.satellite_token) and self.config.cluster_tunnel and self.config.host_token:
-            mid = self.config.machine_id or self.config.node_id or "satellite"
-            self._sat_client = SatelliteClient(
+        # If configured as a guest, dial the host (URL resolved via tunnel_name)
+        if (not self.config.guest_token) and self.config.cluster_tunnel and self.config.host_token:
+            mid = self.config.machine_id or self.config.node_id or "guest"
+            self._guest_client = GuestClient(
                 host_url="",  # resolved by client via tunnel_name
                 host_token=self.config.host_token,
                 machine_id=mid,
@@ -283,9 +283,9 @@ class Gateway:
                 tunnel_name=self.config.cluster_tunnel,
                 bot_provider=self._local_bot_descriptors,
             )
-            self._sat_client.start()
+            self._guest_client.start()
             logger.info(
-                "Cluster: satellite mode — will resolve host via tunnel '%s' (machine_id=%s)",
+                "Cluster: guest mode — will resolve host via tunnel '%s' (machine_id=%s)",
                 self.config.cluster_tunnel, mid,
             )
 
@@ -697,7 +697,7 @@ class Gateway:
         app.router.add_post("/api/workgroup/cancel_task", self._handle_cancel_task)
         app.router.add_post("/api/peer/send", self._handle_peer_send)
         # NOTE: /api/wg/peer/recv lives on `web_app` (the web UI port) instead of
-        # `app` (internal API port) because sat_client forwards RPC frames to
+        # `app` (internal API port) because guest_client forwards RPC frames to
         # `127.0.0.1:<local_web_port>` — the web UI port. Registering it here
         # would silently 404 every cross-machine peer message.
 
@@ -744,23 +744,24 @@ class Gateway:
         web_app.router.add_get("/api/claude/sessions", self._handle_claude_sessions)
         web_app.router.add_get("/api/claude/transcript", self._handle_claude_transcript)
         web_app.router.add_post("/api/claude/resume", self._handle_claude_resume)
-        # Cluster RPC inbound: sat_client forwards peer-recv RPCs to the web
+        # Cluster RPC inbound: guest_client forwards peer-recv RPCs to the web
         # UI port (see _start_http for why this lives here, not on `app`).
         web_app.router.add_post("/api/wg/peer/recv", self._handle_wg_peer_recv)
         # /api/peer/send also exposed on web_app so sats can forward
         # cross-node send_to_peer calls back to host via devtunnel
-        # (sat_client.fetch_host_json hits web_app, not app).
+        # (guest_client.fetch_host_json hits web_app, not app).
         web_app.router.add_post("/api/peer/send", self._handle_peer_send)
-        # Hub-and-spoke: WS endpoint for satellite nodes
-        if self.config.satellite_token:
-            self._sat_registry = SatelliteRegistry(
-                expected_token=self.config.satellite_token,
+        # Hub-and-spoke: WS endpoint for guest nodes
+        if self.config.guest_token:
+            self._guest_registry = GuestRegistry(
+                expected_token=self.config.guest_token,
                 on_topology_change=self._on_topology_change,
                 local_web_port=self.config.web_port if self.config.web_port is not None else 9292,
                 local_web_token=self.config.web_token or "",
             )
-            web_app.router.add_get("/api/sat/ws", self._sat_registry.handle_ws)
-            logger.info("Cluster: host mode enabled (accepting satellites at /api/sat/ws)")
+            web_app.router.add_get("/api/guest/ws", self._guest_registry.handle_ws)
+            web_app.router.add_get("/api/sat/ws", self._guest_registry.handle_ws)  # legacy alias
+            logger.info("Cluster: host mode enabled (accepting guests at /api/guest/ws)")
         web_static = _Path(__file__).parent / "web" / "static"
         if web_static.is_dir():
             web_app.router.add_static("/", path=str(web_static), show_index=False)
@@ -814,11 +815,11 @@ class Gateway:
 
         Sources combined:
         - Local workgroups (from ``self._workgroup_mgr.routers``)
-        - Remote workgroup-kind bots from connected satellites
-          (``self._sat_registry.list_bots()``)
-        - Remote workgroup-kind bots from disconnected-but-known satellites
-          (``self._sat_registry.history``) — flagged ``online=False``
-        - On a satellite (no local registry): ``self._satellite_client.remote_peers``
+        - Remote workgroup-kind bots from connected guests
+          (``self._guest_registry.list_bots()``)
+        - Remote workgroup-kind bots from disconnected-but-known guests
+          (``self._guest_registry.history``) — flagged ``online=False``
+        - On a guest (no local registry): ``self._guest_client.remote_peers``
           pushed by host via ``peers_snapshot`` frames.
 
         Each entry: ``{name, machine, online, kind, description}``. Used by
@@ -840,8 +841,8 @@ class Gateway:
                     "kind": "workgroup",
                     "description": workgroup.display_name or "",
                 })
-        if self._sat_registry is not None:
-            for machine_id, bot in self._sat_registry.list_bots():
+        if self._guest_registry is not None:
+            for machine_id, bot in self._guest_registry.list_bots():
                 if bot.kind != "workgroup" or bot.name == exclude:
                     continue
                 out.append({
@@ -852,7 +853,7 @@ class Gateway:
                     "description": bot.display_name or "",
                 })
             seen = {(p["name"], p["machine"]) for p in out}
-            for machine_id, info in (self._sat_registry.history or {}).items():
+            for machine_id, info in (self._guest_registry.history or {}).items():
                 for b in info.get("bots") or []:
                     if b.get("kind") != "workgroup":
                         continue
@@ -866,10 +867,10 @@ class Gateway:
                         "kind": "workgroup",
                         "description": b.get("display_name") or "",
                     })
-        elif self._sat_client is not None:
-            # Satellite mode: registry is None, but host pushes peers_snapshot
+        elif self._guest_client is not None:
+            # Guest mode: registry is None, but host pushes peers_snapshot
             # frames containing the cross-cluster workgroup peer list.
-            for p in self._sat_client.remote_peers:
+            for p in self._guest_client.remote_peers:
                 if not isinstance(p, dict):
                     continue
                 if p.get("name") == exclude:
@@ -884,21 +885,21 @@ class Gateway:
         return out
 
     async def _push_peers_snapshot_to_sats(self, changed_machine_id: str | None) -> None:
-        """Send each connected satellite a `peers_snapshot` frame so its admin
+        """Send each connected guest a `peers_snapshot` frame so its admin
         can see workgroups elsewhere in the cluster.
 
-        Triggered by SatelliteRegistry on hello / bots_update / disconnect.
-        Each sat receives a list filtered to exclude its own workgroup-kind
+        Triggered by GuestRegistry on hello / bots_update / disconnect.
+        Each guest receives a list filtered to exclude its own workgroup-kind
         bots (so it doesn't see itself as a peer).
 
-        ``changed_machine_id`` is just informational (which sat's state moved);
-        we always re-broadcast to everyone since one sat's change affects what
+        ``changed_machine_id`` is just informational (which guest's state moved);
+        we always re-broadcast to everyone since one guest's change affects what
         the others can route to.
         """
-        if self._sat_registry is None:
+        if self._guest_registry is None:
             return
-        # Collect per-sat exclusion sets up front (avoid recompute per send).
-        for machine_id, sess in list(self._sat_registry.sessions.items()):
+        # Collect per-guest exclusion sets up front (avoid recompute per send).
+        for machine_id, sess in list(self._guest_registry.sessions.items()):
             self_workgroup_names = {
                 b.name for b in sess.bots if b.kind == "workgroup"
             }
@@ -919,9 +920,9 @@ class Gateway:
                         "description": workgroup.display_name or "",
                     })
             # Other sats' workgroup-kind bots
-            for other_mid, other_bot in self._sat_registry.list_bots():
+            for other_mid, other_bot in self._guest_registry.list_bots():
                 if other_mid == machine_id:
-                    continue  # don't tell a sat about itself
+                    continue  # don't tell a guest about itself
                 if other_bot.kind != "workgroup":
                     continue
                 if other_bot.name in self_workgroup_names:
@@ -939,9 +940,9 @@ class Gateway:
                 logger.warning("peers_snapshot push to %s failed: %s", machine_id, e)
 
     async def _on_topology_change(self, changed_machine_id: str | None) -> None:
-        """Single hook for SatelliteRegistry topology events. Fans out to both
+        """Single hook for GuestRegistry topology events. Fans out to both
         the workgroup peers snapshot and the cluster machines snapshot so each
-        sat keeps an up-to-date view for its own webui."""
+        guest keeps an up-to-date view for its own webui."""
         await self._push_peers_snapshot_to_sats(changed_machine_id)
         await self._push_machines_snapshot_to_sats(changed_machine_id)
 
@@ -950,11 +951,11 @@ class Gateway:
         helper so the snapshot pusher and the HTTP handler share one source.
 
         Host node only — sats don't run a registry. Returns host's local
-        machine first, then every connected/known sat.
+        machine first, then every connected/known guest.
         """
         local_mid = self._local_machine_id()
-        local_role = "host" if self.config.satellite_token else (
-            "satellite" if self.config.host_token else "single"
+        local_role = "host" if self.config.guest_token else (
+            "guest" if self.config.host_token else "single"
         )
         machines: list[dict] = [{
             "machine_id": local_mid,
@@ -964,23 +965,23 @@ class Gateway:
             "bots": self._local_bot_descriptors(),
             "last_seen": time.time(),
         }]
-        if self._sat_registry is not None:
-            for m in self._sat_registry.list_machines():
-                m["role"] = "satellite"
+        if self._guest_registry is not None:
+            for m in self._guest_registry.list_machines():
+                m["role"] = "guest"
                 m["self"] = False
                 machines.append(m)
         return machines
 
     async def _push_machines_snapshot_to_sats(self, changed_machine_id: str | None) -> None:
-        """Push the full cluster machine list to every connected sat so each
-        sat's webui can render the same sidebar the host shows. Per-sat the
-        snapshot is filtered to drop the receiving sat's own row (the sat
+        """Push the full cluster machine list to every connected guest so each
+        guest's webui can render the same sidebar the host shows. Per-guest the
+        snapshot is filtered to drop the receiving guest's own row (the guest
         already renders itself from local state with ``self: true``).
         """
-        if self._sat_registry is None:
+        if self._guest_registry is None:
             return
         all_machines = self._collect_machines()
-        for machine_id, sess in list(self._sat_registry.sessions.items()):
+        for machine_id, sess in list(self._guest_registry.sessions.items()):
             filtered = [m for m in all_machines if m.get("machine_id") != machine_id]
             try:
                 await sess.ws.send_json({"type": "machines_snapshot", "machines": filtered})
@@ -999,18 +1000,18 @@ class Gateway:
         Returns None when the request targets the local node (caller should
         continue with its local handling).
 
-        Host role: forward via SatelliteSession (existing host→sat RPC).
-        Satellite role: forward via SatelliteClient (new sat→host RPC); the
-        host then dispatches locally or proxies onward to the right sat.
+        Host role: forward via GuestSession (existing host→guest RPC).
+        Guest role: forward via GuestClient (new guest→host RPC); the
+        host then dispatches locally or proxies onward to the right guest.
         """
         if machine == self._local_machine_id():
             return None
-        if self._sat_registry is not None:
-            sess = self._sat_registry.get(machine)
+        if self._guest_registry is not None:
+            sess = self._guest_registry.get(machine)
             if sess is None:
                 return web.json_response({"ok": False, "error": "unknown machine"}, status=404)
             return await self._proxy_to_remote(sess, method, path, request, body=body)
-        if self._sat_client is not None:
+        if self._guest_client is not None:
             return await self._proxy_via_host(method, path, request, body=body)
         return web.json_response({"ok": False, "error": "no cluster routing available"}, status=503)
 
@@ -1023,12 +1024,12 @@ class Gateway:
         """Streaming counterpart to `_dispatch_machine_request` for SSE."""
         if machine == self._local_machine_id():
             return None
-        if self._sat_registry is not None:
-            sess = self._sat_registry.get(machine)
+        if self._guest_registry is not None:
+            sess = self._guest_registry.get(machine)
             if sess is None:
                 return web.json_response({"ok": False, "error": "unknown machine"}, status=404)
             return await self._proxy_stream_to_remote(sess, path, request)
-        if self._sat_client is not None:
+        if self._guest_client is not None:
             return await self._proxy_via_host_stream(path, request)
         return web.json_response({"ok": False, "error": "no cluster routing available"}, status=503)
 
@@ -1039,9 +1040,9 @@ class Gateway:
         request: web.Request,
         body: dict | None = None,
     ) -> web.Response:
-        """Sat-side: forward an HTTP request to the host over the existing WS."""
+        """Guest-side: forward an HTTP request to the host over the existing WS."""
         try:
-            result = await self._sat_client.call(
+            result = await self._guest_client.call(
                 method, path, query=dict(request.query), body=body,
             )
         except asyncio.TimeoutError:
@@ -1055,7 +1056,7 @@ class Gateway:
         path: str,
         request: web.Request,
     ) -> web.StreamResponse:
-        """Sat-side: forward an SSE GET to the host, relay frames to the browser."""
+        """Guest-side: forward an SSE GET to the host, relay frames to the browser."""
         resp = web.StreamResponse(
             status=200,
             headers={
@@ -1068,7 +1069,7 @@ class Gateway:
         await resp.prepare(request)
         await resp.write(b": connected\n\n")
         try:
-            async for data in self._sat_client.call_stream(
+            async for data in self._guest_client.call_stream(
                 "GET", path, query=dict(request.query),
             ):
                 await resp.write(f"data: {data}\n\n".encode("utf-8"))
@@ -1349,7 +1350,7 @@ class Gateway:
     ) -> dict:
         """Cluster-aware cross-admin peer message dispatch.
 
-        Resolves target locally first, falls back to satellite RPC. Used by
+        Resolves target locally first, falls back to guest RPC. Used by
         both the HTTP route /api/peer/send and the MCP send_to_peer tool.
 
         Returns ``{ok: bool, via: "local"|"rpc"|"none", machine?: str, error?: str}``.
@@ -1360,11 +1361,11 @@ class Gateway:
         ):
             await self._dispatch_local_peer(target, sender, message)
             return {"ok": True, "via": "local"}
-        if self._sat_registry is not None:
-            for machine_id, bot in self._sat_registry.list_bots():
+        if self._guest_registry is not None:
+            for machine_id, bot in self._guest_registry.list_bots():
                 if bot.name != target or bot.kind != "workgroup":
                     continue
-                sess = self._sat_registry.get(machine_id)
+                sess = self._guest_registry.get(machine_id)
                 if sess is None:
                     continue
                 try:
@@ -1375,8 +1376,8 @@ class Gateway:
                 except Exception as e:
                     logger.error("Peer RPC to %s failed: %s", machine_id, e)
                     return {"ok": False, "via": "rpc", "error": f"rpc failed: {e}"}
-                # Don't trust SatelliteSession.call's transport-level success —
-                # the sat-side handler may have returned 404/500 (e.g. wrong
+                # Don't trust GuestSession.call's transport-level success —
+                # the guest-side handler may have returned 404/500 (e.g. wrong
                 # port, unknown workgroup). Surface non-2xx as a real failure
                 # so callers (and the admin AI) don't think the message was
                 # delivered when it wasn't.
@@ -1387,14 +1388,14 @@ class Gateway:
                 err = body.get("error") if isinstance(body, dict) else None
                 return {
                     "ok": False, "via": "rpc", "machine": machine_id,
-                    "error": f"sat returned status={status}: {err or body}",
+                    "error": f"guest returned status={status}: {err or body}",
                 }
-        # Sat mode: not host, can't see registry — forward to host's
+        # Guest mode: not host, can't see registry — forward to host's
         # /api/peer/send and let host resolve. Without this, sats can only
         # peer-message workgroups they host themselves.
-        if self._sat_client is not None:
+        if self._guest_client is not None:
             try:
-                result = await self._sat_client.fetch_host_json(
+                result = await self._guest_client.fetch_host_json(
                     "/api/peer/send", method="POST",
                     body={"target": target, "from": sender, "message": message},
                 )
@@ -1483,7 +1484,7 @@ class Gateway:
         """Handle POST /api/wg/peer/recv — receive a peer message from another node.
 
         Body: {target_workgroup, sender, body} where body is RAW (no envelope).
-        Caller (host's _handle_peer_send) routes here via cluster RPC; sat_client
+        Caller (host's _handle_peer_send) routes here via cluster RPC; guest_client
         forwards it over WS to this local gateway.
         """
         try:
@@ -1573,10 +1574,10 @@ class Gateway:
                     "kind": "workgroup",
                     "machine": local_mid,
                 })
-        # Federate: include bots from connected satellites (host role) or
-        # from the cached cluster snapshot pushed by host (sat role).
-        if self._sat_registry is not None:
-            for mid, b in self._sat_registry.list_bots():
+        # Federate: include bots from connected guests (host role) or
+        # from the cached cluster snapshot pushed by host (guest role).
+        if self._guest_registry is not None:
+            for mid, b in self._guest_registry.list_bots():
                 bots.append({
                     "name": b.name,
                     "display_name": (b.display_name or b.name) + f"  @{mid}",
@@ -1585,8 +1586,8 @@ class Gateway:
                     "kind": b.kind,
                     "machine": mid,
                 })
-        elif self._sat_client is not None:
-            for m in self._sat_client.remote_machines:
+        elif self._guest_client is not None:
+            for m in self._guest_client.remote_machines:
                 mid = m.get("machine_id") or ""
                 if not mid or mid == local_mid:
                     continue
@@ -1602,15 +1603,15 @@ class Gateway:
         return web.json_response({"bots": bots})
 
     async def _handle_web_machines(self, request: web.Request) -> web.Response:
-        """Return all known machines (self + connected/disconnected satellites)
+        """Return all known machines (self + connected/disconnected guests)
         so the UI can render a grouped sidebar with online/offline status."""
         if not self._web_authorized(request):
             return self._web_unauthorized()
-        if self._sat_registry is not None:
+        if self._guest_registry is not None:
             return web.json_response({"machines": self._collect_machines()})
-        # Sat role: render local machine + cached snapshot from host.
+        # Guest role: render local machine + cached snapshot from host.
         local_mid = self._local_machine_id()
-        local_role = "satellite" if self.config.host_token else "single"
+        local_role = "guest" if self.config.host_token else "single"
         machines: list[dict] = [{
             "machine_id": local_mid,
             "online": True,
@@ -1619,8 +1620,8 @@ class Gateway:
             "bots": self._local_bot_descriptors(),
             "last_seen": time.time(),
         }]
-        if self._sat_client is not None:
-            for m in self._sat_client.remote_machines:
+        if self._guest_client is not None:
+            for m in self._guest_client.remote_machines:
                 if m.get("machine_id") == local_mid:
                     continue
                 m = dict(m)
@@ -1636,7 +1637,7 @@ class Gateway:
         machine = request.query.get("machine", "")
         if not bot or not machine:
             return web.json_response({"ok": False, "error": "missing bot/machine"}, status=400)
-        # Remote? proxy via host (sat role) or to the owning sat (host role).
+        # Remote? proxy via host (guest role) or to the owning guest (host role).
         resp = await self._dispatch_machine_request(machine, "GET", "/api/sessions", request)
         if resp is not None:
             return resp
@@ -1699,7 +1700,7 @@ class Gateway:
     async def _handle_set_main_session(self, request: web.Request) -> web.Response:
         """POST /api/sessions/set_main {bot, machine, chat_id} — pin main chat_id.
 
-        Empty chat_id clears the pin. Remote machines proxy to the owning sat.
+        Empty chat_id clears the pin. Remote machines proxy to the owning guest.
         """
         if not self._web_authorized(request):
             return self._web_unauthorized()
@@ -1727,7 +1728,7 @@ class Gateway:
         """GET /api/version — return this node's version, optionally aggregated.
 
         Without ``?cluster=1``: just this process's commit/version.
-        With ``?cluster=1`` (host only): also queries every connected sat via
+        With ``?cluster=1`` (host only): also queries every connected guest via
         cluster RPC and returns ``{self, sats: {machine_id: ...}}``.
         """
         if not self._web_authorized(request):
@@ -1742,20 +1743,20 @@ class Gateway:
         }
         if request.query.get("cluster") not in ("1", "true", "yes"):
             return web.json_response({"ok": True, **local})
-        # Host mode: ask each connected sat via cluster RPC.
-        if self._sat_registry is not None:
+        # Host mode: ask each connected guest via cluster RPC.
+        if self._guest_registry is not None:
             sats: dict[str, object] = {}
-            for machine_id, sess in list(self._sat_registry.sessions.items()):
+            for machine_id, sess in list(self._guest_registry.sessions.items()):
                 try:
                     result = await sess.call("GET", "/api/version", timeout=5.0)
                     sats[machine_id] = result.get("body") or {"error": "no body"}
                 except Exception as e:
                     sats[machine_id] = {"error": str(e)}
             return web.json_response({"ok": True, "self": local, "sats": sats})
-        # Sat mode: ask host via tunnel HTTP, merge.
-        if self._sat_client is not None:
+        # Guest mode: ask host via tunnel HTTP, merge.
+        if self._guest_client is not None:
             try:
-                host_result = await self._sat_client.fetch_host_json("/api/version", {"cluster": "1"})
+                host_result = await self._guest_client.fetch_host_json("/api/version", {"cluster": "1"})
             except Exception as e:
                 host_result = {"error": str(e)}
             return web.json_response({"ok": True, "self": local, "host": host_result})
@@ -1779,7 +1780,7 @@ class Gateway:
         })
 
     async def _handle_admin_cluster_restart(self, request: web.Request) -> web.Response:
-        """POST /api/admin/cluster_restart — restart sat nodes (and self if asked).
+        """POST /api/admin/cluster_restart — restart guest nodes (and self if asked).
 
         Body / query options:
           - ``machines: [id, ...]`` — only restart these sats (default: all)
@@ -1787,7 +1788,7 @@ class Gateway:
         """
         if not self._web_authorized(request):
             return self._web_unauthorized()
-        if self._sat_registry is None:
+        if self._guest_registry is None:
             return web.json_response(
                 {"ok": False, "error": "not in host mode"}, status=400,
             )
@@ -1803,7 +1804,7 @@ class Gateway:
         except Exception:
             pass
         results: dict[str, object] = {}
-        for machine_id, sess in list(self._sat_registry.sessions.items()):
+        for machine_id, sess in list(self._guest_registry.sessions.items()):
             if target_filter is not None and machine_id not in target_filter:
                 continue
             try:
@@ -1826,12 +1827,12 @@ class Gateway:
         return self.config.machine_id or self.config.node_id or "local"
 
     def _remote_session_for(self, machine_id: str, bot: str):
-        """Return SatelliteSession owning `bot` on `machine_id`, or None."""
-        if self._sat_registry is None:
+        """Return GuestSession owning `bot` on `machine_id`, or None."""
+        if self._guest_registry is None:
             return None
-        if self._sat_registry.get_bot(machine_id, bot) is None:
+        if self._guest_registry.get_bot(machine_id, bot) is None:
             return None
-        return self._sat_registry.get(machine_id)
+        return self._guest_registry.get(machine_id)
 
     async def _proxy_to_remote(
         self,
@@ -1841,7 +1842,7 @@ class Gateway:
         request: web.Request,
         body: dict | None = None,
     ) -> web.Response:
-        """Forward an HTTP request to a satellite over WS RPC and return its response."""
+        """Forward an HTTP request to a guest over WS RPC and return its response."""
         try:
             result = await sess.call(
                 method, path,
@@ -1860,7 +1861,7 @@ class Gateway:
         path: str,
         request: web.Request,
     ) -> web.StreamResponse:
-        """Forward an SSE GET to a satellite, relay frames to the browser."""
+        """Forward an SSE GET to a guest, relay frames to the browser."""
         resp = web.StreamResponse(
             status=200,
             headers={
@@ -2172,13 +2173,13 @@ class Gateway:
         await self._stop_http()
         await self._stop_mcp_http()
 
-        # Stop satellite WS client (if running)
-        if self._sat_client is not None:
+        # Stop guest WS client (if running)
+        if self._guest_client is not None:
             try:
-                await self._sat_client.stop()
+                await self._guest_client.stop()
             except Exception as e:
-                logger.error("Error stopping sat client: %s", e)
-            self._sat_client = None
+                logger.error("Error stopping guest client: %s", e)
+            self._guest_client = None
 
         # Stop cluster devtunnel (host only)
         if self._cluster_tunnel is not None:

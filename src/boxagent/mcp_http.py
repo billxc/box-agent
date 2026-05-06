@@ -456,7 +456,7 @@ def _register_peer_tools(mcp: FastMCP) -> None:
 
         Routes via cluster RPC: if the target lives on this machine the
         message is dispatched in-process; otherwise it's sent over the
-        satellite WS to the node that owns the target. Discord shared
+        guest WS to the node that owns the target. Discord shared
         channels are no longer used.
 
         Default is fire-and-forget: returns "queued" immediately, lets the
@@ -507,7 +507,7 @@ def _register_telegram_tools(mcp: FastMCP) -> None:
             return f"Error: no Telegram token for bot '{bot_name}'"
         base_url = f"https://api.telegram.org/bot{token}"
         # Async httpx so a 60s upload doesn't block the whole event loop
-        # (peer messages, web UI, sat heartbeats all share this loop).
+        # (peer messages, web UI, guest heartbeats all share this loop).
         async with httpx.AsyncClient(timeout=60) as client:
             with open(file_path, "rb") as f:
                 files = {field: f}

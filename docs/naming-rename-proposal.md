@@ -46,10 +46,10 @@ same logical meaning. ✗ = different meanings — DO NOT mass-rename.
 | `dt_token` | devtunnel JWT | `devtunnel_token` | 2 / 1 | ✓ |
 | `_workgroup_mgr` | WorkgroupManager (gateway field) | `_workgroup_manager` | 1 / 1 | — |
 | `mgr` (params) | WorkgroupManager | `manager` | 多处 | — |
-| `_sat_client` | SatelliteClient (gateway field) | `_satellite_client` | 1 / 1 | — |
-| `_sat_registry` | SatelliteRegistry (gateway field) | `_satellite_registry` | 1 / 1 | — |
-| `sat_client.py` | satellite_client (module) | `satellite_client.py` | — | — |
-| `/api/sat/ws` (wire) | satellite WS endpoint | `/api/satellite/ws`（保留旧路径 alias 一段时间） | — | — |
+| `_sat_client` | GuestClient (gateway field) | `_guest_client` | 1 / 1 | ✅ |
+| `_sat_registry` | GuestRegistry (gateway field) | `_guest_registry` | 1 / 1 | ✅ |
+| `sat_client.py` | guest_client (module) | `guest_client.py` | — | ✅ |
+| `/api/sat/ws` (wire) | guest WS endpoint | `/api/guest/ws`（保留旧路径 alias 一段时间） | — | ✅ |
 
 ### Found-but-NOT-renaming (验证后剔除)
 
@@ -96,3 +96,4 @@ find-and-replace, batched per cluster (e.g. all `dc_*` together, all
 | 2026-05-04 | `sp_*` → `specialist_*` (workgroup/manager + mcp_http + 4 tests, 340 sites; +template `{sp_name}` placeholder; dropped `import subprocess as sp` alias) | ff0e209 |
 | 2026-05-04 | `wg_*` → `workgroup_*` (config + gateway + manager + 5 tests, 570 sites; +template `{wg_name}` placeholder; preserved wire `wg:` chat_id and `/api/wg/peer/recv`) | b3db003 |
 | 2026-05-04 | `cid` split (channel_id in discord.py, chat_id in gateway/heartbeat, 5 sites) | (this batch) |
+| 2026-05-06 | `_sat_*` → `_guest_*` (gateway field + 50+ refs) + `sat_client.py` → `guest_client.py` + classes `Satellite{Client,Registry,Session}` → `Guest{Client,Registry,Session}` + config `satellite_token` → `guest_token` (internal field; yaml `cluster.token` unchanged) + wire `/api/guest/ws` (legacy `/api/sat/ws` alias kept) — closes #68 | (this batch) |

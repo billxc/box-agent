@@ -104,8 +104,8 @@ def build_session_context(
         lines.append("[/Workgroup]")
 
     # Peer messaging info — list comes from cluster registry via Router.get_peers
-    # (see Gateway._build_peer_descriptors). NOTE on satellites the registry is
-    # not visible, so the list will be local-only until sat→host peer-list RPC
+    # (see Gateway._build_peer_descriptors). NOTE on guests the registry is
+    # not visible, so the list will be local-only until guest→host peer-list RPC
     # lands (yait #67).
     if has_peer_channel:
         lines.append("")

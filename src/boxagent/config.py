@@ -128,12 +128,12 @@ class AppConfig:
     web_trust_header: str = "X-BoxAgent-Trusted"
     machine_id: str = ""
     # Hub-and-spoke clustering (optional):
-    # If satellite_token is set, this node is a HOST: it accepts WS
-    # connections at /api/sat/ws from satellite nodes that present the same token.
-    satellite_token: str = ""
-    # Devtunnel name used by host (manages it) and satellites (resolves URL via it)
+    # If guest_token is set, this node is a HOST: it accepts WS
+    # connections at /api/guest/ws from guest nodes that present the same token.
+    guest_token: str = ""
+    # Devtunnel name used by host (manages it) and guests (resolves URL via it)
     cluster_tunnel: str = ""
-    # Shared cluster secret (host validates incoming sat hello frames; sats send it)
+    # Shared cluster secret (host validates incoming guest hello frames; guests send it)
     host_token: str = ""
     bots: dict[str, BotConfig] = field(default_factory=dict)
     workgroups: dict[str, WorkgroupConfig] = field(default_factory=dict)
@@ -257,13 +257,13 @@ def load_config(
     cluster_token = os.environ.get("BOXAGENT_CLUSTER_TOKEN", cluster_token)
     machine_id = node_id or cluster_host or ""
     is_host = bool(cluster_host) and node_id == cluster_host
-    # Satellite mode is implied by cluster.host being set and not pointing at
-    # this node.  Satellites resolve the host's tunnel URL on demand via
+    # Guest mode is implied by cluster.host being set and not pointing at
+    # this node.  Guests resolve the host's tunnel URL on demand via
     # `devtunnel show <tunnel_name>` (same Microsoft account → resolvable).
-    is_satellite = bool(cluster_host) and not is_host
-    satellite_token = cluster_token if is_host else ""
-    host_token = cluster_token if is_satellite else ""
-    cluster_tunnel = cluster_tunnel_name if (is_host or is_satellite) else ""
+    is_guest = bool(cluster_host) and not is_host
+    guest_token = cluster_token if is_host else ""
+    host_token = cluster_token if is_guest else ""
+    cluster_tunnel = cluster_tunnel_name if (is_host or is_guest) else ""
 
     telegram_bots = _load_telegram_bots(config_dir)
     discord_bots = _load_discord_bots(config_dir)
@@ -307,7 +307,7 @@ def load_config(
         web_port=web_port,
         web_host=web_host,
         machine_id=machine_id,
-        satellite_token=satellite_token,
+        guest_token=guest_token,
         cluster_tunnel=cluster_tunnel,
         host_token=host_token,
         bots=bots,

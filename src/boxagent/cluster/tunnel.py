@@ -11,7 +11,7 @@ Lifecycle on host startup:
 2. Ensure port 9292 is registered (``devtunnel port create``).
 3. Spawn ``devtunnel host <name>`` as a child subprocess and keep it alive.
 4. Poll ``devtunnel show -j`` to read the resolved ``portUri``; write it to
-   ``{local_dir}/cluster-tunnel-url.txt`` so other tooling and satellites
+   ``{local_dir}/cluster-tunnel-url.txt`` so other tooling and guests
    can discover it.
 
 Anonymous access is fine for our threat model: the cluster.token in the WS
@@ -56,7 +56,7 @@ class ClusterTunnel:
         info = await self._show()
         if info is None:
             # Authenticated by default — only the same Microsoft tenant/user
-            # can connect. Satellites must hold a connect token issued by
+            # can connect. Guests must hold a connect token issued by
             # `devtunnel token --scopes connect`.
             await self._run("create", self.name)
             info = await self._show()
