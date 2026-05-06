@@ -126,8 +126,34 @@ class ClusterRoleManager:
         my_idx = self.config.my_host_index
         me = self.config.machine_id
 
+        # Always probe ground truth first — never trust our own self-belief.
+        # Catches the case where our `devtunnel host` subprocess died after
+        # promote (guest tunnel claimed by a peer, devtunnel quirks, etc.) so
+        # we'd otherwise stay in a "host" delusion forever.
+        upstream = await self._probe_active_host()
+
         if self.state == "host":
-            # Stay host unless a higher-priority candidate has shown up as a guest.
+            # Sanity: is the tunnel actually serving *us*?
+            tunnel = self.gateway._cluster_tunnel
+            proc = getattr(tunnel, "_host_proc", None) if tunnel is not None else None
+            tunnel_dead = proc is None or proc.returncode is not None
+            stolen = upstream and upstream != me
+            if tunnel_dead or stolen:
+                logger.warning(
+                    "role manager: lost host status (tunnel_dead=%s, "
+                    "probe_says='%s', expected='%s') — demoting",
+                    tunnel_dead, upstream, me,
+                )
+                await self._become_guest(upstream or "")
+                # Re-tick immediately so we either promote again (if no other
+                # host appeared) or settle into the new upstream.
+                await self._tick()
+                return
+
+            # If the probe failed (no upstream visible) but our subprocess is
+            # alive, accept that — could be a transient devtunnel show hiccup.
+            # Then check whether a higher-priority candidate has joined as a
+            # guest and we should yield.
             registry = self.gateway._guest_registry
             if registry is not None and my_idx > 0:
                 for sess_mid in list(registry.sessions.keys()):
@@ -140,8 +166,7 @@ class ClusterRoleManager:
                         return
             return
 
-        # Not host yet — figure out who is.
-        upstream = await self._probe_active_host()
+        # Not host yet — settle into guest or promote.
         if upstream and upstream != me:
             await self._ensure_guest(upstream)
             return
