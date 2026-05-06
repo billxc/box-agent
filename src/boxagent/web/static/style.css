@@ -129,7 +129,7 @@ body.sidebar-dragging * { user-select: none !important; }
 .machine-head .machine-restart { width: 22px; height: 22px; padding: 0; font-size: 12px; opacity: 0.4; }
 .machine-head .machine-restart:hover { opacity: 1; }
 .side-row .row-actions { display: flex; gap: 4px; }
-.machine-bots { list-style: none; margin: 0; padding: 0 0 6px 24px; }
+.machine-bots { list-style: none; margin: 0; padding: 0 6px 6px 24px; }
 .machine-bots li {
   padding: 5px 10px;
   cursor: pointer;
@@ -138,14 +138,14 @@ body.sidebar-dragging * { user-select: none !important; }
   font-size: 13px;
 }
 .machine-bots li:hover { background: var(--bg); }
-.machine-bots li.active { background: var(--bg); outline: 1px solid var(--accent); }
+.machine-bots li.active { background: var(--bg); box-shadow: inset 0 0 0 1px var(--accent); }
 .machine-bots .kind { font-size: 9px; color: var(--muted); padding: 0 4px; border: 1px solid var(--border); border-radius: 3px; flex-shrink: 0; }
 .machine.collapsed .machine-bots { display: none; }
 
 /* Specialist sub-tiles nested under a workgroup admin bot. */
 .specialist-sublist { padding: 2px 0 2px 16px !important; margin-top: 2px; border-left: 1px dashed var(--border); }
 .machine-bots li.specialist { font-size: 11px; color: var(--muted); padding: 2px 6px; }
-.machine-bots li.specialist.active { color: var(--text); background: var(--bg); outline: 1px solid var(--accent); }
+.machine-bots li.specialist.active { color: var(--text); background: var(--bg); box-shadow: inset 0 0 0 1px var(--accent); }
 
 /* Tool call card (folded by default; expand to see args). */
 .tool-card { margin: 6px 0; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel-2); color: var(--text); font-size: 12px; width: 100%; align-self: stretch; box-sizing: border-box; min-width: 0; }
@@ -173,7 +173,7 @@ body.sidebar-dragging * { user-select: none !important; }
   display: flex; flex-direction: column; gap: 2px;
 }
 #session-list li:hover { background: var(--panel-2); }
-#session-list li.active { background: var(--panel-2); outline: 1px solid var(--border); }
+#session-list li.active { background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--border); }
 #session-list .sess-title { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #session-list .sess-title .plat { display: inline-block; width: 16px; color: var(--accent); margin-right: 2px; font-weight: 600; }
 #session-list .sess-preview { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
