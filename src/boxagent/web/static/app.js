@@ -276,7 +276,7 @@
   }
 
   async function restartCluster() {
-    if (!confirm("Restart all sat nodes? Host stays up.\n(Add include_self=1 manually to also restart host.)")) return;
+    if (!confirm("Restart all guest nodes? Host stays up.\n(Add include_self=1 manually to also restart host.)")) return;
     try {
       const r = await api("admin/cluster_restart", { method: "POST" });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -514,7 +514,7 @@
         const err = await r.text();
         addMessage("assistant", `_Error (${r.status}): ${err}_`);
         if (r.status === 502 || r.status === 504) {
-          // Likely the satellite dropped — refresh machines so UI reflects it.
+          // Likely the guest dropped — refresh machines so UI reflects it.
           loadMachines().catch(() => {});
         }
       }
@@ -587,7 +587,8 @@
         <span class="caret"></span>
         <span class="dot ${dotCls}"></span>
         <span class="name">${escapeHtml(m.machine_id)}</span>
-        ${m.role && m.role !== "satellite" ? `<span class="role">${m.role}</span>` : ""}
+        ${m.role && m.role !== "guest" ? `<span class="role">${m.role}</span>` : ""}
+        ${m.self ? `<span class="role self">this</span>` : ""}
         <span class="last">${lastSeen}</span>
         <button class="machine-restart icon-btn" title="Restart this node">⟲</button>
       `;
@@ -746,6 +747,17 @@
   // ── UI events ──
   $("refresh-machines").onclick = () => loadMachines().catch(() => {});
   $("restart-all").onclick = () => restartCluster();
+  const machinesSection = $("machines-section");
+  const machinesToggle = $("machines-toggle");
+  if (localStorage.getItem("ba.machinesCollapsed") === "1") {
+    machinesSection.classList.add("collapsed");
+    machinesToggle.textContent = "▸";
+  }
+  machinesToggle.onclick = () => {
+    const collapsed = machinesSection.classList.toggle("collapsed");
+    machinesToggle.textContent = collapsed ? "▸" : "▾";
+    localStorage.setItem("ba.machinesCollapsed", collapsed ? "1" : "0");
+  };
 
   // ── Sidebar resize ──
   (function setupResize() {

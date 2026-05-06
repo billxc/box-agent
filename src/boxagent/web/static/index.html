@@ -16,11 +16,11 @@
       <span id="conn-state" class="dot offline" title="Disconnected"></span>
     </header>
 
-    <section class="side-section machines">
+    <section id="machines-section" class="side-section machines">
       <div class="side-row">
-        <label class="side-label">Machines</label>
+        <label class="side-label"><button id="machines-toggle" class="text-btn caret-btn" title="Collapse / expand">▾</button> Machines</label>
         <span class="row-actions">
-          <button id="restart-all" class="text-btn" title="Restart all sat nodes (host stays up)">⟲ all</button>
+          <button id="restart-all" class="text-btn" title="Restart all guest nodes (host stays up)">⟲ all</button>
           <button id="refresh-machines" class="text-btn" title="Refresh">↻</button>
         </span>
       </div>
