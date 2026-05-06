@@ -7,11 +7,14 @@ import json
 import logging
 import re
 import shutil
+import uuid
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import AsyncIterator, Callable
 
 import aiohttp
 from aiohttp import ClientSession, WSMsgType
+
+from .registry import _PendingResponse
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +113,13 @@ class SatelliteClient:
     # kind, description}. Read by Gateway._build_peer_descriptors so the
     # local admin sees cross-machine peers.
     remote_peers: list[dict] = field(default_factory=list)
+    # Cluster machine list (host + all sats minus self), pushed by host via
+    # `machines_snapshot` frames after every topology change. Read by sat-side
+    # _handle_web_machines / _handle_web_bots so the local webui can render
+    # the full cluster sidebar.
+    remote_machines: list[dict] = field(default_factory=list)
+    # Pending reverse RPCs we (sat) initiated against host.
+    _pending: dict[str, _PendingResponse] = field(default_factory=dict, repr=False)
 
     def start(self) -> None:
         if self._task is not None:
@@ -135,8 +145,66 @@ class SatelliteClient:
             await self._session.close()
             self._session = None
 
+    async def call(
+        self,
+        method: str,
+        path: str,
+        *,
+        query: dict | None = None,
+        body: dict | None = None,
+        timeout: float = 30.0,
+    ) -> dict:
+        """Reverse RPC: sat → host. Returns ``{"status": int, "body": dict}``.
+
+        Mirrors :meth:`SatelliteSession.call` on the host side. Used by the
+        sat-side webui to forward "remote machine" requests through the host,
+        which then dispatches locally or proxies to another sat.
+        """
+        ws = self._ws
+        if ws is None or ws.closed:
+            raise RuntimeError("sat: not connected to host")
+        rpc_id = uuid.uuid4().hex
+        pending = _PendingResponse()
+        self._pending[rpc_id] = pending
+        try:
+            await ws.send_json({
+                "type": "rpc", "id": rpc_id, "method": method,
+                "path": path, "query": query or {}, "body": body,
+            })
+            return await asyncio.wait_for(pending.result, timeout=timeout)
+        finally:
+            self._pending.pop(rpc_id, None)
+
+    async def call_stream(
+        self,
+        method: str,
+        path: str,
+        *,
+        query: dict | None = None,
+        body: dict | None = None,
+    ) -> AsyncIterator[str]:
+        """Reverse RPC streaming variant for SSE endpoints."""
+        ws = self._ws
+        if ws is None or ws.closed:
+            raise RuntimeError("sat: not connected to host")
+        rpc_id = uuid.uuid4().hex
+        pending = _PendingResponse()
+        pending.is_stream = True
+        self._pending[rpc_id] = pending
+        try:
+            await ws.send_json({
+                "type": "rpc", "id": rpc_id, "method": method,
+                "path": path, "query": query or {}, "body": body,
+            })
+            while True:
+                frame = await pending.stream_queue.get()
+                if frame is None:
+                    return
+                yield frame
+        finally:
+            self._pending.pop(rpc_id, None)
+
     async def announce_bots(self) -> None:
-        """Push an updated bot list to the host (after dynamic create/delete)."""
         ws = self._ws
         if ws is None or ws.closed:
             return
@@ -232,6 +300,14 @@ class SatelliteClient:
                 logger.warning("sat: connection failed: %s", e)
             finally:
                 self._ws = None
+                # Reject any in-flight reverse RPCs so callers see a clean
+                # error instead of hanging until timeout.
+                for p in list(self._pending.values()):
+                    if not p.result.done():
+                        p.result.set_exception(RuntimeError("sat: ws disconnected"))
+                    if p.is_stream:
+                        p.stream_queue.put_nowait(None)
+                self._pending.clear()
             if self._stop:
                 break
             await asyncio.sleep(min(backoff, 60.0))
@@ -259,6 +335,28 @@ class SatelliteClient:
                     await ws.send_json({"type": "pong"})
                 elif payload.get("type") == "welcome":
                     pass
+                elif payload.get("type") == "rpc_resp":
+                    p = self._pending.get(str(payload.get("id") or ""))
+                    if p and not p.result.done():
+                        p.result.set_result({
+                            "status": int(payload.get("status") or 0),
+                            "body": payload.get("body") or {},
+                        })
+                elif payload.get("type") == "rpc_stream":
+                    p = self._pending.get(str(payload.get("id") or ""))
+                    if p:
+                        p.stream_queue.put_nowait(str(payload.get("data") or ""))
+                elif payload.get("type") == "rpc_end":
+                    p = self._pending.get(str(payload.get("id") or ""))
+                    if p:
+                        p.stream_queue.put_nowait(None)
+                elif payload.get("type") == "machines_snapshot":
+                    raw = payload.get("machines") or []
+                    self.remote_machines = [
+                        m for m in raw if isinstance(m, dict) and m.get("machine_id")
+                    ]
+                    logger.debug("sat: machines_snapshot received (%d machines)",
+                                 len(self.remote_machines))
                 elif payload.get("type") == "peers_snapshot":
                     # Host pushes the full cross-cluster peer list (host's
                     # local workgroups + other sats' workgroups, minus this

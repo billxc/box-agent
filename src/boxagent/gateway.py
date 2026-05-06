@@ -755,7 +755,9 @@ class Gateway:
         if self.config.satellite_token:
             self._sat_registry = SatelliteRegistry(
                 expected_token=self.config.satellite_token,
-                on_topology_change=self._push_peers_snapshot_to_sats,
+                on_topology_change=self._on_topology_change,
+                local_web_port=self.config.web_port if self.config.web_port is not None else 9292,
+                local_web_token=self.config.web_token or "",
             )
             web_app.router.add_get("/api/sat/ws", self._sat_registry.handle_ws)
             logger.info("Cluster: host mode enabled (accepting satellites at /api/sat/ws)")
@@ -935,6 +937,144 @@ class Gateway:
                 await sess.ws.send_json({"type": "peers_snapshot", "peers": peers})
             except Exception as e:
                 logger.warning("peers_snapshot push to %s failed: %s", machine_id, e)
+
+    async def _on_topology_change(self, changed_machine_id: str | None) -> None:
+        """Single hook for SatelliteRegistry topology events. Fans out to both
+        the workgroup peers snapshot and the cluster machines snapshot so each
+        sat keeps an up-to-date view for its own webui."""
+        await self._push_peers_snapshot_to_sats(changed_machine_id)
+        await self._push_machines_snapshot_to_sats(changed_machine_id)
+
+    def _collect_machines(self) -> list[dict]:
+        """Build the same machine list `_handle_web_machines` returns. Pure
+        helper so the snapshot pusher and the HTTP handler share one source.
+
+        Host node only — sats don't run a registry. Returns host's local
+        machine first, then every connected/known sat.
+        """
+        local_mid = self._local_machine_id()
+        local_role = "host" if self.config.satellite_token else (
+            "satellite" if self.config.host_token else "single"
+        )
+        machines: list[dict] = [{
+            "machine_id": local_mid,
+            "online": True,
+            "role": local_role,
+            "self": True,
+            "bots": self._local_bot_descriptors(),
+            "last_seen": time.time(),
+        }]
+        if self._sat_registry is not None:
+            for m in self._sat_registry.list_machines():
+                m["role"] = "satellite"
+                m["self"] = False
+                machines.append(m)
+        return machines
+
+    async def _push_machines_snapshot_to_sats(self, changed_machine_id: str | None) -> None:
+        """Push the full cluster machine list to every connected sat so each
+        sat's webui can render the same sidebar the host shows. Per-sat the
+        snapshot is filtered to drop the receiving sat's own row (the sat
+        already renders itself from local state with ``self: true``).
+        """
+        if self._sat_registry is None:
+            return
+        all_machines = self._collect_machines()
+        for machine_id, sess in list(self._sat_registry.sessions.items()):
+            filtered = [m for m in all_machines if m.get("machine_id") != machine_id]
+            try:
+                await sess.ws.send_json({"type": "machines_snapshot", "machines": filtered})
+            except Exception as e:
+                logger.warning("machines_snapshot push to %s failed: %s", machine_id, e)
+
+    async def _dispatch_machine_request(
+        self,
+        machine: str,
+        method: str,
+        path: str,
+        request: web.Request,
+        body: dict | None = None,
+    ) -> web.Response | None:
+        """If `machine` is remote, forward and return the response.
+        Returns None when the request targets the local node (caller should
+        continue with its local handling).
+
+        Host role: forward via SatelliteSession (existing host→sat RPC).
+        Satellite role: forward via SatelliteClient (new sat→host RPC); the
+        host then dispatches locally or proxies onward to the right sat.
+        """
+        if machine == self._local_machine_id():
+            return None
+        if self._sat_registry is not None:
+            sess = self._sat_registry.get(machine)
+            if sess is None:
+                return web.json_response({"ok": False, "error": "unknown machine"}, status=404)
+            return await self._proxy_to_remote(sess, method, path, request, body=body)
+        if self._sat_client is not None:
+            return await self._proxy_via_host(method, path, request, body=body)
+        return web.json_response({"ok": False, "error": "no cluster routing available"}, status=503)
+
+    async def _dispatch_machine_stream(
+        self,
+        machine: str,
+        path: str,
+        request: web.Request,
+    ) -> web.StreamResponse | None:
+        """Streaming counterpart to `_dispatch_machine_request` for SSE."""
+        if machine == self._local_machine_id():
+            return None
+        if self._sat_registry is not None:
+            sess = self._sat_registry.get(machine)
+            if sess is None:
+                return web.json_response({"ok": False, "error": "unknown machine"}, status=404)
+            return await self._proxy_stream_to_remote(sess, path, request)
+        if self._sat_client is not None:
+            return await self._proxy_via_host_stream(path, request)
+        return web.json_response({"ok": False, "error": "no cluster routing available"}, status=503)
+
+    async def _proxy_via_host(
+        self,
+        method: str,
+        path: str,
+        request: web.Request,
+        body: dict | None = None,
+    ) -> web.Response:
+        """Sat-side: forward an HTTP request to the host over the existing WS."""
+        try:
+            result = await self._sat_client.call(
+                method, path, query=dict(request.query), body=body,
+            )
+        except asyncio.TimeoutError:
+            return web.json_response({"ok": False, "error": "host timeout"}, status=504)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": f"host error: {e}"}, status=502)
+        return web.json_response(result.get("body") or {}, status=int(result.get("status") or 200))
+
+    async def _proxy_via_host_stream(
+        self,
+        path: str,
+        request: web.Request,
+    ) -> web.StreamResponse:
+        """Sat-side: forward an SSE GET to the host, relay frames to the browser."""
+        resp = web.StreamResponse(
+            status=200,
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+        await resp.prepare(request)
+        await resp.write(b": connected\n\n")
+        try:
+            async for data in self._sat_client.call_stream(
+                "GET", path, query=dict(request.query),
+            ):
+                await resp.write(f"data: {data}\n\n".encode("utf-8"))
+        except (ConnectionResetError, asyncio.CancelledError):
+            pass
+        return resp
 
     async def _stop_http(self) -> None:
         """Stop the HTTP API server."""
@@ -1433,7 +1573,8 @@ class Gateway:
                     "kind": "workgroup",
                     "machine": local_mid,
                 })
-        # Federate: include bots from connected satellites
+        # Federate: include bots from connected satellites (host role) or
+        # from the cached cluster snapshot pushed by host (sat role).
         if self._sat_registry is not None:
             for mid, b in self._sat_registry.list_bots():
                 bots.append({
@@ -1444,6 +1585,20 @@ class Gateway:
                     "kind": b.kind,
                     "machine": mid,
                 })
+        elif self._sat_client is not None:
+            for m in self._sat_client.remote_machines:
+                mid = m.get("machine_id") or ""
+                if not mid or mid == local_mid:
+                    continue
+                for b in m.get("bots") or []:
+                    bots.append({
+                        "name": b.get("name") or "",
+                        "display_name": (b.get("display_name") or b.get("name") or "") + f"  @{mid}",
+                        "backend": b.get("backend") or "",
+                        "model": b.get("model") or "",
+                        "kind": b.get("kind") or "bot",
+                        "machine": mid,
+                    })
         return web.json_response({"bots": bots})
 
     async def _handle_web_machines(self, request: web.Request) -> web.Response:
@@ -1451,10 +1606,11 @@ class Gateway:
         so the UI can render a grouped sidebar with online/offline status."""
         if not self._web_authorized(request):
             return self._web_unauthorized()
+        if self._sat_registry is not None:
+            return web.json_response({"machines": self._collect_machines()})
+        # Sat role: render local machine + cached snapshot from host.
         local_mid = self._local_machine_id()
-        local_role = "host" if self.config.satellite_token else (
-            "satellite" if self.config.host_token else "single"
-        )
+        local_role = "satellite" if self.config.host_token else "single"
         machines: list[dict] = [{
             "machine_id": local_mid,
             "online": True,
@@ -1463,9 +1619,11 @@ class Gateway:
             "bots": self._local_bot_descriptors(),
             "last_seen": time.time(),
         }]
-        if self._sat_registry is not None:
-            for m in self._sat_registry.list_machines():
-                m["role"] = "satellite"
+        if self._sat_client is not None:
+            for m in self._sat_client.remote_machines:
+                if m.get("machine_id") == local_mid:
+                    continue
+                m = dict(m)
                 m["self"] = False
                 machines.append(m)
         return web.json_response({"machines": machines})
@@ -1478,12 +1636,10 @@ class Gateway:
         machine = request.query.get("machine", "")
         if not bot or not machine:
             return web.json_response({"ok": False, "error": "missing bot/machine"}, status=400)
-        # Remote? proxy to the satellite that owns this bot.
-        if machine != self._local_machine_id():
-            sess = self._remote_session_for(machine, bot)
-            if sess is None:
-                return web.json_response({"ok": False, "error": "unknown machine/bot"}, status=404)
-            return await self._proxy_to_remote(sess, "GET", "/api/sessions", request)
+        # Remote? proxy via host (sat role) or to the owning sat (host role).
+        resp = await self._dispatch_machine_request(machine, "GET", "/api/sessions", request)
+        if resp is not None:
+            return resp
         if bot not in self._web_channels:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
         if not self._storage:
@@ -1557,10 +1713,11 @@ class Gateway:
         if not bot or not machine:
             return web.json_response({"ok": False, "error": "missing bot/machine"}, status=400)
         if machine != self._local_machine_id():
-            sess = self._remote_session_for(machine, bot)
-            if sess is None:
-                return web.json_response({"ok": False, "error": "unknown machine/bot"}, status=404)
-            return await self._proxy_to_remote(sess, "POST", "/api/sessions/set_main", request, body=data)
+            resp = await self._dispatch_machine_request(
+                machine, "POST", "/api/sessions/set_main", request, body=data,
+            )
+            if resp is not None:
+                return resp
         if self._storage is None:
             return web.json_response({"ok": False, "error": "no storage"}, status=500)
         self._storage.set_main_chat_id(bot, chat_id)
@@ -1731,10 +1888,9 @@ class Gateway:
         if not bot or not chat_id or not machine:
             return web.json_response({"ok": False, "error": "missing bot/chat_id/machine"}, status=400)
         if machine != self._local_machine_id():
-            sess = self._remote_session_for(machine, bot)
-            if sess is None:
-                return web.json_response({"ok": False, "error": "unknown machine/bot"}, status=404)
-            return await self._proxy_to_remote(sess, "GET", "/api/history", request)
+            resp = await self._dispatch_machine_request(machine, "GET", "/api/history", request)
+            if resp is not None:
+                return resp
         if bot not in self._web_channels:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
 
@@ -1821,10 +1977,9 @@ class Gateway:
         if not bot or not chat_id or not text or not machine:
             return web.json_response({"ok": False, "error": "missing bot/chat_id/text/machine"}, status=400)
         if machine != self._local_machine_id():
-            sess = self._remote_session_for(machine, bot)
-            if sess is None:
-                return web.json_response({"ok": False, "error": "unknown machine/bot"}, status=404)
-            return await self._proxy_to_remote(sess, "POST", "/api/send", request, body=body)
+            resp = await self._dispatch_machine_request(machine, "POST", "/api/send", request, body=body)
+            if resp is not None:
+                return resp
         ch = self._web_channels.get(bot)
         if ch is None:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
@@ -1844,10 +1999,9 @@ class Gateway:
         if not bot or not chat_id or not machine:
             return web.json_response({"ok": False, "error": "missing bot/chat_id/machine"}, status=400)
         if machine != self._local_machine_id():
-            sess = self._remote_session_for(machine, bot)
-            if sess is None:
-                return web.json_response({"ok": False, "error": "unknown machine/bot"}, status=404)
-            return await self._proxy_stream_to_remote(sess, "/api/stream", request)
+            resp = await self._dispatch_machine_stream(machine, "/api/stream", request)
+            if resp is not None:
+                return resp
         ch = self._web_channels.get(bot)
         if ch is None:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
@@ -1892,9 +2046,9 @@ class Gateway:
         if not machine:
             return web.json_response({"ok": False, "error": "missing machine"}, status=400)
         if machine != self._local_machine_id():
-            if self._sat_registry is None or self._sat_registry.get(machine) is None:
-                return web.json_response({"ok": False, "error": "unknown machine"}, status=404)
-            return await self._proxy_to_remote(self._sat_registry.get(machine), "GET", "/api/claude/projects", request)
+            resp = await self._dispatch_machine_request(machine, "GET", "/api/claude/projects", request)
+            if resp is not None:
+                return resp
         from boxagent.sessions import claude_native
         projects = await asyncio.to_thread(claude_native.list_projects)
         return web.json_response({"ok": True, "projects": projects})
@@ -1907,9 +2061,9 @@ class Gateway:
         if not encoded or not machine:
             return web.json_response({"ok": False, "error": "missing project/machine"}, status=400)
         if machine != self._local_machine_id():
-            if self._sat_registry is None or self._sat_registry.get(machine) is None:
-                return web.json_response({"ok": False, "error": "unknown machine"}, status=404)
-            return await self._proxy_to_remote(self._sat_registry.get(machine), "GET", "/api/claude/sessions", request)
+            resp = await self._dispatch_machine_request(machine, "GET", "/api/claude/sessions", request)
+            if resp is not None:
+                return resp
         from boxagent.sessions import claude_native
         sessions = await asyncio.to_thread(claude_native.list_sessions, encoded)
         return web.json_response({
@@ -1926,9 +2080,9 @@ class Gateway:
         if not encoded or not sid or not machine:
             return web.json_response({"ok": False, "error": "missing project/session_id/machine"}, status=400)
         if machine != self._local_machine_id():
-            if self._sat_registry is None or self._sat_registry.get(machine) is None:
-                return web.json_response({"ok": False, "error": "unknown machine"}, status=404)
-            return await self._proxy_to_remote(self._sat_registry.get(machine), "GET", "/api/claude/transcript", request)
+            resp = await self._dispatch_machine_request(machine, "GET", "/api/claude/transcript", request)
+            if resp is not None:
+                return resp
         from boxagent.sessions import claude_native
         messages = await asyncio.to_thread(claude_native.read_messages, encoded, sid)
         return web.json_response({
@@ -1960,10 +2114,9 @@ class Gateway:
         if not bot or not sid or not machine:
             return web.json_response({"ok": False, "error": "missing bot/session_id/machine"}, status=400)
         if machine != self._local_machine_id():
-            sess = self._remote_session_for(machine, bot)
-            if sess is None:
-                return web.json_response({"ok": False, "error": "unknown machine/bot"}, status=404)
-            return await self._proxy_to_remote(sess, "POST", "/api/claude/resume", request, body=body)
+            resp = await self._dispatch_machine_request(machine, "POST", "/api/claude/resume", request, body=body)
+            if resp is not None:
+                return resp
         if bot not in self._web_channels:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
 

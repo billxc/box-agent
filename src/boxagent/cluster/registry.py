@@ -10,7 +10,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import AsyncIterator
 
-from aiohttp import web
+import aiohttp
+from aiohttp import ClientSession, web
 from aiohttp.web import WebSocketResponse
 
 logger = logging.getLogger(__name__)
@@ -139,6 +140,12 @@ class SatelliteRegistry:
     # the changed) sats so each sat learns about the other workgroups in the
     # cluster. None = no push.
     on_topology_change: object = None  # async Callable[[machine_id|None], None]
+    # Loopback config so the host can serve sat→host reverse RPCs by re-issuing
+    # the request against its own web server (mirrors the satellite-side pattern
+    # in sat_client._handle_rpc). Injected by gateway after web app starts.
+    local_web_port: int = 0
+    local_web_token: str = ""
+    _http_session: ClientSession | None = field(default=None, repr=False)
 
     def get(self, machine_id: str) -> SatelliteSession | None:
         return self.sessions.get(machine_id)
@@ -188,6 +195,84 @@ class SatelliteRegistry:
             if b.name == name:
                 return b
         return None
+
+    async def aclose(self) -> None:
+        if self._http_session is not None:
+            try:
+                await self._http_session.close()
+            except Exception:
+                pass
+            self._http_session = None
+
+    async def _serve_inbound_rpc(self, sess: SatelliteSession, req: dict) -> None:
+        """Handle an `rpc` frame coming *from* a satellite.
+
+        Mirrors `SatelliteClient._handle_rpc`: re-issue the request against the
+        host's own web port over loopback, then stream the response back to the
+        sat as `rpc_resp` (or `rpc_stream` + `rpc_end` for SSE). Reusing the
+        loopback HTTP path means the host's full `_handle_web_*` logic — which
+        already includes host→sat proxying — handles routing for free.
+        """
+        rpc_id = str(req.get("id") or "")
+        method = str(req.get("method") or "GET").upper()
+        path = str(req.get("path") or "")
+        query: dict = req.get("query") or {}
+        body = req.get("body")
+
+        if not self.local_web_port:
+            try:
+                await sess.ws.send_json({
+                    "type": "rpc_resp", "id": rpc_id, "status": 503,
+                    "body": {"ok": False, "error": "host loopback not configured"},
+                })
+            except Exception:
+                pass
+            return
+
+        if self._http_session is None:
+            self._http_session = ClientSession()
+        url = f"http://127.0.0.1:{self.local_web_port}{path}"
+        headers = {}
+        if self.local_web_token:
+            headers["Authorization"] = f"Bearer {self.local_web_token}"
+
+        is_sse = path.endswith("/api/stream")
+        try:
+            kwargs: dict = {"params": query, "headers": headers}
+            if method != "GET" and body is not None:
+                kwargs["json"] = body
+            async with self._http_session.request(method, url, **kwargs) as resp:
+                if is_sse and resp.status == 200:
+                    buf = b""
+                    async for chunk in resp.content.iter_any():
+                        buf += chunk
+                        while b"\n\n" in buf:
+                            event, buf = buf.split(b"\n\n", 1)
+                            for line in event.splitlines():
+                                if line.startswith(b"data: "):
+                                    data = line[6:].decode("utf-8", errors="replace")
+                                    await sess.ws.send_json({
+                                        "type": "rpc_stream", "id": rpc_id, "data": data,
+                                    })
+                    await sess.ws.send_json({"type": "rpc_end", "id": rpc_id})
+                    return
+                try:
+                    body_out = await resp.json(content_type=None)
+                except Exception:
+                    body_out = {"raw": (await resp.text())[:4096]}
+                await sess.ws.send_json({
+                    "type": "rpc_resp", "id": rpc_id,
+                    "status": resp.status, "body": body_out,
+                })
+        except Exception as e:
+            logger.warning("host: inbound rpc %s %s failed: %s", method, path, e)
+            try:
+                await sess.ws.send_json({
+                    "type": "rpc_resp", "id": rpc_id, "status": 502,
+                    "body": {"ok": False, "error": str(e)},
+                })
+            except Exception:
+                pass
 
     async def handle_ws(self, request: web.Request) -> web.WebSocketResponse:
         """Aiohttp handler for /api/sat/ws."""
@@ -252,6 +337,11 @@ class SatelliteRegistry:
 
                 if t == "ping":
                     await ws.send_json({"type": "pong"})
+                elif t == "rpc":
+                    # Sat → host reverse RPC: serve via localhost loopback so
+                    # we reuse all of host's existing _handle_web_* logic
+                    # (incl. host→sat proxy if the target is yet another sat).
+                    asyncio.create_task(self._serve_inbound_rpc(sess, payload))
                 elif t == "rpc_resp":
                     sess._resolve(
                         str(payload.get("id") or ""),
