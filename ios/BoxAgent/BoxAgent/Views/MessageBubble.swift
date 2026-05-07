@@ -19,40 +19,60 @@ struct MessageBubble: View {
         HStack {
             if isUser { Spacer(minLength: 60) }
 
-            VStack(alignment: .leading, spacing: 4) {
-                if !isUser && hasTable {
-                    Markdown(message.text)
-                        .textSelection(.enabled)
-                        .markdownTheme(.gitHub)
-                } else if isUser {
-                    Text(message.text)
-                        .textSelection(.enabled)
-                        .font(.body)
-                } else {
-                    RichMarkdownView(text: message.text)
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background {
-                if isUser {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(.tint.opacity(0.15))
-                } else {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                }
-            }
-            .contentShape(Rectangle())
-            .onTapGesture(count: 2) {
-                showSelectSheet = true
-            }
-            .sheet(isPresented: $showSelectSheet) {
-                SelectableTextView(text: message.text)
+            VStack(alignment: isUser ? .trailing : .leading, spacing: 2) {
+                bubble
+                Text(formatTimestamp(message.timestamp))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 4)
             }
 
             if !isUser { Spacer(minLength: 60) }
         }
+    }
+
+    private var bubble: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if !isUser && hasTable {
+                Markdown(message.text)
+                    .textSelection(.enabled)
+                    .markdownTheme(.gitHub)
+            } else if isUser {
+                Text(message.text)
+                    .textSelection(.enabled)
+                    .font(.body)
+            } else {
+                RichMarkdownView(text: message.text)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background {
+            if isUser {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.tint.opacity(0.15))
+            } else {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            showSelectSheet = true
+        }
+        .sheet(isPresented: $showSelectSheet) {
+            SelectableTextView(text: message.text)
+        }
+    }
+
+    private func formatTimestamp(_ date: Date) -> String {
+        let fmt = DateFormatter()
+        if Calendar.current.isDateInToday(date) {
+            fmt.dateFormat = "HH:mm"
+        } else {
+            fmt.dateFormat = "MM-dd HH:mm"
+        }
+        return fmt.string(from: date)
     }
 }
 

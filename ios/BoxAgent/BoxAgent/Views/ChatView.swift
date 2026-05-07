@@ -47,7 +47,9 @@ struct ChatView: View {
             )
         }
         .task {
+            AppLog.shared.info("ChatView .task: chatId=\(viewModel.chatId)")
             await viewModel.loadHistory()
+            AppLog.shared.info("ChatView loadHistory done, count=\(viewModel.messages.count)")
             viewModel.connect()
             RecentEntry.record(
                 chatId: viewModel.chatId,
