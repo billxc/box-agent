@@ -82,24 +82,24 @@ final class ChatViewModel {
     private static func mapEntries(_ entries: [HistoryEntry]) -> Deque<ChatMessage> {
         var out: Deque<ChatMessage> = []
         out.reserveCapacity(entries.count)
-        for entry in entries {
+        for (idx, entry) in entries.enumerated() {
             guard let role = MessageRole(rawValue: entry.role) else { continue }
             let ts = entry.ts.map { Date(timeIntervalSince1970: $0) } ?? .now
             switch role {
             case .user, .assistant, .skillOutput:
                 out.append(ChatMessage(
-                    id: "\(entry.ts ?? 0)-\(entry.role)",
+                    id: "\(entry.ts ?? 0)-\(entry.role)-\(idx)",
                     role: role, text: entry.text ?? "", isStreaming: false, timestamp: ts
                 ))
             case .toolCall:
                 out.append(ChatMessage(
-                    id: entry.toolId ?? UUID().uuidString,
+                    id: entry.toolId ?? "tc-\(idx)-\(UUID().uuidString)",
                     role: .toolCall, text: "", isStreaming: false, timestamp: ts,
                     toolId: entry.toolId, toolName: entry.name
                 ))
             case .toolResult:
                 out.append(ChatMessage(
-                    id: "result-\(entry.toolId ?? UUID().uuidString)",
+                    id: "result-\(entry.toolId ?? "tr-\(idx)-\(UUID().uuidString)")",
                     role: .toolResult, text: "", isStreaming: false, timestamp: ts,
                     toolId: entry.toolId, toolOk: entry.ok,
                     toolSummary: entry.summary, toolError: entry.error
