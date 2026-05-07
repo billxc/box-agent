@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		1D7491CA2FAC675100BF1A3F /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = AA000080 /* MarkdownUI */; };
+		1D7491CB2FAC675100BF1A40 /* DequeModule in Frameworks */ = {isa = PBXBuildFile; productRef = AA000081 /* DequeModule */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -28,6 +29,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				1D7491CA2FAC675100BF1A3F /* MarkdownUI in Frameworks */,
+				1D7491CB2FAC675100BF1A40 /* DequeModule in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -71,6 +73,7 @@
 			name = BoxAgent;
 			packageProductDependencies = (
 				AA000080 /* MarkdownUI */,
+				AA000081 /* DequeModule */,
 			);
 			productName = BoxAgent;
 			productReference = AA000001 /* BoxAgent.app */;
@@ -97,6 +100,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				AA000090 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
+				AA000091 /* XCRemoteSwiftPackageReference "swift-collections" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AA000031 /* Products */;
@@ -344,6 +348,14 @@
 				minimumVersion = 2.4.1;
 			};
 		};
+		AA000091 /* XCRemoteSwiftPackageReference "swift-collections" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-collections";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.1.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -351,6 +363,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AA000090 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */;
 			productName = MarkdownUI;
+		};
+		AA000081 /* DequeModule */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA000091 /* XCRemoteSwiftPackageReference "swift-collections" */;
+			productName = DequeModule;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

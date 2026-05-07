@@ -1,4 +1,11 @@
 import SwiftUI
+import DequeModule
+
+enum HistoryLoadState {
+    case readyForLoad
+    case loading
+    case allLoaded
+}
 
 @MainActor @Observable
 final class ChatViewModel {
@@ -7,13 +14,13 @@ final class ChatViewModel {
     let chatId: String
     private let api: APIClient
 
-    var messages: [ChatMessage] = []
+    var messages: Deque<ChatMessage> = []
     var isConnected = false
     var isSending = false
     var isTyping = false
     var historyLoaded = false
-    var hasMoreHistory = false
-    var isLoadingMore = false
+    var loadState: HistoryLoadState = .readyForLoad
+    var pendingAnchorId: String?
     private var totalMessages = 0
     private var loadedOffset = 0
     private let pageSize = 50
@@ -34,7 +41,7 @@ final class ChatViewModel {
             let (entries, total) = try await api.fetchHistory(bot: bot, machine: machine, chatId: chatId, limit: pageSize, offset: 0)
             totalMessages = total
             loadedOffset = entries.count
-            hasMoreHistory = loadedOffset < totalMessages
+            loadState = loadedOffset < totalMessages ? .readyForLoad : .allLoaded
             messages = Self.mapEntries(entries)
         } catch {
             AppLog.shared.error("loadHistory: \(error)")
@@ -42,55 +49,64 @@ final class ChatViewModel {
         historyLoaded = true
     }
 
-    var scrollToAnchor: String?
-
     func loadMoreHistory() async {
-        guard hasMoreHistory, !isLoadingMore else {
-            AppLog.shared.info("loadMore skipped: hasMore=\(hasMoreHistory) loading=\(isLoadingMore)")
+        guard loadState == .readyForLoad else {
+            AppLog.shared.info("loadMore skipped: state=\(loadState)")
             return
         }
-        isLoadingMore = true
+        loadState = .loading
         let anchorId = messages.first?.id
         AppLog.shared.info("loadMore: offset=\(loadedOffset) total=\(totalMessages)")
+        defer {
+            // Safety net: if anything goes wrong without explicit handling, reset state
+            if loadState == .loading {
+                loadState = .readyForLoad
+            }
+        }
         do {
-            let (entries, _) = try await api.fetchHistory(bot: bot, machine: machine, chatId: chatId, limit: pageSize, offset: loadedOffset)
+            let (entries, _) = try await withTimeout(seconds: 30) {
+                try await self.api.fetchHistory(bot: self.bot, machine: self.machine, chatId: self.chatId, limit: self.pageSize, offset: self.loadedOffset)
+            }
             AppLog.shared.info("loadMore: got \(entries.count) entries")
             let older = Self.mapEntries(entries)
-            messages.insert(contentsOf: older, at: 0)
+            messages.prepend(contentsOf: older)
             loadedOffset += entries.count
-            hasMoreHistory = loadedOffset < totalMessages
-            scrollToAnchor = anchorId
+            loadState = loadedOffset < totalMessages ? .readyForLoad : .allLoaded
+            pendingAnchorId = anchorId
         } catch {
             AppLog.shared.error("loadMoreHistory: \(error)")
+            loadState = .readyForLoad
         }
-        isLoadingMore = false
     }
 
-    private static func mapEntries(_ entries: [HistoryEntry]) -> [ChatMessage] {
-        entries.compactMap { entry in
-            guard let role = MessageRole(rawValue: entry.role) else { return nil }
+    private static func mapEntries(_ entries: [HistoryEntry]) -> Deque<ChatMessage> {
+        var out: Deque<ChatMessage> = []
+        out.reserveCapacity(entries.count)
+        for entry in entries {
+            guard let role = MessageRole(rawValue: entry.role) else { continue }
             let ts = entry.ts.map { Date(timeIntervalSince1970: $0) } ?? .now
             switch role {
             case .user, .assistant, .skillOutput:
-                return ChatMessage(
+                out.append(ChatMessage(
                     id: "\(entry.ts ?? 0)-\(entry.role)",
                     role: role, text: entry.text ?? "", isStreaming: false, timestamp: ts
-                )
+                ))
             case .toolCall:
-                return ChatMessage(
+                out.append(ChatMessage(
                     id: entry.toolId ?? UUID().uuidString,
                     role: .toolCall, text: "", isStreaming: false, timestamp: ts,
                     toolId: entry.toolId, toolName: entry.name
-                )
+                ))
             case .toolResult:
-                return ChatMessage(
+                out.append(ChatMessage(
                     id: "result-\(entry.toolId ?? UUID().uuidString)",
                     role: .toolResult, text: "", isStreaming: false, timestamp: ts,
                     toolId: entry.toolId, toolOk: entry.ok,
                     toolSummary: entry.summary, toolError: entry.error
-                )
+                ))
             }
         }
+        return out
     }
 
     func connect() {
@@ -186,5 +202,22 @@ final class ChatViewModel {
     private func nextId() -> String {
         msgCounter += 1
         return "local-\(msgCounter)"
+    }
+}
+
+struct TimeoutError: Error {}
+
+func withTimeout<T: Sendable>(seconds: Int, operation: @Sendable @escaping () async throws -> T) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask {
+            try await operation()
+        }
+        group.addTask {
+            try await Task.sleep(for: .seconds(seconds))
+            throw TimeoutError()
+        }
+        let result = try await group.next()!
+        group.cancelAll()
+        return result
     }
 }
