@@ -12,6 +12,11 @@ final class ChatViewModel {
     var isSending = false
     var isTyping = false
     var historyLoaded = false
+    var hasMoreHistory = false
+    var isLoadingMore = false
+    private var totalMessages = 0
+    private var loadedOffset = 0
+    private let pageSize = 50
 
     private var sseClient: SSEClient?
     private var streamTask: Task<Void, Never>?
@@ -25,8 +30,44 @@ final class ChatViewModel {
     }
 
     func loadHistory() async {
-        let entries = (try? await api.fetchHistory(bot: bot, machine: machine, chatId: chatId)) ?? []
-        messages = entries.compactMap { entry in
+        do {
+            let (entries, total) = try await api.fetchHistory(bot: bot, machine: machine, chatId: chatId, limit: pageSize, offset: 0)
+            totalMessages = total
+            loadedOffset = entries.count
+            hasMoreHistory = loadedOffset < totalMessages
+            messages = Self.mapEntries(entries)
+        } catch {
+            AppLog.shared.error("loadHistory: \(error)")
+        }
+        historyLoaded = true
+    }
+
+    var scrollToAnchor: String?
+
+    func loadMoreHistory() async {
+        guard hasMoreHistory, !isLoadingMore else {
+            AppLog.shared.info("loadMore skipped: hasMore=\(hasMoreHistory) loading=\(isLoadingMore)")
+            return
+        }
+        isLoadingMore = true
+        let anchorId = messages.first?.id
+        AppLog.shared.info("loadMore: offset=\(loadedOffset) total=\(totalMessages)")
+        do {
+            let (entries, _) = try await api.fetchHistory(bot: bot, machine: machine, chatId: chatId, limit: pageSize, offset: loadedOffset)
+            AppLog.shared.info("loadMore: got \(entries.count) entries")
+            let older = Self.mapEntries(entries)
+            messages.insert(contentsOf: older, at: 0)
+            loadedOffset += entries.count
+            hasMoreHistory = loadedOffset < totalMessages
+            scrollToAnchor = anchorId
+        } catch {
+            AppLog.shared.error("loadMoreHistory: \(error)")
+        }
+        isLoadingMore = false
+    }
+
+    private static func mapEntries(_ entries: [HistoryEntry]) -> [ChatMessage] {
+        entries.compactMap { entry in
             guard let role = MessageRole(rawValue: entry.role) else { return nil }
             let ts = entry.ts.map { Date(timeIntervalSince1970: $0) } ?? .now
             switch role {
@@ -50,7 +91,6 @@ final class ChatViewModel {
                 )
             }
         }
-        historyLoaded = true
     }
 
     func connect() {

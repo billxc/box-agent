@@ -107,10 +107,17 @@ struct SessionRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
-            if let ts = session.lastTs {
-                Text(Date(timeIntervalSince1970: ts), style: .relative)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+            HStack(spacing: 8) {
+                if let ts = session.lastTs, ts > 0 {
+                    Text(Date(timeIntervalSince1970: ts), style: .relative)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                if let count = session.messageCount, count > 0 {
+                    Text("\(count) msgs")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             }
         }
         .padding(.vertical, 2)

@@ -45,6 +45,7 @@ struct Session: Identifiable, Codable {
     let lastTs: Double?
     let backend: String?
     let model: String?
+    let messageCount: Int?
 
     enum CodingKeys: String, CodingKey {
         case chatId = "chat_id"
@@ -54,6 +55,7 @@ struct Session: Identifiable, Codable {
         case preview
         case lastTs = "last_ts"
         case backend, model
+        case messageCount = "message_count"
     }
 }
 
@@ -78,6 +80,7 @@ struct RecentSession: Identifiable {
 struct HistoryResponse: Codable {
     let ok: Bool
     let history: [HistoryEntry]
+    let total: Int?
 }
 
 struct HistoryEntry: Codable {

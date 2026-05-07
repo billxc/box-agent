@@ -14,9 +14,14 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+_cache_lock = threading.Lock()
+_cache: dict[str, tuple[float, list[dict]]] = {}  # key → (mtime, parsed_messages)
+_CACHE_MAX = 64
 
 
 def default_claude_projects_dir() -> Path:
@@ -201,6 +206,15 @@ def read_messages(encoded: str, session_id: str, claude_dir: Path | None = None)
     base = (claude_dir or default_claude_projects_dir()) / encoded / f"{session_id}.jsonl"
     if not base.is_file():
         return []
+    try:
+        mtime = base.stat().st_mtime
+    except OSError:
+        return []
+    cache_key = f"{encoded}/{session_id}"
+    with _cache_lock:
+        cached = _cache.get(cache_key)
+        if cached and cached[0] == mtime:
+            return cached[1]
     out: list[dict] = []
     prev_was_tool_result = False
     try:
@@ -227,6 +241,11 @@ def read_messages(encoded: str, session_id: str, claude_dir: Path | None = None)
                 prev_was_tool_result = (t == "user" and has_tool)
     except OSError as e:
         logger.debug("claude_native: failed to read %s: %s", base, e)
+    with _cache_lock:
+        if len(_cache) >= _CACHE_MAX:
+            oldest = min(_cache, key=lambda k: _cache[k][0])
+            del _cache[oldest]
+        _cache[cache_key] = (mtime, out)
     return out
 
 

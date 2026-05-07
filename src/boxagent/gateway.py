@@ -184,6 +184,7 @@ class Gateway:
     )
     _routers: dict[str, Router] = field(default_factory=dict, repr=False)
     _storage: Storage | None = field(default=None, repr=False)
+    _session_meta_cache: dict[str, dict] = field(default_factory=dict, repr=False)
     _watchdogs: dict[str, Watchdog] = field(default_factory=dict, repr=False)
     _watchdog_tasks: list[asyncio.Task] = field(
         default_factory=list, repr=False
@@ -1631,10 +1632,33 @@ class Gateway:
 
         sessions = self._storage.list_chat_sessions(bot)
 
-        # The "main" chat_id is persisted per-bot in main_sessions.yaml and
-        # set by either the web UI or first-time heartbeat/peer arrival.
-        # Old admin_discord_channel-based heartbeat tagging has been retired.
         main_chat_id = self._storage.get_main_chat_id(bot)
+
+        # Build claude-native index for claude-cli sessions
+        claude_session_info: dict[str, dict] = {}
+        bot_cfg = self.config.bots.get(bot)
+        wg_cfg = self.config.workgroups.get(bot)
+        backend = (bot_cfg.ai_backend if bot_cfg else None) or (wg_cfg.ai_backend if wg_cfg else "claude-cli")
+        if backend == "claude-cli":
+            try:
+                from boxagent.sessions import claude_native
+                base = claude_native.default_claude_projects_dir()
+                if base.is_dir():
+                    for proj in base.iterdir():
+                        if not proj.is_dir():
+                            continue
+                        for f in proj.iterdir():
+                            if f.suffix == ".jsonl":
+                                try:
+                                    stat = f.stat()
+                                    claude_session_info[f.stem] = {
+                                        "size": stat.st_size,
+                                        "mtime": stat.st_mtime,
+                                    }
+                                except OSError:
+                                    pass
+            except Exception:
+                pass
 
         for s in sessions:
             sid = s.get("session_id") or ""
@@ -1642,15 +1666,58 @@ class Gateway:
             s["is_main"] = bool(main_chat_id and s["chat_id"] == main_chat_id)
             s["preview"] = ""
             s["last_ts"] = 0
+            s["message_count"] = 0
             if not sid:
                 continue
+
+            cached = self._session_meta_cache.get(sid)
+
+            # Try claude-native first
+            ci = claude_session_info.get(sid)
+            if ci:
+                if cached and cached.get("mtime") == ci["mtime"]:
+                    s["preview"] = cached.get("preview", "")
+                    s["last_ts"] = cached.get("last_ts", 0)
+                    s["message_count"] = cached.get("message_count", 0)
+                    continue
+                from boxagent.sessions import claude_native
+                base = claude_native.default_claude_projects_dir()
+                for proj in base.iterdir():
+                    f = proj / f"{sid}.jsonl"
+                    if f.is_file():
+                        sess_list = claude_native.list_sessions(proj.name)
+                        for sl in sess_list:
+                            if sl.get("session_id") == sid:
+                                s["message_count"] = sl.get("message_count", 0)
+                                s["last_ts"] = sl.get("last_ts", 0)
+                                preview = (sl.get("first_user") or "").strip().replace("\n", " ")
+                                s["preview"] = preview[:90] + ("..." if len(preview) > 90 else "")
+                                break
+                        self._session_meta_cache[sid] = {
+                            "mtime": ci["mtime"],
+                            "preview": s["preview"],
+                            "last_ts": s["last_ts"],
+                            "message_count": s["message_count"],
+                        }
+                        break
+                continue
+
+            # Transcript-based sessions
             tpath = self._storage.local_dir / "transcripts" / f"{sid}.jsonl"
             if not tpath.is_file():
                 continue
             try:
+                tstat = tpath.stat()
+                if cached and cached.get("mtime") == tstat.st_mtime:
+                    s["preview"] = cached.get("preview", "")
+                    s["last_ts"] = cached.get("last_ts", 0)
+                    s["message_count"] = cached.get("message_count", 0)
+                    continue
+
                 last_user = ""
                 last_assist = ""
                 last_ts = 0.0
+                msg_count = 0
                 import json as _json
                 for line in tpath.read_text(encoding="utf-8").splitlines():
                     line = line.strip()
@@ -1669,11 +1736,20 @@ class Gateway:
                         last_ts = ts
                     if ev == "user":
                         last_user = txt
+                        msg_count += 1
                     elif ev == "assistant":
                         last_assist = txt
+                        msg_count += 1
                 preview = (last_assist or last_user or "").strip().replace("\n", " ")
                 s["preview"] = preview[:90] + ("..." if len(preview) > 90 else "")
                 s["last_ts"] = last_ts
+                s["message_count"] = msg_count
+                self._session_meta_cache[sid] = {
+                    "mtime": tstat.st_mtime,
+                    "preview": s["preview"],
+                    "last_ts": s["last_ts"],
+                    "message_count": msg_count,
+                }
             except Exception as e:
                 logger.debug("session preview read failed for %s: %s", sid, e)
 
@@ -1930,7 +2006,12 @@ class Gateway:
                         if encoded:
                             history.extend(claude_native.read_messages(encoded, sid))
                 history.sort(key=lambda r: r.get("ts") or 0)
-                return web.json_response({"ok": True, "history": history})
+                total = len(history)
+                limit = int(request.query.get("limit", 0) or 0)
+                offset = int(request.query.get("offset", 0) or 0)
+                if limit > 0:
+                    history = history[-(offset + limit):len(history) - offset if offset else None]
+                return web.json_response({"ok": True, "total": total, "history": history})
 
             # Regular bot transcripts — concat per-sid jsonl files in chain
             import json as _json
@@ -1960,7 +2041,12 @@ class Gateway:
                 except Exception as e:
                     logger.warning("history read failed for %s: %s", tpath, e)
             history.sort(key=lambda r: r.get("ts") or 0)
-        return web.json_response({"ok": True, "history": history})
+        total = len(history)
+        limit = int(request.query.get("limit", 0) or 0)
+        offset = int(request.query.get("offset", 0) or 0)
+        if limit > 0:
+            history = history[-(offset + limit):len(history) - offset if offset else None]
+        return web.json_response({"ok": True, "total": total, "history": history})
 
     async def _handle_web_send(self, request: web.Request) -> web.Response:
         if not self._web_authorized(request):

@@ -58,10 +58,15 @@ actor APIClient {
         return try decode(SessionsResponse.self, from: data, context: "sessions").sessions
     }
 
-    func fetchHistory(bot: String, machine: String, chatId: String) async throws -> [HistoryEntry] {
+    func fetchHistory(bot: String, machine: String, chatId: String, limit: Int = 0, offset: Int = 0) async throws -> (entries: [HistoryEntry], total: Int) {
         let encoded = chatId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? chatId
-        let data = try await request("/api/history?bot=\(bot)&machine=\(machine)&chat_id=\(encoded)")
-        return try decode(HistoryResponse.self, from: data, context: "history").history
+        var path = "/api/history?bot=\(bot)&machine=\(machine)&chat_id=\(encoded)"
+        if limit > 0 {
+            path += "&limit=\(limit)&offset=\(offset)"
+        }
+        let data = try await request(path)
+        let resp = try decode(HistoryResponse.self, from: data, context: "history")
+        return (resp.history, resp.total ?? resp.history.count)
     }
 
     func sendMessage(bot: String, machine: String, chatId: String, text: String) async throws {
