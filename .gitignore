@@ -13,3 +13,12 @@ build/
 .test_bahome
 .test_bahome-local
 boxagent.code-workspace
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+DerivedData/
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa

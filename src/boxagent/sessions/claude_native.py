@@ -202,6 +202,7 @@ def read_messages(encoded: str, session_id: str, claude_dir: Path | None = None)
     if not base.is_file():
         return []
     out: list[dict] = []
+    prev_was_tool_result = False
     try:
         with open(base, encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -216,7 +217,14 @@ def read_messages(encoded: str, session_id: str, claude_dir: Path | None = None)
                 if t not in ("user", "assistant"):
                     continue
                 ts = _parse_ts(rec.get("timestamp"))
-                out.extend(_extract_records(rec, t, ts))
+                records = _extract_records(rec, t, ts)
+                has_tool = any(r["role"] in ("tool_call", "tool_result") for r in records)
+                if t == "user" and not has_tool and prev_was_tool_result:
+                    for r in records:
+                        if r["role"] == "user":
+                            r["role"] = "skill_output"
+                out.extend(records)
+                prev_was_tool_result = (t == "user" and has_tool)
     except OSError as e:
         logger.debug("claude_native: failed to read %s: %s", base, e)
     return out
