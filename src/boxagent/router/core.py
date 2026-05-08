@@ -35,7 +35,7 @@ SYSTEM_COMMANDS = {"/status", "/new", "/cancel", "/resume", "/start", "/help", "
 
 @dataclass
 class Router:
-    cli_process: AgentBackend
+    backend: AgentBackend
     channel: object
     allowed_users: list[int]
     storage: object = None
@@ -49,7 +49,7 @@ class Router:
     workspace: str = ""
     extra_skill_dirs: list[str] = field(default_factory=list)
     ai_backend: str = "claude-cli"
-    on_backend_switched: object = None  # async callback(bot_name, new_cli, new_backend)
+    on_backend_switched: object = None  # async callback(bot_name, new_backend, new_kind)
     workgroup_agents: list[str] = field(default_factory=list)  # specialist names for context
     get_running_tasks: object = None  # Callable[[], list[dict]]
     get_peers: object = None  # Callable[[], list[dict]] — workgroup admin only
@@ -126,7 +126,7 @@ class Router:
                 status_workspace = self.pool.get_workspace(msg.chat_id) or self.workspace
             await cmd_status(
                 msg, channel=ch, bot_name=self.display_name or self.bot_name,
-                cli_process=self.cli_process, start_time=self.start_time,
+                backend=self.backend, start_time=self.start_time,
                 display_name=self.display_name, ai_backend=self.ai_backend,
                 workspace=status_workspace, node_id=self.node_id,
                 pool=self.pool, chat_id=msg.chat_id,
@@ -188,7 +188,7 @@ class Router:
             else:
                 await ch.send_text(chat_id, "No active task to cancel.")
         else:
-            await self.cli_process.cancel()
+            await self.backend.cancel()
             await ch.send_text(chat_id, "Cancelled current task.")
 
     async def _cmd_resume(self, msg: IncomingMessage):
@@ -292,7 +292,7 @@ class Router:
                 self.pool.set_model(chat_id, restored_model)
         else:
             await self._reset_backend_session()
-            self.cli_process.session_id = target_session_id
+            self.backend.session_id = target_session_id
         self._compact_summaries.pop(chat_id, None)
         self._resume_contexts.pop(chat_id, None)
         self.storage.save_session(self.bot_name, target_session_id, chat_id=chat_id)
@@ -314,7 +314,7 @@ class Router:
         if self.pool:
             current = self.pool.get_model(chat_id) or "default"
         else:
-            current = getattr(self.cli_process, "model", "") or "default"
+            current = getattr(self.backend, "model", "") or "default"
 
         if len(parts) < 2:
             await ch.send_text(
@@ -326,7 +326,7 @@ class Router:
         if self.pool:
             self.pool.set_model(chat_id, new_model)
         else:
-            self.cli_process.model = new_model
+            self.backend.model = new_model
         await ch.send_text(
             chat_id, f"Model switched: {current} → {new_model}"
         )
@@ -362,7 +362,7 @@ class Router:
             self.pool.set_workspace(chat_id, new_path)
             self.pool.clear_session(chat_id)
         else:
-            self.cli_process.workspace = new_path
+            self.backend.workspace = new_path
             self.workspace = new_path
             await self._reset_backend_session()
         self._compact_summaries.pop(chat_id, None)
@@ -388,36 +388,36 @@ class Router:
             )
             return
 
-        new_backend = parts[1].strip()
-        if new_backend not in self._VALID_BACKENDS:
+        new_kind = parts[1].strip()
+        if new_kind not in self._VALID_BACKENDS:
             await ch.send_text(
                 msg.chat_id,
-                f"Unknown backend: {new_backend}\n"
+                f"Unknown backend: {new_kind}\n"
                 f"Available: {', '.join(sorted(self._VALID_BACKENDS))}",
             )
             return
 
-        if new_backend == self.ai_backend:
+        if new_kind == self.ai_backend:
             await ch.send_text(
-                msg.chat_id, f"Already using {new_backend}."
+                msg.chat_id, f"Already using {new_kind}."
             )
             return
 
-        old_backend = self.ai_backend
-        old_proc = self.cli_process
+        old_kind = self.ai_backend
+        old_backend = self.backend
 
-        # Carry over common attributes from old process.
-        workspace = getattr(old_proc, "workspace", self.workspace)
-        model = getattr(old_proc, "model", "")
-        agent = getattr(old_proc, "agent", "")
-        yolo = getattr(old_proc, "yolo", False)
+        # Carry over common attributes from old backend.
+        workspace = getattr(old_backend, "workspace", self.workspace)
+        model = getattr(old_backend, "model", "")
+        agent = getattr(old_backend, "agent", "")
+        yolo = getattr(old_backend, "yolo", False)
 
-        await old_proc.stop()
+        await old_backend.stop()
 
-        if new_backend == "codex-cli":
+        if new_kind == "codex-cli":
             from boxagent.agent.codex_process import CodexProcess
 
-            new_proc = CodexProcess(
+            new_backend = CodexProcess(
                 workspace=workspace,
                 model=model,
                 agent=agent,
@@ -426,25 +426,25 @@ class Router:
         else:
             from boxagent.agent.claude_process import ClaudeProcess
 
-            new_proc = ClaudeProcess(
+            new_backend = ClaudeProcess(
                 workspace=workspace,
                 model=model,
                 agent=agent,
                 yolo=yolo,
             )
 
-        new_proc.start()
-        self.cli_process = new_proc
-        self.ai_backend = new_backend
+        new_backend.start()
+        self.backend = new_backend
+        self.ai_backend = new_kind
         self._compact_summaries.clear()
         self._resume_contexts.clear()
         if self.storage:
             self.storage.clear_session(self.bot_name, chat_id=msg.chat_id)
         # Notify Gateway so watchdog/scheduler refs are updated too.
         if self.on_backend_switched:
-            await self.on_backend_switched(self.bot_name, new_proc, new_backend)
+            await self.on_backend_switched(self.bot_name, new_backend, new_kind)
         await ch.send_text(
-            msg.chat_id, f"Backend switched: {old_backend} → {new_backend}"
+            msg.chat_id, f"Backend switched: {old_kind} → {new_kind}"
         )
 
     async def _cmd_compact(self, msg: IncomingMessage):
@@ -452,7 +452,7 @@ class Router:
         ch = self._resolve_channel(msg)
         chat_id = msg.chat_id
 
-        sid = self.pool.get_session_id(chat_id) if self.pool else getattr(self.cli_process, "session_id", None)
+        sid = self.pool.get_session_id(chat_id) if self.pool else getattr(self.backend, "session_id", None)
         if not sid:
             await ch.send_text(
                 chat_id, "No active session to compact."
@@ -479,7 +479,7 @@ class Router:
         if use_pool:
             proc = await self.pool.acquire(chat_id)
         else:
-            proc = self.cli_process
+            proc = self.backend
 
         collector = TextCollector()
         await ch.show_typing(chat_id)
@@ -620,13 +620,13 @@ class Router:
             webhook_name=env.callback_webhook_name(),
         )
 
-        # Acquire a process from the pool (or use the single cli_process)
+        # Acquire a process from the pool (or use the single backend)
         proc = None
         use_pool = self.pool is not None
         if use_pool:
             proc = await self.pool.acquire(chat_id)
         else:
-            proc = self.cli_process
+            proc = self.backend
 
         await callback.start_typing()
         try:
@@ -719,11 +719,11 @@ class Router:
 
     async def _reset_backend_session(self):
         """Reset session state, falling back to session_id-only backends."""
-        reset_session = getattr(self.cli_process, "reset_session", None)
+        reset_session = getattr(self.backend, "reset_session", None)
         if callable(reset_session):
             await reset_session()
         else:
-            self.cli_process.session_id = None
+            self.backend.session_id = None
 
     def _build_env(self, msg: IncomingMessage) -> AgentEnv:
         """Create an AgentEnv snapshot for this message."""

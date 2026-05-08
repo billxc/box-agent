@@ -198,7 +198,7 @@ class TestE2ESmoke:
         """Second message has context from the first (same session)."""
         from unittest.mock import AsyncMock
 
-        cli = list(gateway._cli_processes.values())[0]
+        cli = list(gateway._backends.values())[0]
 
         callback_mock = AsyncMock()
         callback_mock.on_stream = AsyncMock()
@@ -215,8 +215,8 @@ class TestE2ESmoke:
 
     async def test_session_persisted_in_storage(self, gateway):
         """Session ID is persisted to storage on shutdown."""
-        cli = list(gateway._cli_processes.values())[0]
-        bot_name = list(gateway._cli_processes.keys())[0]
+        cli = list(gateway._backends.values())[0]
+        bot_name = list(gateway._backends.keys())[0]
         cli.session_id = "sess_test_persist"
 
         # Save session manually (like stop() does) instead of calling

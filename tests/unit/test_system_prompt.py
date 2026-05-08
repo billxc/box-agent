@@ -157,7 +157,7 @@ def mock_channel():
 class TestRouterPromptSplit:
     async def test_session_context_goes_to_append_system_prompt(self, mock_cli, mock_channel):
         router = Router(
-            cli_process=mock_cli,
+            backend=mock_cli,
             channel=mock_channel,
             allowed_users=[123456],
             bot_name="test-bot",
@@ -174,7 +174,7 @@ class TestRouterPromptSplit:
 
     async def test_user_text_stays_in_message(self, mock_cli, mock_channel):
         router = Router(
-            cli_process=mock_cli,
+            backend=mock_cli,
             channel=mock_channel,
             allowed_users=[123456],
         )
@@ -187,7 +187,7 @@ class TestRouterPromptSplit:
 
     async def test_session_context_not_in_user_message(self, mock_cli, mock_channel):
         router = Router(
-            cli_process=mock_cli,
+            backend=mock_cli,
             channel=mock_channel,
             allowed_users=[123456],
             bot_name="test-bot",
@@ -200,7 +200,7 @@ class TestRouterPromptSplit:
 
     async def test_resume_context_goes_to_append_system_prompt(self, mock_cli, mock_channel):
         router = Router(
-            cli_process=mock_cli,
+            backend=mock_cli,
             channel=mock_channel,
             allowed_users=[123456],
         )
@@ -215,7 +215,7 @@ class TestRouterPromptSplit:
 
     async def test_compact_summary_goes_to_append_system_prompt(self, mock_cli, mock_channel):
         router = Router(
-            cli_process=mock_cli,
+            backend=mock_cli,
             channel=mock_channel,
             allowed_users=[123456],
         )
@@ -241,7 +241,7 @@ class TestRouterPromptSplit:
         )
 
         router = Router(
-            cli_process=mock_cli,
+            backend=mock_cli,
             channel=mock_channel,
             allowed_users=[123456],
         )
@@ -253,7 +253,7 @@ class TestRouterPromptSplit:
 
     async def test_model_override_still_works(self, mock_cli, mock_channel):
         router = Router(
-            cli_process=mock_cli,
+            backend=mock_cli,
             channel=mock_channel,
             allowed_users=[123456],
         )
@@ -268,7 +268,7 @@ class TestRouterPromptSplit:
 
     async def test_second_message_also_has_session_context(self, mock_cli, mock_channel):
         router = Router(
-            cli_process=mock_cli,
+            backend=mock_cli,
             channel=mock_channel,
             allowed_users=[123456],
             bot_name="test-bot",
@@ -288,7 +288,7 @@ class TestRouterPromptSplit:
 
     async def test_append_system_prompt_always_has_context(self, mock_cli, mock_channel):
         router = Router(
-            cli_process=mock_cli,
+            backend=mock_cli,
             channel=mock_channel,
             allowed_users=[123456],
         )

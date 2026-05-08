@@ -80,7 +80,7 @@ def callback():
 
 
 @pytest.fixture
-def make_cli_process():
+def make_backend():
     """Factory for ClaudeProcess instances."""
     from boxagent.agent.claude_process import ClaudeProcess
 
@@ -94,12 +94,12 @@ def make_cli_process():
 class TestStreamJsonParsing:
     """Test parsing of stream-json events from stdout."""
 
-    async def test_text_delta_calls_on_stream(self, make_cli_process, callback):
+    async def test_text_delta_calls_on_stream(self, make_backend, callback):
         """content_block_delta with text_delta → callback.on_stream()."""
         events = [text_delta_event("Hello"), text_delta_event(" world"), result_event()]
         fake_proc = FakeProcess(make_stream_lines(*events))
 
-        cli = make_cli_process()
+        cli = make_backend()
         with patch("asyncio.create_subprocess_exec", return_value=fake_proc):
             await cli._execute_turn("test", callback)
 
@@ -107,7 +107,7 @@ class TestStreamJsonParsing:
         callback.on_stream.assert_any_call("Hello")
         callback.on_stream.assert_any_call(" world")
 
-    async def test_tool_use_calls_on_tool_call(self, make_cli_process, callback):
+    async def test_tool_use_calls_on_tool_call(self, make_backend, callback):
         """content_block_start with tool_use → callback.on_tool_call()."""
         events = [
             tool_use_start_event("Bash"),
@@ -118,7 +118,7 @@ class TestStreamJsonParsing:
         ]
         fake_proc = FakeProcess(make_stream_lines(*events))
 
-        cli = make_cli_process()
+        cli = make_backend()
         with patch("asyncio.create_subprocess_exec", return_value=fake_proc):
             await cli._execute_turn("test", callback)
 
@@ -127,23 +127,23 @@ class TestStreamJsonParsing:
         assert call_args[0][0] == "Bash"
         assert call_args[0][1] == {"command": "ls"}
 
-    async def test_result_event_saves_session_id(self, make_cli_process, callback):
+    async def test_result_event_saves_session_id(self, make_backend, callback):
         """result event → session_id saved on ClaudeProcess."""
         events = [result_event(session_id="sess_abc")]
         fake_proc = FakeProcess(make_stream_lines(*events))
 
-        cli = make_cli_process()
+        cli = make_backend()
         with patch("asyncio.create_subprocess_exec", return_value=fake_proc):
             await cli._execute_turn("test", callback)
 
         assert cli.session_id == "sess_abc"
 
-    async def test_malformed_json_skipped(self, make_cli_process, callback):
+    async def test_malformed_json_skipped(self, make_backend, callback):
         """Malformed JSON lines are silently skipped."""
         raw = b'not valid json\n' + json.dumps(result_event()).encode() + b'\n'
         fake_proc = FakeProcess(raw)
 
-        cli = make_cli_process()
+        cli = make_backend()
         with patch("asyncio.create_subprocess_exec", return_value=fake_proc):
             await cli._execute_turn("test", callback)
 
@@ -151,7 +151,7 @@ class TestStreamJsonParsing:
         assert cli.session_id == "sess_123"
         callback.on_error.assert_not_called()
 
-    async def test_tool_input_accumulation_invalid_json(self, make_cli_process, callback):
+    async def test_tool_input_accumulation_invalid_json(self, make_backend, callback):
         """If accumulated tool input is not valid JSON, pass {} instead."""
         events = [
             tool_use_start_event("Bash"),
@@ -161,19 +161,19 @@ class TestStreamJsonParsing:
         ]
         fake_proc = FakeProcess(make_stream_lines(*events))
 
-        cli = make_cli_process()
+        cli = make_backend()
         with patch("asyncio.create_subprocess_exec", return_value=fake_proc):
             await cli._execute_turn("test", callback)
 
         callback.on_tool_call.assert_called_once()
         assert callback.on_tool_call.call_args[0][1] == {}
 
-    async def test_nonzero_exit_calls_on_error(self, make_cli_process, callback):
+    async def test_nonzero_exit_calls_on_error(self, make_backend, callback):
         """Subprocess non-zero exit (not cancel) → callback.on_error()."""
         events = [result_event()]
         fake_proc = FakeProcess(make_stream_lines(*events), returncode=1)
 
-        cli = make_cli_process()
+        cli = make_backend()
         with patch("asyncio.create_subprocess_exec", return_value=fake_proc):
             await cli._execute_turn("test", callback)
 
@@ -181,7 +181,7 @@ class TestStreamJsonParsing:
         assert "exit code 1" in callback.on_error.call_args[0][0].lower()
 
     async def test_structured_result_error_is_included_in_error_message(
-        self, make_cli_process, callback
+        self, make_backend, callback
     ):
         events = [
             error_result_event(
@@ -191,7 +191,7 @@ class TestStreamJsonParsing:
         ]
         fake_proc = FakeProcess(make_stream_lines(*events), returncode=1)
 
-        cli = make_cli_process()
+        cli = make_backend()
         cli.session_id = "stale_session"
         with patch("asyncio.create_subprocess_exec", return_value=fake_proc):
             await cli._execute_turn("test", callback)
@@ -203,12 +203,12 @@ class TestStreamJsonParsing:
         assert cli.session_id == "stale_session"
         assert cli.last_turn_failed is True
 
-    async def test_returncode_checked_after_wait(self, make_cli_process, callback):
+    async def test_returncode_checked_after_wait(self, make_backend, callback):
         """After process.wait(), returncode is checked for errors."""
         events = [text_delta_event("ok"), result_event()]
         fake_proc = FakeProcess(make_stream_lines(*events), returncode=0)
 
-        cli = make_cli_process()
+        cli = make_backend()
         with patch("asyncio.create_subprocess_exec", return_value=fake_proc):
             await cli._execute_turn("test", callback)
 
@@ -216,7 +216,7 @@ class TestStreamJsonParsing:
         callback.on_error.assert_not_called()
 
 
-    async def test_assistant_event_text_calls_on_stream(self, make_cli_process, callback):
+    async def test_assistant_event_text_calls_on_stream(self, make_backend, callback):
         """CLI 'assistant' message with text content → callback.on_stream()."""
         events = [
             {
@@ -230,14 +230,14 @@ class TestStreamJsonParsing:
         ]
         fake_proc = FakeProcess(make_stream_lines(*events))
 
-        cli = make_cli_process()
+        cli = make_backend()
         with patch("asyncio.create_subprocess_exec", return_value=fake_proc):
             await cli._execute_turn("test", callback)
 
         callback.on_stream.assert_called_once_with("Hello world")
         assert cli.session_id == "sess_456"
 
-    async def test_assistant_event_tool_use_calls_on_tool_call(self, make_cli_process, callback):
+    async def test_assistant_event_tool_use_calls_on_tool_call(self, make_backend, callback):
         """CLI 'assistant' message with tool_use content → callback.on_tool_call()."""
         events = [
             {
@@ -253,7 +253,7 @@ class TestStreamJsonParsing:
         ]
         fake_proc = FakeProcess(make_stream_lines(*events))
 
-        cli = make_cli_process()
+        cli = make_backend()
         with patch("asyncio.create_subprocess_exec", return_value=fake_proc):
             await cli._execute_turn("test", callback)
 
@@ -266,9 +266,9 @@ class TestStreamJsonParsing:
 class TestCancel:
     """Test cancel() behavior."""
 
-    async def test_cancel_terminates_then_kills(self, make_cli_process):
+    async def test_cancel_terminates_then_kills(self, make_backend):
         """cancel() calls terminate; on timeout, calls kill. State → idle."""
-        cli = make_cli_process()
+        cli = make_backend()
         fake_proc = FakeProcess(b"", returncode=0)
         fake_proc.returncode = None  # process still running
 
@@ -288,13 +288,13 @@ class TestCancel:
         assert cli.state == "idle"
         assert cli._idle_event.is_set()
 
-    async def test_cancel_does_not_trigger_on_error(self, make_cli_process, callback):
+    async def test_cancel_does_not_trigger_on_error(self, make_backend, callback):
         """Cancelled process (non-zero exit) should NOT call on_error."""
         # Simulate a process that exits with code -15 (SIGTERM) after cancel
         events = [text_delta_event("partial"), result_event()]
         fake_proc = FakeProcess(make_stream_lines(*events), returncode=-15)
 
-        cli = make_cli_process()
+        cli = make_backend()
         cli._cancelled = True  # cancel() was called before _execute_turn checks returncode
 
         with patch("asyncio.create_subprocess_exec", return_value=fake_proc):
@@ -307,7 +307,7 @@ class TestCancel:
 class TestMessageQueue:
     """Test serial message processing."""
 
-    async def test_messages_processed_serially(self, make_cli_process, callback):
+    async def test_messages_processed_serially(self, make_backend, callback):
         """Messages 1 and 2: all callbacks for msg1 complete before msg2 starts."""
         call_order = []
 
@@ -329,7 +329,7 @@ class TestMessageQueue:
             else:
                 return FakeProcess(make_stream_lines(*events2))
 
-        cli = make_cli_process()
+        cli = make_backend()
         cli.start()
 
         try:
@@ -496,9 +496,9 @@ class TestMCPConfig:
 class TestStop:
     """Test stop() / lifecycle."""
 
-    async def test_stop_sets_state_dead(self, make_cli_process):
+    async def test_stop_sets_state_dead(self, make_backend):
         """stop() cancels queue task and sets state to dead."""
-        cli = make_cli_process()
+        cli = make_backend()
         cli.start()
         await cli.stop()
         assert cli.state == "dead"

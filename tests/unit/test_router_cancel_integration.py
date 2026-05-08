@@ -62,7 +62,7 @@ class TestRouterCancelIntegration:
         channel.format_tool_call = lambda name, inp: ""
 
         router = Router(
-            cli_process=backend,
+            backend=backend,
             channel=channel,
             allowed_users=[123],
             bot_name="test-bot",

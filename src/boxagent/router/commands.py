@@ -47,7 +47,7 @@ async def cmd_status(
     *,
     channel: object,
     bot_name: str,
-    cli_process: object,
+    backend: object,
     start_time: float,
     display_name: str = "",
     ai_backend: str = "",
@@ -67,10 +67,10 @@ async def cmd_status(
         active = pool.get_active(chat_id)
         state = getattr(active, "state", "idle") if active else "idle"
     else:
-        state = getattr(cli_process, "state", "unknown")
-        session = getattr(cli_process, "session_id", None) or "none"
-        model = getattr(cli_process, "model", "") or "default"
-    yolo = getattr(cli_process, "yolo", False)
+        state = getattr(backend, "state", "unknown")
+        session = getattr(backend, "session_id", None) or "none"
+        model = getattr(backend, "model", "") or "default"
+    yolo = getattr(backend, "yolo", False)
     tool_display = getattr(channel, "tool_calls_display", "")
 
     lines = [

@@ -98,7 +98,7 @@ async def test_router_should_not_truncate_late_stream_chunks(tmp_path: Path, cap
     channel.format_tool_call = lambda name, inp: ""
 
     router = Router(
-        cli_process=backend,
+        backend=backend,
         channel=channel,
         allowed_users=[123],
         bot_name="test-bot",

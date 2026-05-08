@@ -44,7 +44,7 @@ def mock_storage():
 @pytest.fixture
 def router(mock_cli, mock_channel, mock_storage):
     r = Router(
-        cli_process=mock_cli,
+        backend=mock_cli,
         channel=mock_channel,
         allowed_users=[123],
         storage=mock_storage,
@@ -209,7 +209,7 @@ class TestSyncSkillsCommand:
             (Path(skill_src) / "other-skill").mkdir()
 
             r = Router(
-                cli_process=mock_cli,
+                backend=mock_cli,
                 channel=mock_channel,
                 allowed_users=[123],
                 storage=mock_storage,
@@ -230,7 +230,7 @@ class TestSyncSkillsCommand:
 
     async def test_empty_extra_skill_dirs(self, mock_cli, mock_channel, mock_storage):
         r = Router(
-            cli_process=mock_cli,
+            backend=mock_cli,
             channel=mock_channel,
             allowed_users=[123],
             storage=mock_storage,
@@ -244,7 +244,7 @@ class TestSyncSkillsCommand:
 
     async def test_not_dispatched_to_cli(self, mock_cli, mock_channel, mock_storage):
         r = Router(
-            cli_process=mock_cli,
+            backend=mock_cli,
             channel=mock_channel,
             allowed_users=[123],
             storage=mock_storage,
@@ -276,7 +276,7 @@ class TestCompactCommand:
         mock_channel.show_typing = AsyncMock()
 
         r = Router(
-            cli_process=cli,
+            backend=cli,
             channel=mock_channel,
             allowed_users=[123],
             storage=mock_storage,
@@ -320,7 +320,7 @@ class TestCompactCommand:
         mock_channel.stream_end = AsyncMock()
 
         r = Router(
-            cli_process=cli,
+            backend=cli,
             channel=mock_channel,
             allowed_users=[123],
             storage=mock_storage,
@@ -362,7 +362,7 @@ class TestCompactCommand:
         mock_channel.show_typing = AsyncMock()
 
         r = Router(
-            cli_process=cli,
+            backend=cli,
             channel=mock_channel,
             allowed_users=[123],
             storage=mock_storage,
@@ -393,7 +393,7 @@ class TestCompactCommand:
         mock_channel.show_typing = AsyncMock()
 
         r = Router(
-            cli_process=cli,
+            backend=cli,
             channel=mock_channel,
             allowed_users=[123],
             storage=mock_storage,
@@ -455,7 +455,7 @@ class TestAtModelPrefix:
         mock_channel.format_tool_call = lambda name, inp: ""
 
         r = Router(
-            cli_process=cli,
+            backend=cli,
             channel=mock_channel,
             allowed_users=[123],
             storage=mock_storage,
@@ -493,7 +493,7 @@ class TestAtModelPrefix:
         mock_channel.format_tool_call = lambda name, inp: ""
 
         r = Router(
-            cli_process=cli,
+            backend=cli,
             channel=mock_channel,
             allowed_users=[123],
             storage=mock_storage,
@@ -529,7 +529,7 @@ class TestAtModelPrefix:
         mock_channel.format_tool_call = lambda name, inp: ""
 
         r = Router(
-            cli_process=cli,
+            backend=cli,
             channel=mock_channel,
             allowed_users=[123],
             storage=mock_storage,
@@ -565,7 +565,7 @@ class TestAtModelPrefix:
         mock_channel.format_tool_call = lambda name, inp: ""
 
         r = Router(
-            cli_process=cli,
+            backend=cli,
             channel=mock_channel,
             allowed_users=[123],
             storage=mock_storage,
@@ -644,7 +644,7 @@ class TestExecCommand:
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             r = Router(
-                cli_process=mock_cli,
+                backend=mock_cli,
                 channel=mock_channel,
                 allowed_users=[123],
                 storage=mock_storage,
@@ -860,5 +860,5 @@ class TestBackendCommand:
         assert "switched" in text.lower()
         assert "codex-cli" in text
         assert router.ai_backend == "codex-cli"
-        assert router.cli_process is not mock_cli
+        assert router.backend is not mock_cli
         mock_storage.clear_session.assert_called_with("test-bot", chat_id="123")

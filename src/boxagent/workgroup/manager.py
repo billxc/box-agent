@@ -172,9 +172,9 @@ class WorkgroupManager:
             template_claude_md_text=read_template_snapshot(bot_config.workspace),
         )
 
-        cli_process = self._make_backend(bot_config)
-        cli_process.start()
-        self.procs[specialist_name] = cli_process
+        backend = self._make_backend(bot_config)
+        backend.start()
+        self.procs[specialist_name] = backend
 
         def _factory(cfg=bot_config):
             return self._make_backend(cfg)
@@ -190,7 +190,7 @@ class WorkgroupManager:
         self.pools[specialist_name] = pool
 
         specialist_router = Router(
-            cli_process=cli_process,
+            backend=backend,
             channel=adapter.primary_channel(),
             allowed_users=workgroup_config.allowed_users,
             storage=self.storage,
@@ -260,9 +260,9 @@ class WorkgroupManager:
             self._sync_skills(admin_ws, workgroup_config.extra_skill_dirs, workgroup_config.ai_backend)
         seed_admin_workspace(admin_ws, workgroup_name)
 
-        admin_cli = self._make_backend(admin_bot_cfg)
-        admin_cli.start()
-        self.procs[workgroup_name] = admin_cli
+        admin_backend = self._make_backend(admin_bot_cfg)
+        admin_backend.start()
+        self.procs[workgroup_name] = admin_backend
 
         def _admin_factory(cfg=admin_bot_cfg):
             proc = self._make_backend(cfg)
@@ -279,7 +279,7 @@ class WorkgroupManager:
         self.pools[workgroup_name] = admin_pool
 
         admin_router = Router(
-            cli_process=admin_cli,
+            backend=admin_backend,
             channel=adapter.primary_channel(),
             allowed_users=workgroup_config.allowed_users,
             storage=self.storage,
@@ -716,10 +716,10 @@ class WorkgroupManager:
             await adapter.cleanup_specialist(specialist_name, specialist_config)
 
         # Stop process
-        cli_process = self.procs.pop(specialist_name, None)
-        if cli_process:
+        backend = self.procs.pop(specialist_name, None)
+        if backend:
             try:
-                await cli_process.stop()
+                await backend.stop()
             except Exception as e:
                 logger.warning("Error stopping specialist CLI '%s': %s", specialist_name, e)
 
@@ -769,9 +769,9 @@ class WorkgroupManager:
         for name, heartbeat in self._heartbeats.items():
             heartbeat.stop()
         self._heartbeats.clear()
-        for name, cli_process in self.procs.items():
+        for name, backend in self.procs.items():
             try:
-                await cli_process.stop()
+                await backend.stop()
             except Exception as e:
                 logger.error("Error stopping workgroup CLI %s: %s", name, e)
         for name, pool in self.pools.items():

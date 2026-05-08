@@ -133,9 +133,9 @@ class BotsMixin:
             elif isinstance(saved, str):
                 session_id = saved
 
-        cli_process = _create_backend(bot_cfg, session_id)
-        cli_process.start()
-        self._cli_processes[name] = cli_process
+        backend = _create_backend(bot_cfg, session_id)
+        backend.start()
+        self._backends[name] = backend
 
         def _factory():
             return _create_backend(bot_cfg, None)
@@ -178,7 +178,7 @@ class BotsMixin:
 
         from boxagent import gateway as _gw_pkg
         router = _gw_pkg.Router(
-            cli_process=cli_process,
+            backend=backend,
             channel=primary_channel,
             allowed_users=bot_cfg.allowed_users,
             storage=self._storage,
@@ -246,7 +246,7 @@ class BotsMixin:
         wd_chat_id = tg_chat_id
 
         wd = _gw_pkg.Watchdog(
-            cli_process=cli_process,
+            backend=backend,
             channel=primary_channel,
             chat_id=wd_chat_id,
             bot_name=name,
@@ -311,10 +311,10 @@ class BotsMixin:
             bot_name=name,
             yolo=True,
         )
-        self._cli_processes[name] = stub
+        self._backends[name] = stub
 
         router = _gw_pkg.Router(
-            cli_process=stub,
+            backend=stub,
             channel=None,
             allowed_users=[],
             storage=self._storage,
@@ -344,19 +344,19 @@ class BotsMixin:
 
     async def _restart_bot(self, name: str, bot_cfg: BotConfig) -> None:
         """Restart a dead backend process."""
-        old_cli = self._cli_processes.get(name)
+        old_backend = self._backends.get(name)
         session_id = None
-        if old_cli and _supports_persistent_session(bot_cfg.ai_backend):
-            session_id = old_cli.session_id
-        if old_cli:
+        if old_backend and _supports_persistent_session(bot_cfg.ai_backend):
+            session_id = old_backend.session_id
+        if old_backend:
             try:
-                await old_cli.stop()
+                await old_backend.stop()
             except Exception:
                 pass
 
-        new_cli = _create_backend(bot_cfg, session_id)
-        new_cli.start()
-        self._cli_processes[name] = new_cli
+        new_backend = _create_backend(bot_cfg, session_id)
+        new_backend.start()
+        self._backends[name] = new_backend
 
         if bot_cfg.extra_skill_dirs:
             sync_skills(
@@ -366,23 +366,29 @@ class BotsMixin:
             )
 
         if name in self._routers:
-            self._routers[name].cli_process = new_cli
+            self._routers[name].backend = new_backend
 
         if self._scheduler and name in self._scheduler.bot_refs:
-            self._scheduler.bot_refs[name].cli_process = new_cli
+            self._scheduler.bot_refs[name].backend = new_backend
             self._scheduler.bot_refs[name].telegram_token = bot_cfg.telegram_token
 
         if name in self._watchdogs:
-            self._watchdogs[name].cli_process = new_cli
+            self._watchdogs[name].backend = new_backend
 
         logger.info("Bot '%s' backend restarted", name)
 
-    async def _on_backend_switched(self, bot_name: str, new_cli: object, new_backend: str) -> None:
-        """Called by Router after /backend switch — sync external references."""
-        self._cli_processes[bot_name] = new_cli
+    async def _on_backend_switched(self, bot_name: str, new_backend: AgentBackend, new_kind: str) -> None:
+        """Called by Router after /backend switch — sync external references.
+
+        Args:
+            bot_name: Name of the bot whose backend was swapped.
+            new_backend: The new backend instance (replaces the old one).
+            new_kind: The new ai_backend string (e.g. 'codex-cli').
+        """
+        self._backends[bot_name] = new_backend
         if self._scheduler and bot_name in self._scheduler.bot_refs:
-            self._scheduler.bot_refs[bot_name].cli_process = new_cli
-            self._scheduler.bot_refs[bot_name].ai_backend = new_backend
+            self._scheduler.bot_refs[bot_name].backend = new_backend
+            self._scheduler.bot_refs[bot_name].ai_backend = new_kind
         if bot_name in self._watchdogs:
-            self._watchdogs[bot_name].cli_process = new_cli
-        logger.info("Bot '%s' backend switched to %s (refs synced)", bot_name, new_backend)
+            self._watchdogs[bot_name].backend = new_backend
+        logger.info("Bot '%s' backend switched to %s (refs synced)", bot_name, new_kind)

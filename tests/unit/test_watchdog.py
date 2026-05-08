@@ -24,7 +24,7 @@ class TestWatchdog:
             restart_called.set()
 
         wd = Watchdog(
-            cli_process=mock_cli,
+            backend=mock_cli,
             channel=mock_channel,
             chat_id="123",
             bot_name="test-bot",
@@ -55,7 +55,7 @@ class TestWatchdog:
             restart_called = True
 
         wd = Watchdog(
-            cli_process=mock_cli,
+            backend=mock_cli,
             channel=mock_channel,
             chat_id="123",
             bot_name="test-bot",
@@ -81,7 +81,7 @@ class TestWatchdog:
             restart_called = True
 
         wd = Watchdog(
-            cli_process=mock_cli,
+            backend=mock_cli,
             channel=mock_channel,
             chat_id="123",
             bot_name="test-bot",

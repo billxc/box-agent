@@ -409,7 +409,7 @@ async def test_fire_append_sends_to_cli(tmp_path):
     mock_ch.send_text = AsyncMock()
 
     sched = _make_scheduler(tmp_path, bot_refs={
-        "my-bot": BotRef(cli_process=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
     })
 
     task = ScheduleTask(
@@ -479,7 +479,7 @@ async def test_run_forever_fires_matching_task(tmp_path):
     mock_ch.send_text = AsyncMock()
 
     sched = _make_scheduler(tmp_path, bot_refs={
-        "my-bot": BotRef(cli_process=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
     })
 
     _write_schedules(sched.schedules_file, {
@@ -508,7 +508,7 @@ async def test_run_forever_skips_disabled(tmp_path):
     mock_ch = AsyncMock()
 
     sched = _make_scheduler(tmp_path, bot_refs={
-        "my-bot": BotRef(cli_process=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
     })
 
     _write_schedules(sched.schedules_file, {
@@ -535,7 +535,7 @@ async def test_run_forever_skips_non_matching_cron(tmp_path):
     mock_ch = AsyncMock()
 
     sched = _make_scheduler(tmp_path, bot_refs={
-        "my-bot": BotRef(cli_process=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
     })
 
     _write_schedules(sched.schedules_file, {
@@ -562,7 +562,7 @@ async def test_run_forever_skips_wrong_node(tmp_path):
     mock_ch = AsyncMock()
 
     sched = _make_scheduler(tmp_path, node_id="server-a", bot_refs={
-        "my-bot": BotRef(cli_process=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
     })
 
     _write_schedules(sched.schedules_file, {
@@ -589,7 +589,7 @@ async def test_run_forever_skips_wrong_node_filter(tmp_path):
     mock_ch = AsyncMock()
 
     sched = _make_scheduler(tmp_path, node_id="home-server", bot_refs={
-        "my-bot": BotRef(cli_process=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
     })
 
     _write_schedules(sched.schedules_file, {
@@ -618,7 +618,7 @@ async def test_run_forever_fires_matching_node(tmp_path):
     mock_ch.send_text = AsyncMock()
 
     sched = _make_scheduler(tmp_path, node_id="cloud-pc", bot_refs={
-        "my-bot": BotRef(cli_process=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
     })
 
     _write_schedules(sched.schedules_file, {
@@ -654,7 +654,7 @@ async def test_run_forever_skips_already_executing(tmp_path):
     mock_ch.send_text = AsyncMock()
 
     sched = _make_scheduler(tmp_path, bot_refs={
-        "my-bot": BotRef(cli_process=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
     })
 
     _write_schedules(sched.schedules_file, {
@@ -688,7 +688,7 @@ async def test_run_forever_hot_reload(tmp_path):
     mock_ch.send_text = AsyncMock()
 
     sched = _make_scheduler(tmp_path, bot_refs={
-        "my-bot": BotRef(cli_process=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
     })
 
     # Start with no schedules
@@ -768,7 +768,7 @@ async def test_catchup_fires_missed_task(tmp_path):
     mock_ch.send_text = AsyncMock()
 
     sched = _make_scheduler(tmp_path, bot_refs={
-        "my-bot": BotRef(cli_process=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
     })
     # Simulate: last check was 3 minutes ago
     sched._last_check = datetime.now() - timedelta(minutes=3)
@@ -803,7 +803,7 @@ async def test_execute_once_append(tmp_path):
     mock_ch = AsyncMock()
 
     sched = _make_scheduler(tmp_path, bot_refs={
-        "my-bot": BotRef(cli_process=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
     })
 
     task = ScheduleTask(
@@ -835,7 +835,7 @@ async def test_execute_once_append_ignores_model_and_backend_fields(tmp_path):
     mock_ch.send_text = AsyncMock()
 
     sched = _make_scheduler(tmp_path, bot_refs={
-        "my-bot": BotRef(cli_process=mock_cli, channel=mock_ch, chat_id="123", ai_backend="claude-cli"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123", ai_backend="claude-cli"),
     })
 
     task = ScheduleTask(
@@ -875,7 +875,7 @@ async def test_execute_once_isolate_uses_requested_backend_and_model(tmp_path):
             captured["stopped"] = True
 
     sched = _make_scheduler(tmp_path, bot_refs={
-        "my-bot": BotRef(cli_process=MagicMock(workspace="/tmp/work"), channel=AsyncMock(), chat_id="123", ai_backend="claude-cli"),
+        "my-bot": BotRef(backend=MagicMock(workspace="/tmp/work"), channel=AsyncMock(), chat_id="123", ai_backend="claude-cli"),
     })
     sched.default_workspace = "/ba/workspace"
     task = ScheduleTask(
@@ -915,7 +915,7 @@ async def test_isolate_prefers_telegram_bots_mapping_over_bot_name(tmp_path):
     mock_channel = AsyncMock()
     sched = _make_scheduler(tmp_path, bot_refs={
         "configured-bot": BotRef(
-            cli_process=MagicMock(workspace="/tmp/work"),
+            backend=MagicMock(workspace="/tmp/work"),
             channel=mock_channel,
             chat_id="123",
             ai_backend="claude-cli",
@@ -974,7 +974,7 @@ def test_build_prompt_injects_schedule_context(tmp_path):
 async def test_notify_uses_direct_telegram_token_with_unique_chat_id(tmp_path):
     sched = _make_scheduler(tmp_path, bot_refs={
         "test-claude": BotRef(
-            cli_process=MagicMock(),
+            backend=MagicMock(),
             channel=AsyncMock(),
             chat_id="1777534489",
             ai_backend="claude-cli",
@@ -1000,7 +1000,7 @@ async def test_notify_uses_direct_telegram_token_with_unique_chat_id(tmp_path):
 async def test_notify_requires_bot_id_in_telegram_bots_yaml(tmp_path):
     sched = _make_scheduler(tmp_path, bot_refs={
         "test-claude": BotRef(
-            cli_process=MagicMock(),
+            backend=MagicMock(),
             channel=AsyncMock(),
             chat_id="1777534489",
             ai_backend="claude-cli",
@@ -1020,8 +1020,8 @@ async def test_notify_requires_bot_id_in_telegram_bots_yaml(tmp_path):
 
 def test_resolve_unique_notify_chat_id_requires_single_chat(tmp_path):
     sched = _make_scheduler(tmp_path, bot_refs={
-        "a": BotRef(cli_process=MagicMock(), channel=AsyncMock(), chat_id="1"),
-        "b": BotRef(cli_process=MagicMock(), channel=AsyncMock(), chat_id="2"),
+        "a": BotRef(backend=MagicMock(), channel=AsyncMock(), chat_id="1"),
+        "b": BotRef(backend=MagicMock(), channel=AsyncMock(), chat_id="2"),
     })
     assert sched._resolve_unique_notify_chat_id() == ""
 

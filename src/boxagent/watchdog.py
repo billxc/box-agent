@@ -14,7 +14,7 @@ RESTART_DELAY = 5.0  # seconds before restart to avoid rapid loops
 
 @dataclass
 class Watchdog:
-    cli_process: AgentBackend
+    backend: AgentBackend
     channel: object
     chat_id: str
     bot_name: str
@@ -25,8 +25,8 @@ class Watchdog:
 
     async def run_once(self) -> None:
         """Single watchdog check cycle."""
-        # Check primary cli_process
-        state = getattr(self.cli_process, "state", "unknown")
+        # Check primary backend
+        state = getattr(self.backend, "state", "unknown")
         if state == "dead":
             logger.warning(
                 "Bot '%s' backend is dead, restarting...",

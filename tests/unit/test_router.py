@@ -41,7 +41,7 @@ def mock_channel():
 @pytest.fixture
 def router(mock_cli, mock_channel):
     return Router(
-        cli_process=mock_cli,
+        backend=mock_cli,
         channel=mock_channel,
         allowed_users=[123456],
     )
@@ -84,7 +84,7 @@ class TestCommands:
 
     async def test_start_uses_display_name(self, mock_channel, mock_cli):
         router = Router(
-            cli_process=mock_cli,
+            backend=mock_cli,
             channel=mock_channel,
             allowed_users=[123456],
             bot_name="codex",
@@ -194,7 +194,7 @@ class TestDispatch:
         storage = MagicMock()
         mock_cli.supports_session_persistence = True
         router = Router(
-            cli_process=mock_cli,
+            backend=mock_cli,
             channel=mock_channel,
             allowed_users=[123456],
             storage=storage,
@@ -217,7 +217,7 @@ class TestDispatch:
         mock_channel.stream_start = AsyncMock(return_value=handle)
 
         router = Router(
-            cli_process=backend,
+            backend=backend,
             channel=mock_channel,
             allowed_users=[123456],
             bot_name="codex",
@@ -237,7 +237,7 @@ class TestDispatch:
         storage = MagicMock()
         mock_cli.supports_session_persistence = False
         router = Router(
-            cli_process=mock_cli,
+            backend=mock_cli,
             channel=mock_channel,
             allowed_users=[123456],
             storage=storage,
@@ -266,7 +266,7 @@ class TestDispatch:
 
         mock_cli.send.side_effect = fail_send
         router = Router(
-            cli_process=mock_cli,
+            backend=mock_cli,
             channel=mock_channel,
             allowed_users=[123456],
             bot_name="bot-1",

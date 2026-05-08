@@ -40,7 +40,7 @@ class SendCall:
 class MockBackend:
     """Test double for ``AgentBackend``.
 
-    Drop-in for any ``cli_process: AgentBackend`` field. State transitions
+    Drop-in for any ``backend: AgentBackend`` field. State transitions
     mimic the real backend: idle → busy (during ``send``) → idle (or dead
     after ``stop``).
 

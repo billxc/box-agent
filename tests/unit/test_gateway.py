@@ -63,7 +63,7 @@ class TestGateway:
         mock_ch = AsyncMock()
         mock_cli = AsyncMock()
         gw._channels = {"test-bot": mock_ch}
-        gw._cli_processes = {"test-bot": mock_cli}
+        gw._backends = {"test-bot": mock_cli}
 
         await gw.stop()
 
@@ -176,17 +176,17 @@ class TestGateway:
         gw = Gateway(config=mock_config, config_dir=tmp_path)
 
         # Set up a mock scheduler with a bot ref
-        old_cli = MagicMock()
-        old_cli.session_id = "old-session"
-        old_cli.stop = AsyncMock()
-        gw._cli_processes["my-bot"] = old_cli
+        old_backend = MagicMock()
+        old_backend.session_id = "old-session"
+        old_backend.stop = AsyncMock()
+        gw._backends["my-bot"] = old_backend
 
         mock_channel = MagicMock()
         gw._scheduler = Scheduler(
             schedules_file=tmp_path / "schedules.yaml",
             node_id="test-node",
             bot_refs={"my-bot": BotRef(
-                cli_process=old_cli, channel=mock_channel, chat_id="123",
+                backend=old_backend, channel=mock_channel, chat_id="123",
             )},
         )
 
@@ -198,11 +198,11 @@ class TestGateway:
         bot_cfg.extra_skill_dirs = []
 
         with patch("boxagent.gateway.ClaudeProcess") as MockCLI:
-            new_cli = MagicMock()
-            MockCLI.return_value = new_cli
+            new_backend = MagicMock()
+            MockCLI.return_value = new_backend
             await gw._restart_bot("my-bot", bot_cfg)
 
-        assert gw._scheduler.bot_refs["my-bot"].cli_process is new_cli
+        assert gw._scheduler.bot_refs["my-bot"].backend is new_backend
 
     async def test_start_bot_loads_saved_codex_session(self, tmp_path):
         from boxagent.gateway import Gateway
@@ -255,7 +255,7 @@ class TestGateway:
         mock_cli.session_id = "sess_123"
         mock_cli.supports_session_persistence = True
         gw._channels = {"test-bot": mock_ch}
-        gw._cli_processes = {"test-bot": mock_cli}
+        gw._backends = {"test-bot": mock_cli}
 
         await gw.stop()
 

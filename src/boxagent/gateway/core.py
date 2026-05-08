@@ -40,7 +40,7 @@ class _GatewayCore:
     _web_channels: dict[str, WebChannel] = field(
         default_factory=dict, repr=False
     )
-    _cli_processes: dict[str, object] = field(
+    _backends: dict[str, object] = field(
         default_factory=dict, repr=False
     )
     _pools: dict[str, SessionPool] = field(
@@ -150,7 +150,7 @@ class _GatewayCore:
             chat_id = str(bot_cfg.allowed_users[0]) if bot_cfg.allowed_users else ""
             primary_channel = self._channels.get(name)
             bot_refs[name] = BotRef(
-                cli_process=self._cli_processes[name],
+                backend=self._backends[name],
                 channel=primary_channel,
                 chat_id=chat_id,
                 ai_backend=bot_cfg.ai_backend,
@@ -253,12 +253,12 @@ class _GatewayCore:
             except Exception as e:
                 logger.error("Error stopping web channel %s: %s", name, e)
 
-        for name, cli_process in self._cli_processes.items():
+        for name, backend in self._backends.items():
             try:
                 # Save session before stopping
-                if self._storage and cli_process.session_id:
-                    self._storage.save_session(name, cli_process.session_id)
-                await cli_process.stop()
+                if self._storage and backend.session_id:
+                    self._storage.save_session(name, backend.session_id)
+                await backend.stop()
             except Exception as e:
                 logger.error("Error stopping CLI %s: %s", name, e)
 

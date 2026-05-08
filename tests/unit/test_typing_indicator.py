@@ -279,7 +279,7 @@ def _make_router(channel, cli=None):
         cli.state = "idle"
         cli.session_id = None
     return Router(
-        cli_process=cli,
+        backend=cli,
         channel=channel,
         allowed_users=[123],
         bot_name="test-bot",

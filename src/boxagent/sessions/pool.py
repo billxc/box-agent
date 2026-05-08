@@ -20,7 +20,7 @@ class ChatContext:
 
 @dataclass
 class SessionPool:
-    """Pool of cli_processes shared across chats.
+    """Pool of backendes shared across chats.
 
     Each chat gets its own session_id, model, and workspace but borrows
     a process from the pool for the duration of a turn.  Different chats
@@ -32,7 +32,7 @@ class SessionPool:
     default_workspace: str = ""
     storage: object = None  # Storage instance for lazy-loading saved sessions
     bot_name: str = ""
-    _factory: object = None  # Callable[[], cli_process]
+    _factory: object = None  # Callable[[], backend]
     _pool: asyncio.Queue = field(default=None, repr=False)
     _chat_contexts: dict[str, ChatContext] = field(default_factory=dict, repr=False)
     _active: dict[str, object] = field(default_factory=dict, repr=False)
@@ -69,7 +69,7 @@ class SessionPool:
     def start(self, factory) -> None:
         """Create pool members and start their queues.
 
-        ``factory`` is a callable returning a fresh cli_process (already
+        ``factory`` is a callable returning a fresh backend (already
         configured with workspace/model/etc but no session_id).
         """
         self._factory = factory

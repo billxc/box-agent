@@ -30,7 +30,7 @@ def build_env(msg: IncomingMessage, router: "Router") -> AgentEnv:
         model = router.pool.get_model(chat_id) or ""
         workspace = router.pool.get_workspace(chat_id) or router.workspace
     else:
-        model = getattr(router.cli_process, "model", "") or ""
+        model = getattr(router.backend, "model", "") or ""
         workspace = router.workspace
 
     running_tasks = router.get_running_tasks() if callable(router.get_running_tasks) else []
@@ -55,7 +55,7 @@ def build_env(msg: IncomingMessage, router: "Router") -> AgentEnv:
         peers=tuple(peers),
         ai_backend=router.ai_backend,
         model=model,
-        yolo=getattr(router.cli_process, "yolo", False),
+        yolo=getattr(router.backend, "yolo", False),
         passthrough=router.passthrough,
     )
 

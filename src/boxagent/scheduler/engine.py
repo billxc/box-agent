@@ -218,7 +218,7 @@ def compute_next_run(cron_expr: str, after: datetime) -> datetime:
 class BotRef:
     """Reference to a bot's CLIProcess and channel for scheduler use."""
 
-    cli_process: AgentBackend  # backend process
+    backend: AgentBackend  # backend process
     channel: object  # TelegramChannel
     chat_id: str
     ai_backend: str = "claude-cli"
@@ -587,7 +587,7 @@ class Scheduler:
         # append 模式始终沿用目标 bot 当前 backend/model/session；
         # task.ai_backend / task.model 仅供 isolate 模式使用，这里忽略。
         try:
-            await bot_ref.cli_process.send(user_prompt, callback, chat_id=bot_ref.chat_id, append_system_prompt=append_system_prompt)
+            await bot_ref.backend.send(user_prompt, callback, chat_id=bot_ref.chat_id, append_system_prompt=append_system_prompt)
             await callback.send_result()
         except Exception as e:
             self._append_run_log(task, prompt=prompt, error=str(e))

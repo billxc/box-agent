@@ -122,7 +122,7 @@ class TestVerboseSwitchesFormat:
         # Mock send_text so it doesn't hit real Telegram
         channel.send_text = AsyncMock()
         return Router(
-            cli_process=cli,
+            backend=cli,
             channel=channel,
             allowed_users=[123],
             bot_name="test-bot",

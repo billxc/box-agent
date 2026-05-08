@@ -10,7 +10,7 @@ from boxagent.router.env_builder import build_env
 def _make_router(**overrides):
     base = dict(
         pool=None,
-        cli_process=SimpleNamespace(model="default-model", yolo=False),
+        backend=SimpleNamespace(model="default-model", yolo=False),
         workspace="/tmp/ws",
         bot_name="test-bot",
         display_name="Test",
@@ -44,7 +44,7 @@ def _make_msg(**overrides):
     return IncomingMessage(**base)
 
 
-def test_uses_cli_process_model_when_no_pool():
+def test_uses_backend_model_when_no_pool():
     env = build_env(_make_msg(), _make_router())
     assert env.model == "default-model"
     assert env.workspace == "/tmp/ws"
@@ -69,7 +69,7 @@ def test_falls_back_to_router_workspace_when_pool_returns_none():
     env = build_env(_make_msg(), _make_router(pool=pool))
     # Pool returns None → fall back to router.workspace
     assert env.workspace == "/tmp/ws"
-    # model degrades to "" when pool says None (cli_process.model NOT used)
+    # model degrades to "" when pool says None (backend.model NOT used)
     assert env.model == ""
 
 
