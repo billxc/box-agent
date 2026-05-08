@@ -22,8 +22,8 @@ def mock_channel():
     ch.send_text = AsyncMock()
     ch.format_tool_call = lambda name, inp: f"tool:{name}"
 
-    # Mimic the polymorphic on_tool_call that DiscordChannel/TelegramChannel
-    # provide: format_tool_call → stream_update OR send_text.
+    # Mimic the polymorphic on_tool_call that TelegramChannel
+    # provides: format_tool_call → stream_update OR send_text.
     async def _on_tool_call(chat_id, tool_id, name, inp, result, *, stream_handle=None, webhook_name=""):
         fmt = ch.format_tool_call(name, inp)
         if not fmt:
