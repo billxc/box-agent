@@ -7,13 +7,16 @@ re-exported here for tests that import them directly.
 
 from .core import (
     _GatewayCore,
-    _create_backend,
-    _ensure_git_repo,
     _infer_platform,
     _parse_peer_message,
+    logger,
+)
+from boxagent.agent import (
+    BotsMixin,
+    _create_backend,
+    _ensure_git_repo,
     _supports_persistent_session,
     sync_skills,
-    logger,
 )
 from boxagent.cluster.rpc import ClusterRpcMixin
 from .http_api import HttpApiMixin
@@ -39,6 +42,7 @@ class Gateway(
     ClusterRoutesMixin,
     ClusterRpcMixin,
     TopologyMixin,
+    BotsMixin,
     _GatewayCore,
 ):
     """Top-level Gateway. State + lifecycle live in ``_GatewayCore``;
