@@ -277,3 +277,31 @@ class _GatewayCore:
             await self._workgroup_mgr.stop()
 
         logger.info("Gateway stopped")
+
+
+# ── Gateway: compose mixins on top of _GatewayCore ──
+
+from boxagent.agent import BotsMixin
+from boxagent.cluster.peer import PeerMixin
+from boxagent.cluster.routes import ClusterRoutesMixin
+from boxagent.cluster.rpc import ClusterRpcMixin
+from boxagent.cluster.topology import TopologyMixin
+from boxagent.gateway.http_api import HttpApiMixin
+from boxagent.transports.web.server import WebServerMixin
+from boxagent.workgroup.routes import WorkgroupApiMixin
+
+
+class Gateway(
+    WebServerMixin,
+    HttpApiMixin,
+    WorkgroupApiMixin,
+    PeerMixin,
+    ClusterRoutesMixin,
+    ClusterRpcMixin,
+    TopologyMixin,
+    BotsMixin,
+    _GatewayCore,
+):
+    """Top-level Gateway. State + lifecycle live in ``_GatewayCore``;
+    request handlers come from the mixins."""
+    pass

@@ -175,7 +175,7 @@ async def cmd_sync_skills(
     extra_skill_dirs: list[str],
     ai_backend: str,
 ) -> None:
-    from boxagent.gateway import sync_skills
+    from boxagent.agent import sync_skills
     linked = sync_skills(workspace, extra_skill_dirs, ai_backend)
     if linked:
         text = f"Synced {len(linked)} skill(s):\n" + "\n".join(

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 class TestGateway:
     def test_supports_persistent_session(self):
-        from boxagent.gateway import _supports_persistent_session
+        from boxagent.agent import _supports_persistent_session
 
         assert _supports_persistent_session("claude-cli") is True
         assert _supports_persistent_session("codex-acp") is True
@@ -261,7 +261,7 @@ class TestGateway:
         gw._storage.save_session.assert_called_once_with("test-bot", "sess_123")
 
     def test_sync_skills_uses_agents_dir_for_codex_acp(self, tmp_path):
-        from boxagent.gateway import sync_skills
+        from boxagent.agent import sync_skills
 
         workspace = tmp_path / "workspace"
         source_root = tmp_path / "skills-src"
