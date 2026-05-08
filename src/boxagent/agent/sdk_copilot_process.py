@@ -121,7 +121,17 @@ class AgentSDKCopilot(AgentBackend):
         env: "AgentEnv | None" = None,
     ) -> None:
         await self._ensure_started()
-        await self._ensure_session(model=model or self.model)
+        # Copilot SDK only accepts ``system_message`` at create_session time
+        # (no per-turn override). The first turn's append_system_prompt
+        # therefore sticks for the whole session — to refresh it the caller
+        # must reset_session() (or do anything that drops the session, e.g.
+        # /new, /compact, /backend). Static parts of BoxAgent context (bot
+        # name, workspace, BOXAGENT.md, peer list) match this lifecycle
+        # well; dynamic parts (time, running_tasks) drift across turns.
+        await self._ensure_session(
+            model=model or self.model,
+            append_system_prompt=append_system_prompt,
+        )
 
         # Allow per-turn model override even after session start.
         if model and model != self.model:
@@ -140,17 +150,8 @@ class AgentSDKCopilot(AgentBackend):
         self.last_turn_failed = False
         self.last_turn_error = ""
 
-        # Copilot SDK doesn't have a per-turn append_system_prompt — fall
-        # back to prepending it to the user message. Cheap and matches what
-        # ClaudeProcess does when --append-system-prompt isn't applicable.
-        prompt = (
-            f"{append_system_prompt}\n\n{message}"
-            if append_system_prompt
-            else message
-        )
-
         try:
-            await self._session.send(prompt)  # type: ignore[union-attr]
+            await self._session.send(message)  # type: ignore[union-attr]
             await self._turn_complete.wait()
         except asyncio.CancelledError:
             try:
@@ -203,7 +204,7 @@ class AgentSDKCopilot(AgentBackend):
         self._client = CopilotClient()
         await self._client.start()
 
-    async def _ensure_session(self, *, model: str) -> None:
+    async def _ensure_session(self, *, model: str, append_system_prompt: str = "") -> None:
         if self._session is not None:
             return
         kwargs: dict[str, Any] = {
@@ -219,6 +220,11 @@ class AgentSDKCopilot(AgentBackend):
         }
         if model:
             kwargs["model"] = model
+        if append_system_prompt:
+            kwargs["system_message"] = {
+                "mode": "append",
+                "content": append_system_prompt,
+            }
 
         if self.session_id:
             try:
