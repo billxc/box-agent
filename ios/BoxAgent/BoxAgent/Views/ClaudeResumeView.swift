@@ -99,6 +99,7 @@ struct ClaudeSessionPickerView: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 }

@@ -13,6 +13,7 @@
 
 /* Begin PBXFileReference section */
 		AA000001 /* BoxAgent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BoxAgent.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA0000A0 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -39,6 +40,7 @@
 		AA000030 = {
 			isa = PBXGroup;
 			children = (
+				AA0000A0 /* Config.xcconfig */,
 				AA000010 /* BoxAgent */,
 				AA000031 /* Products */,
 			);
@@ -135,12 +137,12 @@
 /* Begin XCBuildConfiguration section */
 		AA000061 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AA0000A0 /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = UBF8T346G9;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = BoxAgent;
@@ -169,12 +171,12 @@
 		};
 		AA000062 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AA0000A0 /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = UBF8T346G9;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = BoxAgent;

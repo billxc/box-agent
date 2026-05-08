@@ -22,3 +22,4 @@ DerivedData/
 *.moved-aside
 *.hmap
 *.ipa
+ios/BoxAgent/Local.xcconfig
