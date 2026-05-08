@@ -81,7 +81,7 @@ def test_web_adapter_primary_channel_is_web_channel():
 
 def test_web_adapter_chat_id_is_virtual_wg_prefix():
     a = WebWorkgroupAdapter(web_channel=_make_web_channel())
-    specialist = _make_specialist_config(discord_channel=999)  # ignored
+    specialist = _make_specialist_config()
     assert a.get_specialist_chat_id("alice", specialist) == "wg:alice"
 
 

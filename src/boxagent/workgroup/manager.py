@@ -82,7 +82,6 @@ class WorkgroupManager:
     local_dir: Path | None = None
     start_time: float = 0.0
     storage: object = None
-    discord_channels: dict[str, object] = field(default_factory=dict)  # bot_id → DiscordChannel
     web_channels: dict[str, object] = field(default_factory=dict)      # name → WebChannel (shared with Gateway)
     # Internal state
     routers: dict[str, Router] = field(default_factory=dict)    # name → Router
@@ -121,7 +120,6 @@ class WorkgroupManager:
                     workspace=specialist_raw.get("workspace", ""),
                     ai_backend=specialist_raw.get("ai_backend", ""),
                     display_name=specialist_raw.get("display_name", specialist_name),
-                    discord_channel=int(specialist_raw.get("discord_channel", 0)),
                     extra_skill_dirs=list(specialist_raw.get("extra_skill_dirs", []) or []),
                     template=specialist_raw.get("template", "") or "",
                 )
@@ -145,7 +143,6 @@ class WorkgroupManager:
             "workspace": specialist.workspace,
             "ai_backend": specialist.ai_backend,
             "display_name": specialist.display_name,
-            "discord_channel": specialist.discord_channel,
             "extra_skill_dirs": list(specialist.extra_skill_dirs),
             "template": specialist.template,
         }
@@ -307,11 +304,8 @@ class WorkgroupManager:
     def _build_adapter(self, workgroup_config: WorkgroupConfig) -> WorkgroupChannelAdapter:
         """Pick the workgroup's internal message adapter.
 
-        Web is the only real workgroup substrate. Discord (if configured on
-        ``discord_bot_id``) is registered separately as an ingress channel
-        for admin's inbound messages — it is no longer part of the workgroup
-        message bus. Falls back to NullWorkgroupChannelAdapter if no
-        WebChannel exists yet.
+        Web is the only workgroup substrate. Falls back to
+        NullWorkgroupChannelAdapter if no WebChannel exists yet.
         """
         web_channel = self.web_channels.get(workgroup_config.name)
         if web_channel is not None:
@@ -407,45 +401,7 @@ class WorkgroupManager:
         admin_router._channels["web"] = web_channel
         logger.info("Workgroup '%s': web channel enabled", workgroup_name)
 
-        # --- Discord ingress (optional, no longer a workgroup substrate). ---
-        # When discord_bot_id is set, register admin to receive inbound
-        # messages from a Discord category and/or channel. Replies go back
-        # to Discord via Router's normal channel resolution. Workgroup
-        # internals (specialist visibility, peer messaging, notifications)
-        # all run over Web — Discord is purely an inbound front door here.
-        if workgroup_config.discord_bot_id:
-            discord_channel = self.discord_channels.get(workgroup_config.discord_bot_id)
-            if discord_channel is not None:
-                if workgroup_config.admin_discord_category:
-                    discord_channel.register_route(
-                        admin_router.handle_message,
-                        [workgroup_config.admin_discord_category],
-                    )
-                    admin_router._channels["discord"] = discord_channel
-                    logger.info(
-                        "Workgroup '%s': Discord ingress on category %d",
-                        workgroup_name, workgroup_config.admin_discord_category,
-                    )
-                if workgroup_config.admin_discord_channel:
-                    try:
-                        discord_channel.register_channel_route(
-                            admin_router.handle_message,
-                            workgroup_config.admin_discord_channel,
-                        )
-                        admin_router._channels["discord"] = discord_channel
-                        logger.info(
-                            "Workgroup '%s': Discord ingress on channel %d",
-                            workgroup_name, workgroup_config.admin_discord_channel,
-                        )
-                    except ValueError:
-                        logger.debug(
-                            "Workgroup '%s': Discord channel %d already registered",
-                            workgroup_name, workgroup_config.admin_discord_channel,
-                        )
-
-        # Cross-admin peer messaging is no longer Discord-channel-based
-        # (handled by cluster RPC in send_peer). discord_peer_channel removed
-        # from config.
+        # Cross-admin peer messaging routes via cluster RPC in send_peer.
 
         # --- Create specialists (already merged above) ---
         specialist_names = []
@@ -503,7 +459,7 @@ class WorkgroupManager:
         """Dispatch a task to a specialist asynchronously.
 
         Returns immediately with a task_id. The specialist processes in the
-        background; results are visible in the Discord channel (if configured).
+        background; results are visible in the specialist's web view.
         When done, a summary is posted back to reply_chat_id (admin's channel).
         """
         router = self.routers.get(target)
@@ -543,7 +499,7 @@ class WorkgroupManager:
         async def _run():
             result = ""
             try:
-                # Post task in specialist's visibility channel (e.g. Discord webhook)
+                # Post task in specialist's visibility channel (e.g. web)
                 if specialist_config is not None:
                     await adapter.post_task(target, specialist_config, text, workgroup_display)
 
@@ -566,7 +522,7 @@ class WorkgroupManager:
 
             # Callback: short notification to admin's chat + full result to admin router
             if reply_chat_id:
-                # 1. Result notification (Discord: webhook; null: no-op)
+                # 1. Result notification (web: text post; null: no-op)
                 status = "done" if "Error" not in result[:10] else "failed"
                 preview = result[:800] + "..." if len(result) > 800 else result
                 notify = f"**[{target}]** {status}\n{preview}"
@@ -622,7 +578,6 @@ class WorkgroupManager:
                     "workspace": specialist_config.workspace,
                     "ai_backend": specialist_config.ai_backend,
                     "display_name": specialist_config.display_name,
-                    "discord_channel": specialist_config.discord_channel,
                     "template": specialist_config.template,
                     "running_tasks": running_tasks,
                 })
@@ -691,7 +646,7 @@ class WorkgroupManager:
             for workgroup_config in self.config.values():
                 if target in workgroup_config.specialists:
                     specialist = workgroup_config.specialists[target]
-                    chat_id = str(specialist.discord_channel) if specialist.discord_channel else f"wg:{target}"
+                    chat_id = f"wg:{target}"
                     sid = pool.get_session_id(chat_id)
                     if sid:
                         transcript_path = self.local_dir / "transcripts" / f"{sid}.jsonl"
@@ -781,7 +736,7 @@ class WorkgroupManager:
         for workgroup_config in self.config.values():
             if target in workgroup_config.specialists:
                 specialist = workgroup_config.specialists[target]
-                chat_id = str(specialist.discord_channel) if specialist.discord_channel else f"wg:{target}"
+                chat_id = f"wg:{target}"
                 pool.clear_session(chat_id)
                 logger.info("Reset session for specialist '%s' (chat_id=%s)", target, chat_id)
                 return {"ok": True}
@@ -833,15 +788,12 @@ class WorkgroupManager:
             workspace=workspace or workgroup_config.specialist_workspace(specialist_name),
             ai_backend=workgroup_config.ai_backend,
             display_name=display_name or specialist_name,
-            discord_channel=0,
             extra_skill_dirs=resolved_user_dirs,
             template=template,
         )
 
-        # Adapter allocates any external resource (e.g. Discord text channel)
-        # and may mutate specialist_config.discord_channel.
+        # Adapter hook (web is currently a no-op; reserved for future transports).
         specialist_config = await adapter.provision_specialist(specialist_name, specialist_config, workgroup_config)
-        discord_channel_id = specialist_config.discord_channel
 
         await self._create_specialist_agent(
             specialist_name, specialist_config, workgroup_config, adapter, template_info=template_info,
@@ -856,17 +808,18 @@ class WorkgroupManager:
         if admin_router:
             admin_router.workgroup_agents = list(workgroup_config.specialists.keys())
 
+        chat_id = adapter.get_specialist_chat_id(specialist_name, specialist_config)
         logger.info(
-            "Workgroup '%s': dynamically created specialist '%s' (channel=%d, model=%s, workspace=%s)",
-            workgroup_name, specialist_name, discord_channel_id, specialist_config.model, specialist_config.workspace,
+            "Workgroup '%s': dynamically created specialist '%s' (chat_id=%s, model=%s, workspace=%s)",
+            workgroup_name, specialist_name, chat_id, specialist_config.model, specialist_config.workspace,
         )
-        return {"ok": True, "channel_id": discord_channel_id}
+        return {"ok": True, "chat_id": chat_id}
 
     async def delete_specialist(self, specialist_name: str) -> dict:
         """Delete a specialist.
 
         Stops its process and pool, removes its workspace directory,
-        deletes its Discord channel, and removes the persisted entry.
+        and removes the persisted entry.
         """
         if specialist_name not in self.routers:
             return {"ok": False, "error": f"specialist '{specialist_name}' not found"}
@@ -882,7 +835,7 @@ class WorkgroupManager:
                 specialist_workspace = specialist_config.workspace
                 break
 
-        # Tear down any external resource via the adapter (Discord channel etc.).
+        # Adapter teardown hook (web is currently a no-op).
         if specialist_config is not None and workgroup_name:
             adapter = self.adapters.get(workgroup_name) or NullWorkgroupChannelAdapter()
             await adapter.cleanup_specialist(specialist_name, specialist_config)

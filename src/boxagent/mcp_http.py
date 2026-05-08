@@ -302,7 +302,7 @@ def _register_admin_tools(mcp: FastMCP) -> None:
 
         The task is dispatched asynchronously — this tool returns immediately.
         The specialist processes the task in the background; results are visible
-        in the specialist's Discord channel.
+        in the specialist's web view.
 
         Args:
             agent_name: Name of the specialist agent to delegate to
@@ -321,7 +321,7 @@ def _register_admin_tools(mcp: FastMCP) -> None:
             )
             if result.get("ok"):
                 task_id = result.get("task_id", "")
-                return f"Task dispatched to {agent_name} (task_id: {task_id}). Check the specialist's Discord channel for progress."
+                return f"Task dispatched to {agent_name} (task_id: {task_id})."
             return f"Error: {result.get('error', 'unknown error')}"
         except Exception as e:
             return f"Error: {e}"
@@ -336,11 +336,11 @@ def _register_admin_tools(mcp: FastMCP) -> None:
     ) -> str:
         """Dynamically create a new specialist agent in your workgroup.
 
-        Creates a Discord channel for the specialist and starts a new AI backend.
-        The specialist gets its own isolated workspace directory automatically.
+        Starts a new AI backend in its own isolated workspace directory. The
+        specialist is reachable at the virtual chat_id ``wg:<name>`` via web.
 
         Args:
-            name: Unique name for the specialist (used as channel name too)
+            name: Unique name for the specialist
             model: AI model to use (default: inherit from workgroup)
             template: Optional template name (see list_templates). The template's
                 CLAUDE.md is appended to the system prompt and its skills are
@@ -362,12 +362,12 @@ def _register_admin_tools(mcp: FastMCP) -> None:
                 display_name=display_name,
             )
             if result.get("ok"):
-                channel_id = result.get("channel_id", 0)
                 msg = f"Created specialist '{name}'"
                 if template:
                     msg += f" from template '{template}'"
-                if channel_id:
-                    msg += f" with Discord channel (ID: {channel_id})"
+                chat_id = result.get("chat_id", "")
+                if chat_id:
+                    msg += f" (chat_id: {chat_id})"
                 return msg
             return f"Error: {result.get('error', 'unknown error')}"
         except Exception as e:
@@ -405,28 +405,6 @@ def _register_admin_tools(mcp: FastMCP) -> None:
             return f"Error: {e}"
 
     @mcp.tool()
-    async def update_channel_topic(channel_id: str, topic: str) -> str:
-        """Update the topic of a Discord channel.
-
-        Args:
-            channel_id: Discord channel ID to update
-            topic: New topic text (max 1024 chars)
-        """
-        if not _gateway or not _gateway._workgroup_mgr:
-            return "Error: workgroup manager not available"
-        discord_channel = None
-        for dc in _gateway._workgroup_mgr.discord_channels.values():
-            discord_channel = dc
-            break
-        if discord_channel is None:
-            return "Error: no Discord channel available"
-        try:
-            await discord_channel.update_channel_topic(int(channel_id), topic[:1024])
-            return "Channel topic updated."
-        except Exception as e:
-            return f"Error: {e}"
-
-    @mcp.tool()
     async def cancel_task(task_id: str) -> str:
         """Cancel a running specialist task.
 
@@ -456,8 +434,7 @@ def _register_peer_tools(mcp: FastMCP) -> None:
 
         Routes via cluster RPC: if the target lives on this machine the
         message is dispatched in-process; otherwise it's sent over the
-        guest WS to the node that owns the target. Discord shared
-        channels are no longer used.
+        guest WS to the node that owns the target.
 
         Default is fire-and-forget: returns "queued" immediately, lets the
         target admin process the message in the background. Pass wait=True

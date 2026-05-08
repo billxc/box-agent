@@ -22,7 +22,7 @@ class Attachment:
 class IncomingMessage:
     """Message received from a channel."""
 
-    channel: str  # "telegram" / "discord" / "web" (kept for backward compat)
+    channel: str  # "telegram" / "web" (kept for backward compat)
     chat_id: str
     user_id: str
     text: str

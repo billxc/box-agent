@@ -1,7 +1,6 @@
 """Convert standard Markdown to platform-specific formats.
 
 - Telegram MarkdownV2: escape special chars, remap bold/italic/strike syntax.
-- Discord: convert unsupported elements (tables, links) to Discord-friendly forms.
 """
 
 import re
@@ -85,51 +84,6 @@ def md_to_telegram(text: str) -> str:
 
     # Escape remaining plain text
     result.append(escape_telegram(text[pos:]))
-    return "".join(result)
-
-
-# ── Discord ──────────────────────────────────────────────────────────
-
-# Tokenizer for Discord: only match elements that need transformation.
-# Code fences are matched first to protect them from other transforms.
-_DISCORD_TOKEN_RE = re.compile(
-    r"(?P<fence>```(\w*)\n?[\s\S]*?```)"   # fenced code block (preserve)
-    r"|(?P<table>(?:^|\n)\|[^\n]+\|\n\|[-| :]+\|(?:\n\|[^\n]+\|)*)"  # markdown table
-    r"|(?P<inline>`[^`\n]+`)"               # inline code (preserve)
-)
-
-
-def md_to_discord(text: str) -> str:
-    """Convert standard Markdown to Discord-friendly format.
-
-    Discord natively supports: **bold**, *italic*, ~~strike~~, `code`,
-    ```code blocks```, > quotes, lists, [text](url) links.
-
-    Transforms needed:
-    - Tables → wrapped in code block for alignment
-    """
-    result: list[str] = []
-    pos = 0
-
-    for m in _DISCORD_TOKEN_RE.finditer(text):
-        # Plain text between tokens: pass through as-is
-        result.append(text[pos:m.start()])
-
-        if m.group("fence"):
-            # Code blocks: pass through unchanged
-            result.append(m.group("fence"))
-        elif m.group("table"):
-            # Markdown table → code block
-            table = m.group("table").strip()
-            result.append(f"```\n{table}\n```")
-        elif m.group("inline"):
-            # Inline code: pass through unchanged
-            result.append(m.group("inline"))
-
-        pos = m.end()
-
-    # Remaining plain text
-    result.append(text[pos:])
     return "".join(result)
 
 

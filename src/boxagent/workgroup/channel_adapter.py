@@ -1,19 +1,12 @@
 """WorkgroupChannelAdapter — pluggable channel for workgroup admin↔specialist.
 
 Encapsulates the message-bus the workgroup uses internally so future
-transports (e.g. cluster-RPC, telegram-as-substrate) can be swapped in
-without touching orchestration logic.
+transports can be swapped in without touching orchestration logic.
 
 Implementations in this module:
 - WorkgroupChannelAdapter      — Protocol
 - NullWorkgroupChannelAdapter  — no external channel (tests)
 - WebWorkgroupAdapter          — host's WebChannel as the workgroup substrate
-
-Discord is intentionally NOT a workgroup substrate any more. It serves only
-as an ingress (admin can receive user messages from a Discord channel and
-reply to them). All workgroup-internal messaging — task dispatch,
-specialist visibility, admin notifications, peer messaging, dynamic
-specialist channels — runs over Web.
 """
 
 from __future__ import annotations
@@ -61,8 +54,8 @@ class WorkgroupChannelAdapter(Protocol):
     async def provision_specialist(
         self, specialist_name: str, specialist_config: SpecialistConfig, workgroup_config: WorkgroupConfig,
     ) -> SpecialistConfig:
-        """Allocate any external resources (e.g. a Discord text channel) and
-        return the (possibly-mutated) specialist_config. Caller persists the result."""
+        """Allocate any per-adapter resources and return the (possibly-mutated)
+        specialist_config. Caller persists the result."""
         ...
 
     async def cleanup_specialist(

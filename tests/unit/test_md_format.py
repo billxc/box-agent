@@ -1,4 +1,4 @@
-"""Tests for md_format — Markdown conversion for Telegram and Discord."""
+"""Tests for md_format — Markdown conversion for Telegram."""
 
 import pytest
 
@@ -6,7 +6,6 @@ from boxagent.channels.md_format import (
     escape_telegram,
     escape_telegram_code,
     md_to_telegram,
-    md_to_discord,
 )
 
 
@@ -256,95 +255,3 @@ class TestMdToTelegramMixed:
 
 
 # ── Discord tests ────────────────────────────────────────────────────
-
-
-class TestMdToDiscordPassthrough:
-    """Discord natively supports these — should pass through unchanged."""
-
-    def test_plain_text(self):
-        assert md_to_discord("hello world") == "hello world"
-
-    def test_bold(self):
-        assert md_to_discord("**bold**") == "**bold**"
-
-    def test_italic(self):
-        assert md_to_discord("*italic*") == "*italic*"
-
-    def test_strikethrough(self):
-        assert md_to_discord("~~deleted~~") == "~~deleted~~"
-
-    def test_inline_code(self):
-        assert md_to_discord("use `foo` here") == "use `foo` here"
-
-    def test_code_block(self):
-        text = "```python\nprint('hi')\n```"
-        assert md_to_discord(text) == text
-
-    def test_code_block_preserved(self):
-        text = "before\n```\ncode\n```\nafter"
-        assert md_to_discord(text) == text
-
-
-class TestMdToDiscordTables:
-    """Tables are not supported in Discord — convert to code blocks."""
-
-    def test_simple_table(self):
-        text = "| A | B |\n|---|---|\n| 1 | 2 |"
-        result = md_to_discord(text)
-        assert result.startswith("```\n")
-        assert result.endswith("\n```")
-        assert "| A | B |" in result
-        assert "| 1 | 2 |" in result
-
-    def test_table_with_surrounding_text(self):
-        text = "Results:\n| Name | Score |\n|------|-------|\n| Alice | 95 |\nDone!"
-        result = md_to_discord(text)
-        assert "Results:" in result
-        assert "Done!" in result
-        assert "```\n" in result
-
-    def test_table_alignment(self):
-        """Table content inside code block should preserve alignment."""
-        text = "| Left | Right |\n|:-----|------:|\n| a    |     b |"
-        result = md_to_discord(text)
-        assert "| Left | Right |" in result
-        assert "|:-----|------:|" in result
-
-
-class TestMdToDiscordLinks:
-    """Masked links are natively supported in Discord — pass through."""
-
-    def test_simple_link(self):
-        result = md_to_discord("[click here](https://example.com)")
-        assert result == "[click here](https://example.com)"
-
-    def test_link_with_surrounding_text(self):
-        result = md_to_discord("Visit [docs](https://docs.example.com) for more.")
-        assert result == "Visit [docs](https://docs.example.com) for more."
-
-    def test_link_inside_code_block_untouched(self):
-        """Links inside code blocks should not be transformed."""
-        text = "```\n[link](https://example.com)\n```"
-        assert md_to_discord(text) == text
-
-
-class TestMdToDiscordMixed:
-    """Real-world mixed content."""
-
-    def test_bold_code_and_table(self):
-        text = (
-            "**Summary**\n\n"
-            "Use `cmd` to run:\n\n"
-            "| Flag | Desc |\n|------|------|\n| -v | verbose |\n\n"
-            "See [docs](https://example.com)."
-        )
-        result = md_to_discord(text)
-        assert "**Summary**" in result
-        assert "`cmd`" in result
-        assert "```\n" in result
-        assert "docs (<https://example.com>)" not in result
-        assert "[docs](https://example.com)" in result
-
-    def test_all_native_formats_preserved(self):
-        text = "**b** *i* ~~s~~ `c` > quote"
-        assert md_to_discord(text) == text

@@ -85,7 +85,7 @@
   }
 
   function platformIcon(p) {
-    return ({ telegram: "✈︎", discord: "◈", web: "◉", claude: "✦", other: "•", unknown: "•" })[p] || "•";
+    return ({ telegram: "✈︎", web: "◉", claude: "✦", other: "•", unknown: "•" })[p] || "•";
   }
 
   function setConn(state_) {
@@ -198,7 +198,7 @@
   function defaultTitle(s) {
     if (s.is_main) return `★ Main session`;
     if (s.platform === "claude") return `✦ Resumed Claude session`;
-    const tag = ({ telegram: "Telegram", discord: "Discord", web: "Web", other: "Chat" })[s.platform] || "Chat";
+    const tag = ({ telegram: "Telegram", web: "Web", other: "Chat" })[s.platform] || "Chat";
     return `${tag} · ${shortId(s.chat_id)}`;
   }
   function shortId(cid) { return cid.length > 12 ? cid.slice(0, 6) + "…" + cid.slice(-4) : cid; }

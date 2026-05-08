@@ -111,7 +111,7 @@ class Storage:
 
         Reads sessions.yaml (which stores `{bot}:{chat_id}` → entry) and returns
         one record per chat_id for this bot, regardless of which channel
-        (telegram / discord / web) created it.
+        (telegram / web) created it.
         """
         prefix = f"{bot_id}:"
         out: list[dict] = []
