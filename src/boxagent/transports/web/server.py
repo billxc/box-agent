@@ -187,7 +187,7 @@ class WebServerMixin:
         return web.json_response({"machines": machines})
 
     async def _handle_web_sessions(self, request: web.Request) -> web.Response:
-        from boxagent.gateway.core import _infer_platform
+        from boxagent.utils import infer_platform
         if not self._web_authorized(request):
             return self._web_unauthorized()
         bot = request.query.get("bot", "")
@@ -232,7 +232,7 @@ class WebServerMixin:
 
         for s in sessions:
             sid = s.get("session_id") or ""
-            s["platform"] = _infer_platform(s["chat_id"])
+            s["platform"] = infer_platform(s["chat_id"])
             s["is_main"] = bool(main_chat_id and s["chat_id"] == main_chat_id)
             s["preview"] = ""
             s["last_ts"] = 0

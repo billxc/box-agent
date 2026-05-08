@@ -29,18 +29,6 @@ from aiohttp import web
 logger = logging.getLogger(__name__)
 
 
-def _infer_platform(chat_id: str) -> str:
-    """Best-effort guess for which channel a chat_id originated from."""
-    if not chat_id:
-        return "unknown"
-    if chat_id.startswith("claude-"):
-        return "claude"
-    if chat_id.startswith("web-"):
-        return "web"
-    if chat_id.lstrip("-").isdigit():
-        return "telegram"
-    return "other"
-
 
 
 

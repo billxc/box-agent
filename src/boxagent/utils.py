@@ -25,3 +25,16 @@ def safe_print(text: str, *, file=None) -> None:
         encoding = getattr(stream, "encoding", None) or "utf-8"
         safe = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
         print(safe, file=stream)
+
+
+def infer_platform(chat_id: str) -> str:
+    """Best-effort guess for which channel a chat_id originated from."""
+    if not chat_id:
+        return "unknown"
+    if chat_id.startswith("claude-"):
+        return "claude"
+    if chat_id.startswith("web-"):
+        return "web"
+    if chat_id.lstrip("-").isdigit():
+        return "telegram"
+    return "other"
