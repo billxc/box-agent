@@ -16,7 +16,7 @@ from boxagent.agent.manager import _create_backend, _ensure_git_repo, sync_skill
 from boxagent.transports.web import WebChannel
 from boxagent.cluster import ClusterTunnel, GuestClient, GuestRegistry
 from boxagent.config import AppConfig, node_matches
-from boxagent.paths import default_config_dir, default_local_dir, default_workspace_dir
+from boxagent.utils import default_config_dir, default_local_dir, default_workspace_dir
 from boxagent.router import Router
 from boxagent.sessions import SessionPool
 from boxagent.scheduler import BotRef, Scheduler
@@ -27,10 +27,6 @@ from boxagent.workgroup import WorkgroupManager
 from aiohttp import web
 
 logger = logging.getLogger(__name__)
-
-
-
-
 
 
 @dataclass

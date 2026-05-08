@@ -9,7 +9,7 @@ from pathlib import Path
 
 from boxagent.config import load_config, ConfigError
 from boxagent.gateway import Gateway
-from boxagent.paths import default_config_dir, default_local_dir
+from boxagent.utils import default_config_dir, default_local_dir
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ def _run_install(args) -> None:
 
 
 def _resolve_ba_dir(args) -> Path:
-    from boxagent.paths import resolve_boxagent_dir
+    from boxagent.utils import resolve_boxagent_dir
     return resolve_boxagent_dir(getattr(args, "box_agent_dir", None))
 
 

@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from boxagent.paths import default_local_dir
+from boxagent.utils import default_local_dir
 from boxagent.utils import safe_print as _safe_print
 
 

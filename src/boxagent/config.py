@@ -10,7 +10,7 @@ import yaml
 
 from boxagent.utils import deep_merge_dicts
 
-from boxagent.paths import default_workspace_dir, resolve_boxagent_dir
+from boxagent.utils import default_workspace_dir, resolve_boxagent_dir
 
 logger = logging.getLogger(__name__)
 

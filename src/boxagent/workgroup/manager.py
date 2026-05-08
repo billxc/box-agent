@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 
 from boxagent.config import BotConfig, SpecialistConfig, WorkgroupConfig
-from boxagent.paths import resolve_boxagent_dir
+from boxagent.utils import resolve_boxagent_dir
 from boxagent.workgroup.channel_adapter import (
     NullWorkgroupChannelAdapter,
     WebWorkgroupAdapter,

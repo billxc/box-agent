@@ -1,25 +1,56 @@
 # BoxAgent
 
-BoxAgent, abbreviated as BA, is a self-hosted AI agent gateway: receive commands via Telegram, dispatch to Claude CLI or Codex ACP, and stream responses back.
+BoxAgent (BA) is a **Personal Agent Network**: one user, multiple machines, multiple AI agents, collaborating with each other and reachable from your phone or browser.
+
+A single user. Many machines (laptop, desktop, dev box). Many AI agents (Claude CLI, Codex, ACP). One coherent control plane via Telegram, Web, iOS, or MCP. No multi-tenant, no SaaS, no agent logic of its own — BoxAgent only orchestrates and bridges; the agents themselves are Claude / Codex / etc.
 
 ## Documentation
 
-- Backend setup overview: `docs/auth-api-keys.md`
-- Claude setup: `docs/claude-setup.md`
-- Codex setup: `docs/codex-setup.md`
-- Maintainer-oriented codebase guide: `docs/codebase-guide.md`
-- Workgroup (multi-agent) design: `docs/workgroup-design.md`
-- Product vision: `docs/vision.md`
+- Vision and scope: `docs/vision.md`
+- Maintainer-oriented codebase guide: `docs/codebase-guide.md` ← start here for "how does this code work"
 - Design decisions log: `docs/decisions.md`
+- Backend setup: `docs/auth-api-keys.md`, `docs/claude-setup.md`, `docs/codex-setup.md`
+- Workgroup (multi-agent) design: `docs/workgroup-design.md`
 
-If you are trying to understand how the current implementation actually works, start with `docs/codebase-guide.md`.
+## Architecture
+
+```
+            Telegram      Web UI       iOS app       MCP
+                ↘            ↓            ↓           ↙
+                          ┌──────────────────┐
+                          │   Transports     │   external interaction
+                          └────────┬─────────┘
+                                   ↓
+                          ┌──────────────────┐
+                          │   Router         │   per-bot session control
+                          │   (auth, /-cmds, │
+                          │    dispatch)     │
+                          └────────┬─────────┘
+                                   ↓
+                          ┌──────────────────┐
+                          │   Backend CLI    │   Claude / Codex / ACP
+                          │   (subprocess)   │
+                          └──────────────────┘
+
+                Core: a single machine running one or more bots ↑
+
+  Cluster extension       Workgroup extension
+  ─────────────────       ───────────────────
+  Multiple Core nodes     Admin agent + specialists.
+  joined into one         Admin delegates tasks via MCP;
+  network via devtunnel.  specialists can live on the same
+  Host's web UI shows     machine or another cluster node.
+  all bots across nodes.
+```
+
+**Core** is enough to run BoxAgent on one machine with one or more bots. **Cluster** and **Workgroup** are optional extensions enabled by config.
 
 ## Quick Start
 
 ### Prerequisites
 
 - [uv](https://docs.astral.sh/uv/) package manager
-- A Telegram bot token (from [@BotFather](https://t.me/BotFather))
+- A Telegram bot token (from [@BotFather](https://t.me/BotFather)) — or skip Telegram and use Web UI only
 
 ### Install & Run
 
@@ -57,7 +88,6 @@ For backend auth / API keys, see `docs/auth-api-keys.md`.
 Use [easy-service](https://github.com/billxc/easy-service) to register BoxAgent as a system service:
 
 ```bash
-# Install easy-service
 uv tool install git+https://github.com/billxc/easy-service.git
 
 # If installed as uv tool (Option A)
@@ -76,7 +106,7 @@ easy-service restart boxagent
 easy-service uninstall boxagent
 ```
 
-### Configure
+## Configure
 
 Create `~/.boxagent/config.yaml`:
 
@@ -102,7 +132,7 @@ bots:
 
 Find your Telegram user ID by messaging [@userinfobot](https://t.me/userinfobot).
 
-#### Centralizing Bot Tokens (optional)
+### Centralizing Bot Tokens (optional)
 
 If you run multiple bots, you can put all tokens in `~/.boxagent/telegram_bots.yaml` and reference them by `bot_id` in `config.yaml`:
 
@@ -124,7 +154,7 @@ bots:
 
 Resolution priority: `token` (direct) > `bot_id` (lookup from `telegram_bots.yaml`) > error. Both formats are fully backward compatible.
 
-#### Node Filtering (optional)
+### Node Filtering (optional)
 
 When multiple machines share the same config directory, you can restrict which bots and scheduled tasks run on each machine.
 
@@ -151,27 +181,13 @@ bots:
 To run an isolated BA instance on the same machine, set `BOX_AGENT_DIR` or pass `--box-agent-dir` / `--ba-dir`.
 BA uses that directory itself as the config directory, and uses the sibling `<BOX_AGENT_DIR>-local` directory for runtime state such as sessions and `api.sock`.
 
-### Run
+## Channels
 
-```bash
-# If installed as uv tool
-boxagent
+BoxAgent reaches you over multiple channels at once; pick whichever you need.
 
-# If running from cloned repo
-uv run boxagent
-```
+### Telegram
 
-Example for a separate test instance:
-
-```bash
-BOX_AGENT_DIR=/path/to/ba-test-dir boxagent
-BOX_AGENT_DIR=/path/to/ba-test-dir uv run boxagent
-boxagent --ba-dir /path/to/ba-test-dir
-```
-
-The bot connects to Telegram and starts listening. Send it a message from your allowed Telegram account.
-
-### Commands
+Primary channel — best streaming, media handling, and mobile experience. Configure under `bots.<name>.channels.telegram` as shown above.
 
 | Command | Description |
 |---------|-------------|
@@ -191,7 +207,7 @@ The bot connects to Telegram and starts listening. Send it a message from your a
 
 Any other text message is sent to the configured backend as a prompt. Photos and documents are downloaded to temporary files and included as local file paths. Prefix with `@model` (e.g. `@opus explain this`) to use a specific model for one message.
 
-## Web UI
+### Web UI
 
 Every BoxAgent process exposes a browser chat at `http://127.0.0.1:9292/` by default. Vanilla HTML/CSS/JS, mobile-first, dark/light auto.
 
@@ -212,9 +228,40 @@ global:
 
 Then visit `http://<host>:9292/?token=<shared-secret>` once — the token is cached in localStorage.
 
-## Cluster (hub-and-spoke, optional)
+### iOS app
 
-For driving multiple machines from a single browser. One node is the **host** (auto-creates and hosts a [devtunnel](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/)); other nodes are **satellites** that dial the host over WebSocket.
+Native SwiftUI client at `ios/BoxAgent/`. Talks to the Web UI's HTTP API (`/api/send`, `/api/stream`), reusing the same SSE event format as the browser. Useful when you want a native iOS experience instead of the mobile web view.
+
+Open `ios/BoxAgent/BoxAgent.xcodeproj` in Xcode, copy `Local.xcconfig.example` → `Local.xcconfig`, and set the server URL + `web_token`. Build to your iPhone or simulator.
+
+### MCP
+
+The agents themselves get a built-in MCP server exposing BoxAgent tools (send media, manage schedules, send messages between agents, browse sessions). This is what lets, e.g., a Claude session running inside BoxAgent send you a photo back to the same Telegram chat.
+
+| Tool | Description |
+|------|-------------|
+| `send_photo` | Send an image (jpg, png, etc.) |
+| `send_document` | Send a file/document |
+| `send_video` | Send a video (mp4, etc.) |
+| `send_audio` | Send an audio file (mp3, ogg, etc.) |
+| `send_animation` | Send a GIF animation |
+| `sessions_list` | Browse unified sessions with search and filters |
+| `send_to_specialist` | Workgroup admin → specialist task delegation |
+| `send_to_peer` | Workgroup admin → another admin (cross-node OK) |
+
+These tools are injected automatically when a chat-backed turn is running. Isolate schedules do not currently receive Telegram media MCP injection.
+
+## Backends
+
+| `ai_backend` | Runtime | Session Continuity | Restart Behavior | Notes |
+|--------------|---------|--------------------|------------------|-------|
+| `claude-cli` | Spawns `claude` per turn with `--resume` | Persists across turns and gateway restarts | Restored from `sessions.yaml` | `agent` is passed through as `--agent` |
+| `codex-cli` | Spawns `codex exec` per turn with `--json` | Persists via `thread_id` across turns and restarts | Restored from `sessions.yaml`; resume via `codex exec resume <thread_id>` | Uses JSONL output parsing; `--dangerously-bypass-approvals-and-sandbox` for non-interactive use |
+| `codex-acp` | Keeps an ACP connection to `codex-acp` and sends `session/prompt` turns | Native continuity while the same ACP connection stays alive | Restores the saved ACP session across gateway restart via `load_session(session_id, cwd)` when possible; `/cancel`, `/new`, or `/compact` still reset into a fresh ACP session | `agent` is currently ignored; skills sync to `{workspace}/.agents/skills/` |
+
+## Cluster (multi-machine, optional)
+
+For driving multiple machines from a single browser. One node is the **host** (auto-creates and hosts a [devtunnel](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/)); other nodes are **guests** that dial the host over WebSocket.
 
 Add to the shared `config.yaml`:
 
@@ -225,23 +272,43 @@ cluster:
   token: "<shared-cluster-secret>"
 ```
 
-Each machine reads the same file; whichever has `node_id == cluster.host` becomes host, the rest auto-dial. The host's `/api/bots` then federates every connected satellite's bots, and selecting a remote bot in the web UI proxies HTTP/SSE through the WebSocket transparently.
+Each machine reads the same file; whichever has `node_id == cluster.host` becomes host, the rest auto-dial. The host's `/api/bots` then federates every connected guest's bots, and selecting a remote bot in the web UI proxies HTTP/SSE through the WebSocket transparently.
 
 **Three layers of auth**:
 
-1. Devtunnel JWT — only the same Microsoft account can mint a connect token (satellites use the locally-logged-in `devtunnel` CLI on demand).
-2. `cluster.token` — required in the satellite's hello frame; gates membership.
+1. Devtunnel JWT — only the same Microsoft account can mint a connect token (guests use the locally-logged-in `devtunnel` CLI on demand).
+2. `cluster.token` — required in the guest's hello frame; gates membership.
 3. `web_token` — gates browser/RPC HTTP calls.
 
-Satellites do not need their own public exposure (NAT-friendly outbound WS).
+Guests do not need their own public exposure (NAT-friendly outbound WS).
 
-## Backends
+## Workgroup (multi-agent, optional)
 
-| `ai_backend` | Runtime | Session Continuity | Restart Behavior | Notes |
-|--------------|---------|--------------------|------------------|-------|
-| `claude-cli` | Spawns `claude` per turn with `--resume` | Persists across turns and gateway restarts | Restored from `sessions.yaml` | `agent` is passed through as `--agent` |
-| `codex-cli` | Spawns `codex exec` per turn with `--json` | Persists via `thread_id` across turns and restarts | Restored from `sessions.yaml`; resume via `codex exec resume <thread_id>` | Uses JSONL output parsing; `--dangerously-bypass-approvals-and-sandbox` for non-interactive use |
-| `codex-acp` | Keeps an ACP connection to `codex-acp` and sends `session/prompt` turns | Native continuity while the same ACP connection stays alive | Restores the saved ACP session across gateway restart via `load_session(session_id, cwd)` when possible; `/cancel`, `/new`, or `/compact` still reset into a fresh ACP session | `agent` is currently ignored; skills sync to `{workspace}/.agents/skills/` |
+A workgroup is one **admin** agent plus zero or more **specialist** agents. The user only talks to the admin; the admin delegates tasks to specialists via the `send_to_specialist` MCP tool, specialists return results, the admin replies. Specialists can live on the same machine or on another cluster node.
+
+Add to `config.yaml` alongside `bots:`:
+
+```yaml
+workgroups:
+  my-team:
+    ai_backend: claude-cli
+    model: opus
+    admin_workspace: ~/projects/team
+    display_name: "My Team"
+    channels:
+      telegram:
+        bot_id: "123456789"
+        allowed_users: [YOUR_ID]
+    specialists:
+      reviewer:
+        ai_backend: claude-cli
+        workspace: ~/projects/team/review
+      researcher:
+        ai_backend: codex-cli
+        workspace: ~/projects/team/research
+```
+
+Cross-admin messaging (admin-to-admin, possibly across cluster nodes) uses `send_to_peer`. See `docs/workgroup-design.md` for full details.
 
 ## Scheduled Tasks
 
@@ -335,51 +402,29 @@ boxagent schedule run --id daily-report
 
 If the scheduler loop was blocked while the process stayed alive, it compensates for missed runs by checking up to 5 past minutes on wake. This catch-up window is memory-only and does not survive a full gateway restart.
 
-### Media Tools (MCP)
+## Run
 
-Interactive Telegram turns, and append-mode scheduled tasks that run through a Telegram-backed bot session, get built-in MCP tools for sending media back to the same chat:
+```bash
+# If installed as uv tool
+boxagent
 
-| Tool | Description |
-|------|-------------|
-| `send_photo` | Send an image (jpg, png, etc.) |
-| `send_document` | Send a file/document |
-| `send_video` | Send a video (mp4, etc.) |
-| `send_audio` | Send an audio file (mp3, ogg, etc.) |
-| `send_animation` | Send a GIF animation |
-| `sessions_list` | Browse unified sessions with search and filters |
-
-These tools are injected automatically when a chat-backed turn is running. Isolate schedules do not currently receive Telegram media MCP injection.
-
-## Architecture
-
-```
-Telegram
-  ↕
-TelegramChannel
-  ↕
-Router
-  ├─ ClaudeProcess     ─ claude CLI
-  ├─ CodexProcess      ─ codex CLI (exec --json)
-  └─ ACPProcess        ─ codex-acp
-  ↕
-Storage / Watchdog / Scheduler / HTTP API
+# If running from cloned repo
+uv run boxagent
 ```
 
-- **ClaudeProcess**: Spawns `claude --output-format stream-json -p <msg>` per turn. Parses NDJSON output and maintains session continuity via `--resume`. Inherits from `BaseCLIProcess`.
-- **CodexProcess**: Spawns `codex exec --json <msg>` per turn. Parses JSONL output (thread.started, item.completed, etc.) and maintains session continuity via `codex exec resume <thread_id>`. Inherits from `BaseCLIProcess`.
-- **ACPProcess**: Maintains an ACP connection to `codex-acp`, maps `session_update` events to `on_stream()` / `on_tool_update()`, and uses `session/cancel` for in-flight turn cancellation.
-- **TelegramChannel**: Sends/receives via aiogram 3. Streams responses by editing messages, throttled at 300ms / 200 chars. Uses MarkdownV2 formatting with a single-pass tokenizer (`md_format.py`).
-- **Router**: Auth check → command dispatch → agent dispatch. Adapts AgentCallback to channel output.
-- **Gateway**: Orchestrates all components. Starts/stops bots, wires Storage + Watchdog.
-- **Storage**: Persists session IDs to `~/.boxagent/local/sessions.yaml`. Restart resume is native for `claude-cli`, and `codex-acp` now also attempts native recovery via `load_session(session_id, cwd)`.
-- **Watchdog**: Checks backend state every 30s and recreates a backend when it enters `dead`.
-- **Scheduler**: Wakes at minute boundaries, loads `schedules.yaml`, fires matching cron tasks, and supports isolate/append modes with in-process catch-up for missed runs.
+Example for a separate test instance:
 
-## Configuration
+```bash
+BOX_AGENT_DIR=/path/to/ba-test-dir boxagent
+BOX_AGENT_DIR=/path/to/ba-test-dir uv run boxagent
+boxagent --ba-dir /path/to/ba-test-dir
+```
+
+The bot connects to Telegram and starts listening. Send it a message from your allowed Telegram account.
+
+## Configuration Reference
 
 ### Environment Overrides
-
-The current implementation supports these overrides:
 
 ```bash
 BOXAGENT_MY_BOT_workspace=/data/projects
@@ -387,7 +432,7 @@ BOXAGENT_GLOBAL_LOG_LEVEL=debug
 BOXAGENT_GLOBAL_API_PORT=8888
 ```
 
-Per-bot override keys follow `BOXAGENT_<UPPER_BOT_NAME>_<KEY>` (hyphens → underscores), but today only `workspace` is wired up in code.
+Per-bot override keys follow `BOXAGENT_<UPPER_BOT_NAME>_<KEY>` (hyphens → underscores). Today only `workspace` is wired up in code.
 
 ### CLI Options
 
@@ -397,19 +442,17 @@ uv run boxagent --config /path/to/config/dir
 
 ## Development
 
-### Run Tests
-
 ```bash
-# Unit tests only (default)
+# Unit tests (default — runs on every change)
 uv run pytest
 
 # With verbose output
 uv run pytest -v
 
-# Integration tests (currently exercise the Claude CLI path)
+# Integration tests (real Claude CLI subprocess)
 uv run pytest -m integration
 
-# E2E tests (requires bot token + chat ID)
+# E2E tests (real Telegram + gateway flow — requires bot token + chat ID)
 BOXAGENT_TEST_BOT_TOKEN="..." BOXAGENT_TEST_CHAT_ID="..." uv run pytest -m integration
 ```
 
@@ -417,57 +460,73 @@ BOXAGENT_TEST_BOT_TOKEN="..." BOXAGENT_TEST_CHAT_ID="..." uv run pytest -m integ
 
 ```
 src/boxagent/
-├── main.py              # Entry point, CLI args, signal handling
-├── config.py            # YAML config loading + validation
-├── gateway.py           # Component orchestrator
-├── router.py            # Auth, commands, dispatch + ChannelCallback
-├── storage.py           # Session + PID persistence
-├── watchdog.py          # Process liveness monitor
-├── scheduler.py         # Cron-based task scheduler
-├── schedule_cli.py      # CLI subcommands for schedule management
-├── mcp_server.py        # Telegram media MCP server
-├── agent/
-│   ├── callback.py          # AgentCallback protocol
-│   ├── base_cli.py          # Shared subprocess-per-turn base class
-│   ├── claude_process.py    # Claude CLI backend
-│   ├── codex_process.py     # Codex CLI backend
-│   └── acp_process.py       # ACP session bridge for codex-acp
-└── channels/
-    ├── base.py          # Channel protocol + data types
-    ├── md_format.py     # Markdown format converter (Telegram MarkdownV2)
-    ├── splitter.py      # Message splitting (4096 char limit)
-    └── telegram.py      # Telegram bot via aiogram 3
+├── main.py                 # Entry point, CLI args, signal handling
+├── config.py               # YAML config loading + validation
+├── paths.py                # Path resolution (config dir, local dir, workspace)
+├── doctor.py               # `doctor --fix` env check + dep installer
+├── watchdog.py             # Per-bot process liveness monitor
+├── agent_env.py            # AgentEnv (per-turn agent context)
+├── utils.py                # Shared helpers (deep_merge, infer_platform, ...)
+│
+├── agent/                  # Backend CLI adapters + per-bot orchestration
+│   ├── manager.py            # BotManager: per-bot startup/restart, helpers
+│   ├── base_cli.py           # Shared subprocess-per-turn base class
+│   ├── claude_process.py     # Claude CLI backend
+│   ├── codex_process.py      # Codex CLI backend
+│   ├── acp_process.py        # ACP session bridge for codex-acp
+│   └── callback.py           # AgentCallback protocol
+│
+├── transports/             # External interaction (channels)
+│   ├── base.py               # Channel protocol + IncomingMessage / Attachment
+│   ├── telegram/             # Telegram bot (aiogram 3) + markdown / splitter
+│   ├── web/                  # Web UI: SSE channel + HTTP server + handlers
+│   └── mcp/                  # MCP HTTP server (tools exposed to agents)
+│
+├── router/                 # Per-bot session control (auth, /-cmds, dispatch)
+│   ├── core.py               # Router class
+│   ├── commands.py           # /-command handlers (status, new, exec, ...)
+│   ├── context.py            # First-message session context builder
+│   ├── env_builder.py        # AgentEnv assembly
+│   └── callback.py           # ChannelCallback adapting agent → channel
+│
+├── sessions/               # Persistence + per-chat backend pool
+│   ├── ...                   # Storage, SessionPool, RawSessionPool, claude_native
+│   └── cli/                  # `boxagent sessions` subcommand
+│
+├── scheduler/              # Cron-based task scheduler
+│   ├── engine.py             # Scheduler loop + catch-up
+│   └── cli.py                # `boxagent schedule` subcommands + business fns
+│
+├── cluster/                # Multi-machine extension (hub-and-spoke)
+│   ├── tunnel.py             # Devtunnel lifecycle (host)
+│   ├── devtunnel.py
+│   ├── host_election.py      # Cluster role manager (host vs guest)
+│   ├── registry.py           # Host-side guest registry
+│   ├── guest_client.py       # Guest-side dial + RPC forwarding
+│   ├── peer.py               # Cross-admin peer messaging
+│   ├── rpc.py                # Host↔guest HTTP/SSE proxy
+│   ├── routes.py             # Cluster HTTP routes (peer/send, guest/ws)
+│   └── topology.py           # Peer descriptors + machine snapshots
+│
+├── workgroup/              # Multi-agent extension (admin + specialists)
+│   ├── manager.py            # WorkgroupManager: admin + specialist orchestration
+│   ├── routes.py             # Workgroup HTTP routes (specialist CRUD, send)
+│   ├── channel_adapter.py    # Bridge specialist → admin channel
+│   ├── heartbeat.py          # Periodic specialist self-check
+│   ├── task_queue.py
+│   ├── persistence.py
+│   ├── specialist_skills.py
+│   ├── template_loader.py
+│   ├── workspace_templates.py
+│   └── templates/
+│
+├── gateway/                # Local control plane (composes everything above)
+│   ├── core.py               # _GatewayCore state + Gateway class + start/stop
+│   └── http_api.py           # Internal API server + MCP server lifecycle
+│
+└── web/static/             # Web UI frontend (vanilla HTML/CSS/JS)
+
+ios/BoxAgent/               # Native iOS client (SwiftUI, separate target)
 ```
 
-### Test Structure
-
-```
-tests/
-├── unit/
-│   ├── test_claude_process.py     # ClaudeProcess stream parsing, cancel, queue
-│   ├── test_codex_process.py      # CodexProcess JSONL parsing, resume, cancel
-│   ├── test_acp_process.py        # ACPProcess event mapping, cancel, lifecycle
-│   ├── test_base_cli.py           # BaseCLIProcess command shim resolution
-│   ├── test_config.py             # Config loading, validation, env overrides
-│   ├── test_context.py            # Session context building and field injection
-│   ├── test_router.py             # Auth, commands, dispatch
-│   ├── test_router_cancel_integration.py  # Router-level /cancel with backend state
-│   ├── test_router_late_stream_race.py    # Late stream chunks after router close
-│   ├── test_commands.py           # /status, /new, /cancel, /compact, /model, /exec
-│   ├── test_gateway.py            # Start/stop orchestration
-│   ├── test_storage.py            # Session persistence helpers
-│   ├── test_watchdog.py           # Dead process detection
-│   ├── test_splitter.py           # Message splitting logic
-│   ├── test_md_format.py           # Markdown format conversion (Telegram)
-│   ├── test_telegram_channel.py   # TelegramChannel send/stream/throttle
-│   ├── test_typing_indicator.py   # Typing indicator lifecycle management
-│   ├── test_display.py            # Tool call formatting modes
-│   ├── test_scheduler.py          # Cron loading, catch-up, append/isolate flows
-│   ├── test_schedule_cli.py       # Schedule CLI subcommands (add, del, enable, list)
-│   ├── test_mcp_server.py         # MCP server tools and media sending
-│   ├── test_harness_judge.py      # Rule-based harness result judging
-│   └── test_main.py               # CLI entry point, --ba-dir flag
-└── integration/
-    ├── test_cli_real.py           # Real Claude CLI subprocess path
-    └── test_e2e.py                # Real Telegram + gateway flow
-```
+Tests live under `tests/unit/` (run by default) and `tests/integration/` (opt-in with `-m integration`). For deeper module-level docs see `docs/codebase-guide.md`.
