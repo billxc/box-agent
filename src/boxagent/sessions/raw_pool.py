@@ -6,12 +6,16 @@ one backend per chat_id on first access, keyed by what's stored in
 sessions.yaml for that chat.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
-from boxagent.agent.protocol import AgentBackend
 from boxagent.sessions.base_pool import BaseSessionPool
+
+if TYPE_CHECKING:
+    from boxagent.agent.protocol import AgentBackend
 
 logger = logging.getLogger(__name__)
 

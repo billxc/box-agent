@@ -1,58 +1,57 @@
-"""Discovery + reading of Claude CLI's native session JSONL files.
+"""Discovery + reading of Claude CLI native session JSONL files.
 
-Claude Code stores each session at ``~/.claude/projects/<encoded-cwd>/<uuid>.jsonl``
-where ``<encoded-cwd>`` is the absolute working directory with ``/`` replaced by ``-``.
-Each line is a JSON object — user/assistant messages, tool calls, queue events, etc.
+Thin adapter around ``claude_agent_sdk``: the heavy lifting (jsonl parsing,
+session-file scanning, per-cwd indexing) is delegated to the SDK. We keep
+the encoded↔cwd mapping helpers because the web UI uses the encoded
+project directory name in URLs, while the SDK takes a directory path.
 
-This module provides three lazy entry points used by the web UI:
-- ``list_projects()``           — one row per encoded project dir.
-- ``list_sessions(encoded)``    — one row per ``.jsonl`` file in that project.
-- ``read_messages(encoded, sid)`` — full parsed user/assistant transcript.
+Web UI handlers in ``transports/web/server.py`` call:
+
+- ``list_projects()`` — picker rows, one per encoded project dir.
+- ``project_cwd(encoded)`` — resolve cwd at resume time.
+- ``list_sessions(encoded)`` — picker rows, one per session inside a project.
+- ``read_messages(encoded, sid)`` — full transcript (text + tool blocks).
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import threading
+from datetime import datetime
 from pathlib import Path
+
+from claude_agent_sdk import (
+    SDKSessionInfo,
+    SessionMessage,
+    get_session_messages,
+)
+from claude_agent_sdk import (
+    list_sessions as sdk_list_sessions,
+)
 
 logger = logging.getLogger(__name__)
 
-_cache_lock = threading.Lock()
-_cache: dict[str, tuple[float, list[dict]]] = {}  # key → (mtime, parsed_messages)
-_CACHE_MAX = 64
+
+# ── Path helpers ──────────────────────────────────────────────────────
 
 
 def default_claude_projects_dir() -> Path:
     return Path.home() / ".claude" / "projects"
 
 
-def _decode_cwd(encoded: str) -> str:
-    """Reverse ``/`` → ``-`` encoding used by Claude Code project dirs.
+def _read_cwd_from_jsonl_head(path: Path) -> str:
+    """Best-effort: extract the original ``cwd`` field from a session JSONL.
 
-    Naive — original path components containing ``-`` are ambiguous (e.g. the
-    encoded form ``-a-b-c`` could be ``/a/b/c`` or ``/a/b-c`` or ``/a-b/c``).
-    Use :func:`_lookup_cwd` for an exact answer when a session JSONL is
-    available; this is the last-resort fallback.
+    Claude writes ``"cwd": "/abs/path"`` on most user/event records. The
+    first line that has it within the first 50 records is enough — it's
+    stable for the whole session. SDK doesn't expose this directly, so
+    we keep the helper.
     """
-    if not encoded:
-        return ""
-    if encoded.startswith("-"):
-        return "/" + encoded[1:].replace("-", "/")
-    return encoded.replace("-", "/")
+    import json
 
-
-def _read_cwd_from_jsonl(path: Path) -> str:
-    """Best-effort: extract the original `cwd` field from a session JSONL.
-
-    Claude writes ``"cwd": "/abs/path"`` on most user/event records. The first
-    line that has it is enough — it's stable for the whole session.
-    """
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             for i, line in enumerate(f):
-                if i > 50:  # session metadata lives at the top; bail out
+                if i > 50:
                     break
                 line = line.strip()
                 if not line or '"cwd"' not in line:
@@ -75,7 +74,7 @@ def _read_cwd_from_jsonl(path: Path) -> str:
 
 
 def _lookup_cwd(project_dir: Path) -> str:
-    """Resolve the real cwd for a Claude project dir by reading any JSONL inside."""
+    """Resolve the real cwd for a Claude project dir."""
     if not project_dir.is_dir():
         return ""
     files = sorted(
@@ -84,21 +83,32 @@ def _lookup_cwd(project_dir: Path) -> str:
         reverse=True,
     )
     for f in files:
-        cwd = _read_cwd_from_jsonl(f)
+        cwd = _read_cwd_from_jsonl_head(f)
         if cwd:
             return cwd
-    # Last resort — use the naive decode
-    return _decode_cwd(project_dir.name)
+    # Fallback — naive decode
+    name = project_dir.name
+    if name.startswith("-"):
+        return "/" + name[1:].replace("-", "/")
+    return name.replace("-", "/")
 
 
-def _project_label(encoded: str, cwd: str = "") -> str:
-    """Short human label — last path segment of the actual cwd."""
-    decoded = cwd or _decode_cwd(encoded)
-    base = decoded.rstrip("/").rsplit("/", 1)[-1]
-    return base or encoded
+def project_cwd(encoded: str, claude_dir: Path | None = None) -> str:
+    """Return the resolved cwd for a single encoded project dir."""
+    base = claude_dir or default_claude_projects_dir()
+    return _lookup_cwd(base / encoded)
+
+
+# ── Project listing ──────────────────────────────────────────────────
 
 
 def list_projects(claude_dir: Path | None = None) -> list[dict]:
+    """Group sessions by encoded project dir.
+
+    SDK's ``list_sessions()`` returns flat (one row per session). Web UI
+    expects one row per project with a session count, so we group by
+    encoded dir on disk.
+    """
     base = claude_dir or default_claude_projects_dir()
     if not base.is_dir():
         return []
@@ -111,9 +121,10 @@ def list_projects(claude_dir: Path | None = None) -> list[dict]:
             continue
         last_mtime = max(p.stat().st_mtime for p in sessions)
         cwd = _lookup_cwd(entry)
+        label = (cwd or entry.name).rstrip("/").rsplit("/", 1)[-1] or entry.name
         out.append({
             "encoded": entry.name,
-            "label": _project_label(entry.name, cwd),
+            "label": label,
             "cwd": cwd,
             "session_count": len(sessions),
             "last_ts": last_mtime,
@@ -122,144 +133,113 @@ def list_projects(claude_dir: Path | None = None) -> list[dict]:
     return out
 
 
-def project_cwd(encoded: str, claude_dir: Path | None = None) -> str:
-    """Return the resolved cwd for a single project (used at resume time)."""
-    base = claude_dir or default_claude_projects_dir()
-    return _lookup_cwd(base / encoded)
+# ── Session listing (per project) ────────────────────────────────────
 
 
 def list_sessions(encoded: str, claude_dir: Path | None = None) -> list[dict]:
-    base = (claude_dir or default_claude_projects_dir()) / encoded
-    if not base.is_dir():
+    """List sessions for a single encoded project. SDK-backed."""
+    cwd = project_cwd(encoded, claude_dir)
+    if not cwd:
+        return []
+    try:
+        infos = sdk_list_sessions(directory=cwd, include_worktrees=False)
+    except Exception as e:
+        logger.warning("SDK list_sessions failed for cwd=%s: %s", cwd, e)
         return []
     out: list[dict] = []
-    for path in base.iterdir():
-        if path.suffix != ".jsonl" or not path.is_file():
-            continue
-        info = _summarize(path)
-        if info is None:
-            continue
-        out.append(info)
+    for info in infos:
+        out.append(_session_info_to_dict(info))
     out.sort(key=lambda x: x.get("last_ts") or 0, reverse=True)
     return out
 
 
-def _summarize(path: Path) -> dict | None:
-    """Quickly summarize a session file for the picker.
+def _session_info_to_dict(info: SDKSessionInfo) -> dict:
+    """Map :class:`SDKSessionInfo` into the picker-friendly dict shape.
 
-    Hot-path tradeoff: reading every JSONL fully to count user/assistant
-    messages was ~14× slower than just counting newlines, and dominated the
-    /api/claude/sessions latency on big workgroups (806 files, 372MB → 2.4s
-    full parse vs ~0.2s newline scan). We approximate ``message_count`` with
-    the JSONL line count (includes summary/system records, so it over-counts
-    by ~1.5–2×) and only json-parse the first 4KB to extract ``first_user``
-    — empirically the first user record always lands within 4KB on Claude
-    Code's session format (p99 = 3KB).
+    Web UI consumes: session_id, first_user, message_count, last_ts.
+    We additionally surface the SDK's richer fields (custom_title,
+    git_branch, tag, created_at) for callers that want them.
     """
-    session_id = path.stem
-    first_user = ""
-    line_count = 0
-    try:
-        last_ts = path.stat().st_mtime
-        with open(path, "rb") as f:
-            head = f.read(4096)
-            line_count += head.count(b"\n")
-            while True:
-                chunk = f.read(64 * 1024)
-                if not chunk:
-                    break
-                line_count += chunk.count(b"\n")
-    except OSError as e:
-        logger.debug("claude_native: failed to read %s: %s", path, e)
-        return None
-    for raw in head.split(b"\n"):
-        if not raw.strip():
-            continue
-        try:
-            rec = json.loads(raw)
-        except Exception:
-            continue
-        if rec.get("type") == "user":
-            first_user = _extract_text(rec).strip().split("\n", 1)[0][:120]
-            break
+    first_user = (info.first_prompt or "").strip().split("\n", 1)[0][:120]
     return {
-        "session_id": session_id,
+        "session_id": info.session_id,
         "first_user": first_user,
-        "message_count": line_count,
-        "last_ts": last_ts,
+        "message_count": 0,  # SDK doesn't expose this cheaply; UI tolerates 0
+        "last_ts": (info.last_modified / 1000.0) if info.last_modified else 0.0,
+        # Extra SDK metadata (new in this Phase 1)
+        "summary": info.summary,
+        "custom_title": info.custom_title,
+        "git_branch": info.git_branch,
+        "tag": info.tag,
+        "created_at": (info.created_at / 1000.0) if info.created_at else 0.0,
     }
 
 
-def read_messages(encoded: str, session_id: str, claude_dir: Path | None = None) -> list[dict]:
-    """Return parsed records for a single Claude session.
+# ── Message reading (transcript replay) ──────────────────────────────
 
-    A record is one of:
+
+def read_messages(
+    encoded: str, session_id: str, claude_dir: Path | None = None,
+) -> list[dict]:
+    """Return parsed records for a single Claude session — SDK-backed.
+
+    Records are normalised to one of:
       {"role": "user"|"assistant", "text": str, "ts": float}
       {"role": "tool_call", "tool_id": str, "name": str, "args": dict, "ts": float}
       {"role": "tool_result", "tool_id": str, "ok": bool, "summary": str,
        "error": str, "ts": float}
+      {"role": "skill_output", "text": str, "ts": float}
 
-    A single assistant turn may contain both text and tool_use blocks; we
-    split into multiple records preserving order. The frontend's history
-    replay dispatches by role to render either a chat bubble or a tool card.
+    A single SDK ``SessionMessage`` may carry several content blocks (text +
+    tool_use); we split them into separate records so the frontend can
+    render each one.
+
+    Note on ``ts``: SDK ``SessionMessage`` doesn't expose per-message
+    timestamps. Records get ``ts=0.0`` and rely on the SDK's chronological
+    return order for sorting.
     """
-    base = (claude_dir or default_claude_projects_dir()) / encoded / f"{session_id}.jsonl"
-    if not base.is_file():
+    cwd = project_cwd(encoded, claude_dir)
+    if not cwd:
         return []
     try:
-        mtime = base.stat().st_mtime
-    except OSError:
+        messages = get_session_messages(session_id, directory=cwd)
+    except Exception as e:
+        logger.warning(
+            "SDK get_session_messages failed for sid=%s cwd=%s: %s",
+            session_id, cwd, e,
+        )
         return []
-    cache_key = f"{encoded}/{session_id}"
-    with _cache_lock:
-        cached = _cache.get(cache_key)
-        if cached and cached[0] == mtime:
-            return cached[1]
+
     out: list[dict] = []
     prev_was_tool_result = False
-    try:
-        with open(base, encoding="utf-8", errors="replace") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except Exception:
-                    continue
-                t = rec.get("type")
-                if t not in ("user", "assistant"):
-                    continue
-                ts = _parse_ts(rec.get("timestamp"))
-                records = _extract_records(rec, t, ts)
-                has_tool = any(r["role"] in ("tool_call", "tool_result") for r in records)
-                if t == "user" and not has_tool and prev_was_tool_result:
-                    for r in records:
-                        if r["role"] == "user":
-                            r["role"] = "skill_output"
-                out.extend(records)
-                prev_was_tool_result = (t == "user" and has_tool)
-    except OSError as e:
-        logger.debug("claude_native: failed to read %s: %s", base, e)
-    with _cache_lock:
-        if len(_cache) >= _CACHE_MAX:
-            oldest = min(_cache, key=lambda k: _cache[k][0])
-            del _cache[oldest]
-        _cache[cache_key] = (mtime, out)
+    for msg in messages:
+        records = _extract_records(msg)
+        has_tool = any(r["role"] in ("tool_call", "tool_result") for r in records)
+        # Heuristic: a user message with no tool blocks immediately after a
+        # tool_result is the model's "skill output" coming back to the user.
+        if msg.type == "user" and not has_tool and prev_was_tool_result:
+            for r in records:
+                if r["role"] == "user":
+                    r["role"] = "skill_output"
+        out.extend(records)
+        prev_was_tool_result = msg.type == "user" and has_tool
     return out
 
 
-def _extract_records(rec: dict, role: str, ts: float) -> list[dict]:
-    """Split a single jsonl record into ordered text/tool_call/tool_result entries."""
-    msg = rec.get("message")
-    if not isinstance(msg, dict):
+def _extract_records(msg: SessionMessage) -> list[dict]:
+    """Split one SDK ``SessionMessage`` into ordered display records."""
+    raw = msg.message if isinstance(msg.message, dict) else None
+    if raw is None:
         return []
-    content = msg.get("content")
-    # String content → single text record (legacy shape).
+    content = raw.get("content")
+    role = msg.type
+    ts = _msg_timestamp(raw)
+
     if isinstance(content, str):
         return [{"role": role, "text": content, "ts": ts}] if content else []
     if not isinstance(content, list):
         return []
+
     out: list[dict] = []
     text_buf: list[str] = []
 
@@ -289,8 +269,7 @@ def _extract_records(rec: dict, role: str, ts: float) -> list[dict]:
             })
         elif block_type == "tool_result":
             _flush_text()
-            raw = item.get("content")
-            summary, error = _stringify_tool_result(raw)
+            summary, error = _stringify_tool_result(item.get("content"))
             is_error = bool(item.get("is_error"))
             out.append({
                 "role": "tool_result",
@@ -304,8 +283,23 @@ def _extract_records(rec: dict, role: str, ts: float) -> list[dict]:
     return out
 
 
+def _msg_timestamp(raw: dict) -> float:
+    """Try a few common timestamp keys on the raw API message dict."""
+    for key in ("timestamp", "created_at", "ts"):
+        v = raw.get(key)
+        if v is None:
+            continue
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            try:
+                return datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()
+            except Exception:
+                continue
+    return 0.0
+
+
 def _stringify_tool_result(raw) -> tuple[str, str]:
-    """Coerce tool_result.content (str | list[block]) to (summary, error_text)."""
     if isinstance(raw, str):
         return raw[:200], raw[:200]
     if isinstance(raw, list):
@@ -318,39 +312,3 @@ def _stringify_tool_result(raw) -> tuple[str, str]:
         joined = "\n".join(p for p in parts if p)
         return joined[:200], joined[:200]
     return "", ""
-
-
-def _extract_text(rec: dict) -> str:
-    """Pull joined text from a record (text blocks only). Used by session
-    summary scanners that don't care about tool blocks."""
-    msg = rec.get("message")
-    if not isinstance(msg, dict):
-        return ""
-    content = msg.get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict) and item.get("type") == "text":
-                txt = item.get("text") or ""
-                if txt:
-                    parts.append(txt)
-        return "\n".join(parts)
-    return ""
-
-
-def _parse_ts(value) -> float:
-    if not value:
-        return 0.0
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        # ISO 8601 with optional Z
-        try:
-            from datetime import datetime
-            v = value.replace("Z", "+00:00")
-            return datetime.fromisoformat(v).timestamp()
-        except Exception:
-            return 0.0
-    return 0.0

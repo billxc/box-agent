@@ -1,11 +1,15 @@
 """SessionPool — fixed-size queue of pre-spawned backends shared across chats."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
-from boxagent.agent.protocol import AgentBackend
 from boxagent.sessions.base_pool import BaseSessionPool
+
+if TYPE_CHECKING:
+    from boxagent.agent.protocol import AgentBackend
 
 logger = logging.getLogger(__name__)
 

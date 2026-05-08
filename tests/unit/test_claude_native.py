@@ -1,93 +1,63 @@
-"""Tests for claude_native.read_messages tool_use / tool_result extraction."""
+"""Tests for claude_native._extract_records — tool_use / tool_result extraction.
 
-import json
-from pathlib import Path
+The old tests round-tripped through ``read_messages(encoded, sid, claude_dir=...)``
+because we owned the JSONL parser. Phase 1 delegates JSONL reading to the SDK
+(``get_session_messages``), so we now test our remaining parsing job —
+splitting one ``SessionMessage`` into ordered display records — directly.
+"""
 
-import pytest
+from claude_agent_sdk.types import SessionMessage
 
-from boxagent.sessions.claude_native import read_messages
-
-
-def _write_session(tmp_path: Path, encoded: str, sid: str, lines: list[dict]) -> Path:
-    proj = tmp_path / encoded
-    proj.mkdir(parents=True)
-    f = proj / f"{sid}.jsonl"
-    f.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
-    return f
+from boxagent.sessions.claude_native import _extract_records
 
 
-def _user_text(text: str, ts: str = "2026-05-02T12:00:00Z") -> dict:
-    return {
-        "type": "user",
-        "timestamp": ts,
-        "message": {"role": "user", "content": text},
-    }
+def _msg(type_: str, content) -> SessionMessage:
+    return SessionMessage(
+        type=type_,  # type: ignore[arg-type]
+        uuid="u-1",
+        session_id="s-1",
+        message={"role": type_, "content": content},
+    )
 
 
-def _assistant_blocks(blocks: list[dict], ts: str = "2026-05-02T12:00:01Z") -> dict:
-    return {
-        "type": "assistant",
-        "timestamp": ts,
-        "message": {"role": "assistant", "content": blocks},
-    }
+def test_text_only_assistant_yields_single_text_record():
+    recs = _extract_records(_msg("assistant", [{"type": "text", "text": "hi there"}]))
+    assert recs == [{"role": "assistant", "text": "hi there", "ts": 0.0}]
 
 
-def _tool_result_user(blocks: list[dict], ts: str = "2026-05-02T12:00:02Z") -> dict:
-    return {
-        "type": "user",
-        "timestamp": ts,
-        "message": {"role": "user", "content": blocks},
-    }
+def test_string_content_yields_single_record():
+    recs = _extract_records(_msg("user", "hello"))
+    assert recs == [{"role": "user", "text": "hello", "ts": 0.0}]
 
 
-def test_text_only_assistant_unchanged(tmp_path):
-    _write_session(tmp_path, "proj", "s1", [
-        _user_text("hello"),
-        _assistant_blocks([{"type": "text", "text": "hi there"}]),
-    ])
-    recs = read_messages("proj", "s1", claude_dir=tmp_path)
-    assert [(r["role"], r["text"]) for r in recs] == [
-        ("user", "hello"), ("assistant", "hi there"),
-    ]
-
-
-def test_assistant_tool_use_emits_tool_call_record(tmp_path):
-    _write_session(tmp_path, "proj", "s1", [
-        _assistant_blocks([
-            {"type": "text", "text": "Let me check."},
-            {"type": "tool_use", "id": "toolu_x", "name": "Bash",
-             "input": {"command": "ls"}},
-        ]),
-    ])
-    recs = read_messages("proj", "s1", claude_dir=tmp_path)
+def test_assistant_text_plus_tool_use_splits_into_two_records():
+    recs = _extract_records(_msg("assistant", [
+        {"type": "text", "text": "Let me check."},
+        {"type": "tool_use", "id": "toolu_x", "name": "Bash",
+         "input": {"command": "ls"}},
+    ]))
     assert len(recs) == 2
-    assert recs[0] == {"role": "assistant", "text": "Let me check.", "ts": recs[0]["ts"]}
+    assert recs[0] == {"role": "assistant", "text": "Let me check.", "ts": 0.0}
     assert recs[1]["role"] == "tool_call"
     assert recs[1]["tool_id"] == "toolu_x"
     assert recs[1]["name"] == "Bash"
     assert recs[1]["args"] == {"command": "ls"}
 
 
-def test_assistant_with_only_tool_use_no_text_record(tmp_path):
-    _write_session(tmp_path, "proj", "s1", [
-        _assistant_blocks([
-            {"type": "tool_use", "id": "toolu_y", "name": "Read",
-             "input": {"path": "/x"}},
-        ]),
-    ])
-    recs = read_messages("proj", "s1", claude_dir=tmp_path)
+def test_assistant_tool_use_only_no_text_record():
+    recs = _extract_records(_msg("assistant", [
+        {"type": "tool_use", "id": "toolu_y", "name": "Read",
+         "input": {"path": "/x"}},
+    ]))
     assert len(recs) == 1
     assert recs[0]["role"] == "tool_call"
 
 
-def test_user_tool_result_emits_tool_result_record(tmp_path):
-    _write_session(tmp_path, "proj", "s1", [
-        _tool_result_user([
-            {"type": "tool_result", "tool_use_id": "toolu_x",
-             "content": "file.txt\nfile.py", "is_error": False},
-        ]),
-    ])
-    recs = read_messages("proj", "s1", claude_dir=tmp_path)
+def test_user_tool_result_string_content():
+    recs = _extract_records(_msg("user", [
+        {"type": "tool_result", "tool_use_id": "toolu_x",
+         "content": "file.txt\nfile.py", "is_error": False},
+    ]))
     assert len(recs) == 1
     assert recs[0]["role"] == "tool_result"
     assert recs[0]["tool_id"] == "toolu_x"
@@ -96,51 +66,30 @@ def test_user_tool_result_emits_tool_result_record(tmp_path):
     assert recs[0]["error"] == ""
 
 
-def test_tool_result_error_path(tmp_path):
-    _write_session(tmp_path, "proj", "s1", [
-        _tool_result_user([
-            {"type": "tool_result", "tool_use_id": "toolu_x",
-             "content": "command not found", "is_error": True},
-        ]),
-    ])
-    recs = read_messages("proj", "s1", claude_dir=tmp_path)
+def test_tool_result_error_path():
+    recs = _extract_records(_msg("user", [
+        {"type": "tool_result", "tool_use_id": "toolu_x",
+         "content": "command not found", "is_error": True},
+    ]))
     assert recs[0]["ok"] is False
     assert recs[0]["error"] == "command not found"
     assert recs[0]["summary"] == ""
 
 
-def test_tool_result_list_content_joins_text_blocks(tmp_path):
-    _write_session(tmp_path, "proj", "s1", [
-        _tool_result_user([
-            {"type": "tool_result", "tool_use_id": "tx", "content": [
-                {"type": "text", "text": "line1"},
-                {"type": "text", "text": "line2"},
-            ]},
-        ]),
-    ])
-    recs = read_messages("proj", "s1", claude_dir=tmp_path)
+def test_tool_result_list_content_joins_text_blocks():
+    recs = _extract_records(_msg("user", [
+        {"type": "tool_result", "tool_use_id": "tx", "content": [
+            {"type": "text", "text": "line1"},
+            {"type": "text", "text": "line2"},
+        ]},
+    ]))
     assert recs[0]["summary"] == "line1\nline2"
 
 
-def test_full_turn_round_trip(tmp_path):
-    """User → assistant(text+tool_use) → user(tool_result) → assistant(text)
-    yields 5 records in order: user, assistant text, tool_call, tool_result, assistant text."""
-    _write_session(tmp_path, "proj", "s1", [
-        _user_text("run ls"),
-        _assistant_blocks([
-            {"type": "text", "text": "Sure."},
-            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}},
-        ]),
-        _tool_result_user([
-            {"type": "tool_result", "tool_use_id": "t1", "content": "a.txt"},
-        ]),
-        _assistant_blocks([{"type": "text", "text": "Done."}]),
-    ])
-    recs = read_messages("proj", "s1", claude_dir=tmp_path)
-    assert [r["role"] for r in recs] == [
-        "user", "assistant", "tool_call", "tool_result", "assistant",
-    ]
-
-
-def test_missing_file_returns_empty(tmp_path):
-    assert read_messages("nonexistent", "x", claude_dir=tmp_path) == []
+def test_non_dict_message_returns_empty():
+    msg = SessionMessage(
+        type="user",  # type: ignore[arg-type]
+        uuid="u-1", session_id="s-1",
+        message="not a dict",  # raw API may occasionally send this
+    )
+    assert _extract_records(msg) == []

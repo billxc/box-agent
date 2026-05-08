@@ -28,8 +28,10 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-from boxagent.agent.protocol import AgentBackend
+if TYPE_CHECKING:
+    from boxagent.agent.protocol import AgentBackend
 
 logger = logging.getLogger(__name__)
 
