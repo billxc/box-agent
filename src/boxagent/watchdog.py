@@ -5,6 +5,8 @@ import logging
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
+from boxagent.agent.protocol import AgentBackend
+
 logger = logging.getLogger(__name__)
 
 RESTART_DELAY = 5.0  # seconds before restart to avoid rapid loops
@@ -12,7 +14,7 @@ RESTART_DELAY = 5.0  # seconds before restart to avoid rapid loops
 
 @dataclass
 class Watchdog:
-    cli_process: object
+    cli_process: AgentBackend
     channel: object
     chat_id: str
     bot_name: str

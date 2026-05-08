@@ -15,6 +15,7 @@ import logging
 from pathlib import Path
 
 from boxagent.agent.claude_process import ClaudeProcess
+from boxagent.agent.protocol import AgentBackend
 from boxagent.config import BotConfig
 from boxagent.sessions import SessionPool
 from boxagent.sessions.raw_pool import RawSessionPool
@@ -30,7 +31,7 @@ def _supports_persistent_session(ai_backend: str) -> bool:
     return ai_backend in ("claude-cli", "codex-cli")
 
 
-def _create_backend(bot_cfg: BotConfig, session_id: str | None) -> object:
+def _create_backend(bot_cfg: BotConfig, session_id: str | None) -> AgentBackend:
     """Instantiate the AI backend based on config.
 
     Looks up ``ClaudeProcess`` via ``boxagent.gateway`` so tests can patch

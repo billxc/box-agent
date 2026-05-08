@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from boxagent.transports.base import IncomingMessage
+from boxagent.agent.protocol import AgentBackend
 from boxagent.router.callback import ChannelCallback, TextCollector, log_turn
 from boxagent.router.commands import (
     cmd_exec,
@@ -34,7 +35,7 @@ SYSTEM_COMMANDS = {"/status", "/new", "/cancel", "/resume", "/start", "/help", "
 
 @dataclass
 class Router:
-    cli_process: object
+    cli_process: AgentBackend
     channel: object
     allowed_users: list[int]
     storage: object = None

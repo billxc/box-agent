@@ -13,6 +13,8 @@ from pathlib import Path
 import yaml
 from croniter import croniter
 
+from boxagent.agent.protocol import AgentBackend
+
 from boxagent.config import node_matches
 from boxagent.utils import deep_merge_dicts
 from boxagent.router.context import build_schedule_context
@@ -216,7 +218,7 @@ def compute_next_run(cron_expr: str, after: datetime) -> datetime:
 class BotRef:
     """Reference to a bot's CLIProcess and channel for scheduler use."""
 
-    cli_process: object  # backend process
+    cli_process: AgentBackend  # backend process
     channel: object  # TelegramChannel
     chat_id: str
     ai_backend: str = "claude-cli"
