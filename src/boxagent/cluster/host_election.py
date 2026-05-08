@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ClusterRoleManager:
+class HostElection:
     """Decides this node's host/guest role and keeps it in sync with reality."""
 
     config: "AppConfig"

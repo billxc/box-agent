@@ -205,7 +205,7 @@ class GuestRegistry:
             self._http_session = None
 
     async def close_all_sessions(self) -> None:
-        """Force-close every connected guest WS. Used by ClusterRoleManager
+        """Force-close every connected guest WS. Used by HostElection
         during demote so guests immediately reconnect to the new active host
         instead of dangling on a soon-to-be-stopped tunnel."""
         for sess in list(self.sessions.values()):

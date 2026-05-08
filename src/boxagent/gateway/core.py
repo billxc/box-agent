@@ -191,7 +191,7 @@ class _GatewayCore:
     _guest_registry: GuestRegistry | None = field(default=None, repr=False)
     _guest_client: GuestClient | None = field(default=None, repr=False)
     _cluster_tunnel: ClusterTunnel | None = field(default=None, repr=False)
-    _role_manager: object | None = field(default=None, repr=False)
+    _host_election: object | None = field(default=None, repr=False)
     _start_time: float = 0.0
     _workgroup_mgr: WorkgroupManager | None = field(default=None, repr=False)
 
@@ -240,12 +240,12 @@ class _GatewayCore:
         # Start HTTP API
         await self._start_http()
 
-        # Cluster: kick off the role manager (host_priority list determines who
+        # Cluster: kick off host election (host_priority list determines who
         # is host vs guest at runtime, with failover when primary disappears).
         if self.config.cluster_tunnel:
-            from boxagent.cluster.role_manager import ClusterRoleManager
-            self._role_manager = ClusterRoleManager(config=self.config, gateway=self)
-            await self._role_manager.start()
+            from boxagent.cluster.host_election import HostElection
+            self._host_election = HostElection(config=self.config, gateway=self)
+            await self._host_election.start()
 
         logger.info(
             "Gateway ready: %d bot(s) active", len(self.config.bots)
@@ -789,8 +789,8 @@ class _GatewayCore:
         return self.config.machine_id or self.config.node_id or "local"
 
     def _local_role(self) -> str:
-        """Current cluster role of this node — driven by ClusterRoleManager."""
-        rm = self._role_manager
+        """Current cluster role of this node — driven by HostElection."""
+        rm = self._host_election
         if rm is None:
             return "single"
         state = getattr(rm, "state", "init")
@@ -836,16 +836,16 @@ class _GatewayCore:
         await self._stop_http()
         await self._stop_mcp_http()
 
-        # Stop role manager — it tears down whichever of guest_client /
+        # Stop host election — it tears down whichever of guest_client /
         # cluster_tunnel / guest_registry it currently owns.
-        if self._role_manager is not None:
+        if self._host_election is not None:
             try:
-                await self._role_manager.stop()
+                await self._host_election.stop()
             except Exception as e:
-                logger.error("Error stopping role manager: %s", e)
-            self._role_manager = None
+                logger.error("Error stopping host election: %s", e)
+            self._host_election = None
 
-        # Stop guest WS client (if still running — role manager normally owns this)
+        # Stop guest WS client (if still running — host election normally owns this)
         if self._guest_client is not None:
             try:
                 await self._guest_client.stop()

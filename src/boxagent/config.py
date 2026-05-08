@@ -105,7 +105,7 @@ class AppConfig:
     # `host_priority` is the ordered fallback list of candidate hosts. Whoever
     # comes first in the list and is reachable becomes the active host; lower-
     # priority candidates run as guests. The active role is decided at runtime
-    # by ClusterRoleManager — not by this config alone.
+    # by HostElection — not by this config alone.
     host_priority: list[str] = field(default_factory=list)
     # Index of this node in host_priority, or -1 if not a candidate at all.
     my_host_index: int = -1
@@ -208,7 +208,7 @@ def load_config(
     machine_id = node_id or (host_priority[0] if host_priority else "")
     my_host_index = host_priority.index(node_id) if (node_id and node_id in host_priority) else -1
     # Every candidate (anyone in host_priority) carries both tokens — the active
-    # role is decided at runtime by ClusterRoleManager. Non-candidates with
+    # role is decided at runtime by HostElection. Non-candidates with
     # cluster.host configured still get host_token so they can dial in as
     # permanent guests.
     is_candidate = my_host_index >= 0
