@@ -150,7 +150,7 @@ class HttpApiMixin:
         """Start the MCP streamable-http server (uvicorn)."""
         try:
             import uvicorn
-            from boxagent.mcp_http import create_mcp_app
+            from boxagent.transports.mcp.server import create_mcp_app
 
             starlette_app = create_mcp_app(
                 config_dir=str(self.config_dir),
