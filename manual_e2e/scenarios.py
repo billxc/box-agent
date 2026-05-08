@@ -82,6 +82,23 @@ def error_recovery() -> list[tuple[str, PostAction]]:
     ]
 
 
+def boxagent_send_photo() -> list[tuple[str, PostAction]]:
+    """Verify backend can call BoxAgent's native ``send_photo`` tool.
+
+    Requires a ``--telegram-token`` and ``--chat-id`` env so the tool
+    can resolve a real bot context — set BOXAGENT_E2E_TELEGRAM_TOKEN
+    and BOXAGENT_E2E_TELEGRAM_CHAT_ID before running. The tool will
+    actually upload the file; check Telegram to confirm receipt.
+    """
+    return [
+        (
+            "Use the boxagent send_photo tool to send the file at "
+            "/tmp/boxagent-e2e-test.png with caption 'tool registry test'.",
+            None,
+        ),
+    ]
+
+
 SCENARIOS: dict[str, Scenario] = {
     "hello": hello,
     "multi_turn_recall": multi_turn_recall,
@@ -89,4 +106,5 @@ SCENARIOS: dict[str, Scenario] = {
     "tool_use_read_file": tool_use_read_file,
     "cancel_mid_turn": cancel_mid_turn,
     "error_recovery": error_recovery,
+    "boxagent_send_photo": boxagent_send_photo,
 }

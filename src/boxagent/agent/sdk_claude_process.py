@@ -94,7 +94,10 @@ class AgentSDKClaude(AgentBackend):
         self._current_task = asyncio.current_task()
 
         effective_model = model or self.model or None
-        options = self._build_options(effective_model, append_system_prompt)
+        options = self._build_options(
+            effective_model, append_system_prompt,
+            chat_id=chat_id, env=env,
+        )
 
         # ToolUseBlock arrives before ToolResultBlock — buffer name+input
         # so we can emit a single on_tool_call(call+result) once the
@@ -191,11 +194,23 @@ class AgentSDKClaude(AgentBackend):
         self,
         model: str | None,
         append_system_prompt: str,
+        *,
+        chat_id: str = "",
+        env: "AgentEnv | None" = None,
     ) -> ClaudeAgentOptions:
+        # Trigger tool registration side-effect so adapters can see them.
+        import boxagent.tools.builtin  # noqa: F401
+        from boxagent.tools import ToolContext
+        from boxagent.tools.adapters.claude_sdk import build_mcp_servers
+
+        ctx = ToolContext(bot_name=self.bot_name, chat_id=chat_id)
+        mcp_servers = build_mcp_servers(ctx=ctx, env=env) if env is not None else {}
+
         opts = ClaudeAgentOptions(
             cwd=self.workspace or None,
             model=model,
             resume=self.session_id,
+            mcp_servers=mcp_servers,
         )
         if self.yolo:
             opts.permission_mode = "bypassPermissions"

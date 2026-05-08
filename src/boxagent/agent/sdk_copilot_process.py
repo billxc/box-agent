@@ -131,6 +131,8 @@ class AgentSDKCopilot(AgentBackend):
         await self._ensure_session(
             model=model or self.model,
             append_system_prompt=append_system_prompt,
+            chat_id=chat_id,
+            env=env,
         )
 
         # Allow per-turn model override even after session start.
@@ -204,9 +206,24 @@ class AgentSDKCopilot(AgentBackend):
         self._client = CopilotClient()
         await self._client.start()
 
-    async def _ensure_session(self, *, model: str, append_system_prompt: str = "") -> None:
+    async def _ensure_session(
+        self,
+        *,
+        model: str,
+        append_system_prompt: str = "",
+        chat_id: str = "",
+        env: "AgentEnv | None" = None,
+    ) -> None:
         if self._session is not None:
             return
+        # Trigger tool registration side-effect so adapter can see them.
+        import boxagent.tools.builtin  # noqa: F401
+        from boxagent.tools import ToolContext
+        from boxagent.tools.adapters.copilot_sdk import build_tools
+
+        tool_ctx = ToolContext(bot_name=self.bot_name, chat_id=chat_id)
+        sdk_tools = build_tools(ctx=tool_ctx, env=env) if env is not None else []
+
         kwargs: dict[str, Any] = {
             "on_permission_request": (
                 PermissionHandler.approve_all if self.yolo else _deny_all
@@ -225,6 +242,8 @@ class AgentSDKCopilot(AgentBackend):
                 "mode": "append",
                 "content": append_system_prompt,
             }
+        if sdk_tools:
+            kwargs["tools"] = sdk_tools
 
         if self.session_id:
             try:
