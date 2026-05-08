@@ -52,7 +52,40 @@ class _ContextMiddleware(BaseHTTPMiddleware):
             _ctx_chat_id.reset(t2)
 
 
-# ── Helper ──
+# ── Helpers ──
+
+# Standard error strings — keep messages identical across tool registrations.
+_ERR_NO_GATEWAY = "Error: gateway not available"
+_ERR_NO_WORKGROUP = "Error: workgroup manager not available"
+
+
+def _require_gateway() -> tuple[object | None, str]:
+    """Return ``(gateway, "")`` if the gateway is wired, else ``(None, err)``.
+
+    Idiomatic use::
+
+        gw, err = _require_gateway()
+        if err:
+            return err
+        ... gw.foo() ...
+    """
+    if _gateway is None:
+        return None, _ERR_NO_GATEWAY
+    return _gateway, ""
+
+
+def _require_workgroup_mgr() -> tuple[object | None, str]:
+    """Same shape as :func:`_require_gateway` but also requires a workgroup
+    manager. Returns ``(_gateway._workgroup_mgr, "")`` on success."""
+    if _gateway is None or _gateway._workgroup_mgr is None:
+        return None, _ERR_NO_WORKGROUP
+    return _gateway._workgroup_mgr, ""
+
+
+def _format_result_error(result: dict) -> str:
+    """Format a ``{"ok": False, "error": "..."}`` dict as a tool error string."""
+    return f"Error: {result.get('error', 'unknown error')}"
+
 
 def _resolve_telegram_token(bot_name: str) -> str:
     """Look up Telegram bot token from Gateway config."""
@@ -214,12 +247,13 @@ def _register_admin_tools(mcp: FastMCP) -> None:
 
         Returns each specialist's name, model, workspace, and status.
         """
-        if not _gateway or not _gateway._workgroup_mgr:
-            return "Error: workgroup manager not available"
+        mgr, err = _require_workgroup_mgr()
+        if err:
+            return err
         bot_name = _ctx_bot_name.get()
-        result = _gateway._workgroup_mgr.list_specialists(bot_name)
+        result = mgr.list_specialists(bot_name)
         if not result.get("ok"):
-            return f"Error: {result.get('error', 'unknown error')}"
+            return _format_result_error(result)
         specialists = result.get("specialists", [])
         if not specialists:
             return "No specialists found in this workgroup."
@@ -246,14 +280,15 @@ def _register_admin_tools(mcp: FastMCP) -> None:
         via the `template` argument. Each template ships a CLAUDE.md prompt
         and may also bundle skills.
         """
-        if not _gateway or not _gateway._workgroup_mgr:
-            return "Error: workgroup manager not available"
+        mgr, err = _require_workgroup_mgr()
+        if err:
+            return err
         bot_name = _ctx_bot_name.get()
         if not bot_name:
             return "Error: bot_name not set — cannot determine workgroup"
-        result = _gateway._workgroup_mgr.list_templates(bot_name)
+        result = mgr.list_templates(bot_name)
         if not result.get("ok"):
-            return f"Error: {result.get('error', 'unknown error')}"
+            return _format_result_error(result)
         templates = result.get("templates", [])
         if not templates:
             return "No templates available."
@@ -269,11 +304,12 @@ def _register_admin_tools(mcp: FastMCP) -> None:
         Args:
             agent_name: Name of the specialist to check
         """
-        if not _gateway or not _gateway._workgroup_mgr:
-            return "Error: workgroup manager not available"
-        result = _gateway._workgroup_mgr.get_specialist_status(agent_name)
+        mgr, err = _require_workgroup_mgr()
+        if err:
+            return err
+        result = mgr.get_specialist_status(agent_name)
         if not result.get("ok"):
-            return f"Error: {result.get('error', 'unknown error')}"
+            return _format_result_error(result)
         lines = [f"**{agent_name}** — {'active' if result.get('active') else 'idle'}"]
         tasks = result.get("tasks", [])
         if tasks:
@@ -308,12 +344,13 @@ def _register_admin_tools(mcp: FastMCP) -> None:
             agent_name: Name of the specialist agent to delegate to
             message: The task description or question to send
         """
-        if not _gateway or not _gateway._workgroup_mgr:
-            return "Error: workgroup manager not available"
+        mgr, err = _require_workgroup_mgr()
+        if err:
+            return err
         bot_name = _ctx_bot_name.get()
         chat_id = _ctx_chat_id.get()
         try:
-            result = await _gateway._workgroup_mgr.send_to_specialist(
+            result = await mgr.send_to_specialist(
                 target=agent_name,
                 text=message,
                 from_bot=bot_name,
@@ -322,7 +359,7 @@ def _register_admin_tools(mcp: FastMCP) -> None:
             if result.get("ok"):
                 task_id = result.get("task_id", "")
                 return f"Task dispatched to {agent_name} (task_id: {task_id})."
-            return f"Error: {result.get('error', 'unknown error')}"
+            return _format_result_error(result)
         except Exception as e:
             return f"Error: {e}"
 
@@ -349,13 +386,14 @@ def _register_admin_tools(mcp: FastMCP) -> None:
                 Relative paths resolve against ~/.boxagent/.
             display_name: Optional human-readable name shown in channels.
         """
-        if not _gateway or not _gateway._workgroup_mgr:
-            return "Error: workgroup manager not available"
+        mgr, err = _require_workgroup_mgr()
+        if err:
+            return err
         bot_name = _ctx_bot_name.get()
         if not bot_name:
             return "Error: bot_name not set — cannot determine workgroup"
         try:
-            result = await _gateway._workgroup_mgr.create_specialist(
+            result = await mgr.create_specialist(
                 bot_name, name, model=model,
                 template=template,
                 extra_skill_dirs=extra_skill_dirs,
@@ -369,7 +407,7 @@ def _register_admin_tools(mcp: FastMCP) -> None:
                 if chat_id:
                     msg += f" (chat_id: {chat_id})"
                 return msg
-            return f"Error: {result.get('error', 'unknown error')}"
+            return _format_result_error(result)
         except Exception as e:
             return f"Error: {e}"
 
@@ -380,12 +418,13 @@ def _register_admin_tools(mcp: FastMCP) -> None:
         Args:
             agent_name: Name of the specialist to reset
         """
-        if not _gateway or not _gateway._workgroup_mgr:
-            return "Error: workgroup manager not available"
-        result = _gateway._workgroup_mgr.reset_specialist(agent_name)
+        mgr, err = _require_workgroup_mgr()
+        if err:
+            return err
+        result = mgr.reset_specialist(agent_name)
         if result.get("ok"):
             return f"Specialist '{agent_name}' session reset. Next task will start fresh."
-        return f"Error: {result.get('error', 'unknown error')}"
+        return _format_result_error(result)
 
     @mcp.tool()
     async def delete_specialist(agent_name: str) -> str:
@@ -394,13 +433,14 @@ def _register_admin_tools(mcp: FastMCP) -> None:
         Args:
             agent_name: Name of the specialist to delete
         """
-        if not _gateway or not _gateway._workgroup_mgr:
-            return "Error: workgroup manager not available"
+        mgr, err = _require_workgroup_mgr()
+        if err:
+            return err
         try:
-            result = await _gateway._workgroup_mgr.delete_specialist(agent_name)
+            result = await mgr.delete_specialist(agent_name)
             if result.get("ok"):
                 return f"Specialist '{agent_name}' deleted."
-            return f"Error: {result.get('error', 'unknown error')}"
+            return _format_result_error(result)
         except Exception as e:
             return f"Error: {e}"
 
@@ -411,13 +451,14 @@ def _register_admin_tools(mcp: FastMCP) -> None:
         Args:
             task_id: The task ID to cancel (e.g. "dev-1-3")
         """
-        if not _gateway or not _gateway._workgroup_mgr:
-            return "Error: workgroup manager not available"
+        mgr, err = _require_workgroup_mgr()
+        if err:
+            return err
         try:
-            result = await _gateway._workgroup_mgr.cancel_task(task_id)
+            result = await mgr.cancel_task(task_id)
             if result.get("ok"):
                 return f"Task '{task_id}' cancelled."
-            return f"Error: {result.get('error', 'unknown error')}"
+            return _format_result_error(result)
         except Exception as e:
             return f"Error: {e}"
 
@@ -448,8 +489,9 @@ def _register_peer_tools(mcp: FastMCP) -> None:
             wait: If True, await the full delivery chain before returning.
                   Default False for low-latency fire-and-forget.
         """
-        if not _gateway:
-            return "Error: gateway not available"
+        gw, err = _require_gateway()
+        if err:
+            return err
         bot_name = _ctx_bot_name.get()
         if not bot_name:
             return "Error: bot_name not set"
