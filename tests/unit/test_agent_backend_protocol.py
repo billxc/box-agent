@@ -98,3 +98,38 @@ class TestMockBackend:
         await backend.stop()
         assert backend.state == "dead"
         assert backend.stopped is True
+
+    @pytest.mark.asyncio
+    async def test_fail_next_turn_sets_diagnostics_after_send(self):
+        backend = MockBackend()
+        backend.fail_next_turn("boom")
+
+        class CB:
+            async def on_stream(self, *a, **kw): pass
+            async def on_tool_call(self, *a, **kw): pass
+            async def on_tool_update(self, *a, **kw): pass
+            async def on_error(self, *a, **kw): pass
+            async def on_file(self, *a, **kw): pass
+            async def on_image(self, *a, **kw): pass
+
+        # Diagnostics are clean before send
+        assert backend.last_turn_failed is False
+        assert backend.last_turn_error == ""
+        await backend.send("x", CB())
+        # After send, failure is reflected
+        assert backend.last_turn_failed is True
+        assert backend.last_turn_error == "boom"
+
+        # Next send (no fail_next_turn) clears diagnostics
+        await backend.send("y", CB())
+        assert backend.last_turn_failed is False
+        assert backend.last_turn_error == ""
+
+    def test_protocol_includes_new_fields(self):
+        """Catch accidental Protocol/Mock drift — new fields are required."""
+        backend = MockBackend()
+        # Should compile / be accessible (no AttributeError)
+        assert backend.agent == ""
+        assert backend.last_turn_failed is False
+        assert backend.last_turn_error == ""
+        assert backend.supports_session_persistence is True

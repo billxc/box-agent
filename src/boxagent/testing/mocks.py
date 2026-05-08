@@ -50,15 +50,23 @@ class MockBackend:
     - ``script_handler(fn)``: full control — pass an async fn that
       receives ``(message, callback, **kwargs)`` and emits whatever.
     - default (no script): emit a single ``on_stream("ok")`` then return.
+
+    Failure simulation:
+    - ``fail_next_turn(error)``: the next ``send`` will leave
+      ``last_turn_failed=True`` and ``last_turn_error=error`` after it
+      finishes (callbacks still fire; this models post-turn detection).
     """
 
     bot_name: str = "mock"
     workspace: str = "/tmp/mock-workspace"
     model: str = ""
+    agent: str = ""
     session_id: str | None = None
     state: Literal["idle", "busy", "dead"] = "idle"
     supports_session_persistence: bool = True
     yolo: bool = False
+    last_turn_failed: bool = False
+    last_turn_error: str = ""
 
     started: bool = field(default=False, init=False)
     stopped: bool = field(default=False, init=False)
@@ -67,11 +75,9 @@ class MockBackend:
     cancel_count: int = field(default=0, init=False)
     reset_session_count: int = field(default=0, init=False)
 
-    last_turn_failed: bool = field(default=False, init=False)
-    last_turn_error: str = field(default="", init=False)
-
     _scripted_chunks: list[str] | None = field(default=None, init=False, repr=False)
     _scripted_handler: Any = field(default=None, init=False, repr=False)
+    _next_failure: tuple[bool, str] | None = field(default=None, init=False, repr=False)
     _idle_event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -97,9 +103,9 @@ class MockBackend:
         self._scripted_chunks = None
 
     def fail_next_turn(self, error: str = "mock error") -> None:
-        """Make the next ``send`` end with ``last_turn_failed=True``."""
-        self.last_turn_failed = True
-        self.last_turn_error = error
+        """The next ``send`` ends with ``last_turn_failed=True`` and the
+        given error message."""
+        self._next_failure = (True, error)
 
     # ── AgentBackend protocol ──
 
@@ -127,6 +133,9 @@ class MockBackend:
             append_system_prompt=append_system_prompt,
             env=env,
         ))
+        # Reset per-turn diagnostics — set again at end if the turn failed.
+        self.last_turn_failed = False
+        self.last_turn_error = ""
         self.state = "busy"
         self._idle_event.clear()
         try:
@@ -148,6 +157,10 @@ class MockBackend:
             else:
                 await callback.on_stream("ok")
         finally:
+            failure = self._next_failure
+            self._next_failure = None
+            if failure is not None:
+                self.last_turn_failed, self.last_turn_error = failure
             self.state = "idle"
             self._idle_event.set()
 
