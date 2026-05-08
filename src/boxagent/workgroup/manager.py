@@ -17,6 +17,16 @@ from boxagent.workgroup.channel_adapter import (
     WorkgroupChannelAdapter,
 )
 from boxagent.workgroup.heartbeat import HeartbeatManager
+from boxagent.workgroup.persistence import (
+    load_saved_specialists,
+    remove_saved_specialist,
+    save_specialist,
+    specialists_file,
+)
+from boxagent.workgroup.specialist_skills import (
+    apply_template_skills,
+    symlink_template_skills,
+)
 from boxagent.router import Router
 from boxagent.sessions import SessionPool
 from boxagent.workgroup.template_loader import (
@@ -101,54 +111,13 @@ class WorkgroupManager:
     _peer_provider: object = None    # Callable[[str], list[dict]] — exclude=self_name
 
     def _specialists_file(self) -> Path:
-        return self.local_dir / "workgroup_specialists.yaml"
+        return specialists_file(self.local_dir)
 
     def _load_saved_specialists(self, workgroup_name: str) -> dict[str, SpecialistConfig]:
-        """Load dynamically created specialists from local storage."""
-        path = self._specialists_file()
-        if not path.is_file():
-            return {}
-        try:
-            with open(path, encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-            entries = data.get(workgroup_name, {})
-            result = {}
-            for specialist_name, specialist_raw in entries.items():
-                result[specialist_name] = SpecialistConfig(
-                    name=specialist_name,
-                    model=specialist_raw.get("model", ""),
-                    workspace=specialist_raw.get("workspace", ""),
-                    ai_backend=specialist_raw.get("ai_backend", ""),
-                    display_name=specialist_raw.get("display_name", specialist_name),
-                    extra_skill_dirs=list(specialist_raw.get("extra_skill_dirs", []) or []),
-                    template=specialist_raw.get("template", "") or "",
-                )
-            return result
-        except Exception as e:
-            logger.warning("Failed to load saved specialists: %s", e)
-            return {}
+        return load_saved_specialists(self.local_dir, workgroup_name)
 
     def _save_specialist(self, workgroup_name: str, specialist: SpecialistConfig) -> None:
-        """Persist a dynamically created specialist to local storage."""
-        path = self._specialists_file()
-        data = {}
-        if path.is_file():
-            try:
-                with open(path, encoding="utf-8") as f:
-                    data = yaml.safe_load(f) or {}
-            except Exception:
-                pass
-        data.setdefault(workgroup_name, {})[specialist.name] = {
-            "model": specialist.model,
-            "workspace": specialist.workspace,
-            "ai_backend": specialist.ai_backend,
-            "display_name": specialist.display_name,
-            "extra_skill_dirs": list(specialist.extra_skill_dirs),
-            "template": specialist.template,
-        }
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            yaml.dump(data, f, default_flow_style=False)
+        save_specialist(self.local_dir, workgroup_name, specialist)
 
     def _make_backend(self, bot_cfg: BotConfig, session_id=None):
         return self._create_backend(bot_cfg, session_id)
@@ -159,46 +128,7 @@ class WorkgroupManager:
         template_info: TemplateInfo,
         ai_backend: str,
     ) -> None:
-        """Symlink template-provided skills into specialist workspace.
-
-        Two sources, both routed through `_sync_skills` (parent-of-skills convention):
-          1. template/skills/    — not subject to allow/block filter
-          2. template/extra_skill_dirs.txt entries — filtered by allow/block
-
-        Filtering happens by name. We enumerate matching subdirs into a
-        per-skill temp set of parent paths so existing sync_skills behavior
-        (each subdir of each parent → one symlink) does the right thing.
-        """
-        if not self._sync_skills:
-            return
-        # 1. Inline template skills (symlink each subdir directly).
-        if template_info.skills_dir and template_info.skills_dir.is_dir():
-            self._sync_skills(workspace, [str(template_info.skills_dir)], ai_backend)
-        # 2. External skill dirs with allow/block filter.
-        # sync_skills iterates all subdirs of each parent. To filter by name,
-        # we expand each parent into individual selected subdirs and pass
-        # the *parent of each* would re-include siblings. Instead, build a
-        # synthetic list where each entry is the selected subdir's parent
-        # but we restrict via allow set — when allow/block exist, expand
-        # each selected subdir explicitly through symlink.
-        for parent in template_info.extra_skill_dirs:
-            selected = filter_skill_subdirs(
-                parent, template_info.skill_allows, template_info.skill_blocks
-            )
-            if not selected:
-                continue
-            if (
-                template_info.skill_allows is None
-                and template_info.skill_blocks is None
-            ):
-                # No filter: pass parent through directly (symlinks every subdir).
-                self._sync_skills(workspace, [str(parent)], ai_backend)
-            else:
-                # Filtered: symlink only selected subdirs by passing each as a
-                # single-skill parent via a temporary path is awkward; instead
-                # build the symlinks here directly using the same conventions
-                # as sync_skills. We rely on Path symlinks.
-                self._symlink_template_skills(workspace, selected, ai_backend)
+        apply_template_skills(workspace, template_info, ai_backend, self._sync_skills)
 
     def _symlink_template_skills(
         self,
@@ -206,27 +136,7 @@ class WorkgroupManager:
         skill_dirs: list[Path],
         ai_backend: str,
     ) -> None:
-        """Symlink individual skill subdirs into the specialist's skills root."""
-        skills_root_name = ".agents/skills" if "codex" in ai_backend else ".claude/skills"
-        skills_root = Path(workspace) / skills_root_name
-        skills_root.mkdir(parents=True, exist_ok=True)
-        for src in skill_dirs:
-            target = skills_root / src.name
-            if target.is_symlink() or target.exists():
-                if target.is_symlink():
-                    try:
-                        target.unlink()
-                    except Exception:
-                        pass
-                else:
-                    # Don't overwrite a real directory.
-                    continue
-            try:
-                target.symlink_to(src.resolve(), target_is_directory=True)
-            except Exception as e:
-                logger.warning(
-                    "Failed to symlink template skill %s → %s: %s", src, target, e
-                )
+        symlink_template_skills(workspace, skill_dirs, ai_backend)
 
     async def _create_specialist_agent(
         self, specialist_name: str, specialist_config, workgroup_config: WorkgroupConfig,
@@ -887,20 +797,7 @@ class WorkgroupManager:
         return {"ok": True}
 
     def _remove_saved_specialist(self, workgroup_name: str, specialist_name: str) -> None:
-        """Remove a specialist from the saved workgroup_specialists.yaml."""
-        path = self._specialists_file()
-        if not path.is_file():
-            return
-        try:
-            with open(path, encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-            workgroup_data = data.get(workgroup_name, {})
-            if specialist_name in workgroup_data:
-                del workgroup_data[specialist_name]
-                with open(path, "w", encoding="utf-8") as f:
-                    yaml.dump(data, f, default_flow_style=False)
-        except Exception as e:
-            logger.warning("Failed to remove saved specialist '%s': %s", specialist_name, e)
+        remove_saved_specialist(self.local_dir, workgroup_name, specialist_name)
 
     async def stop(self) -> None:
         """Stop all workgroup processes, pools, and heartbeats."""
