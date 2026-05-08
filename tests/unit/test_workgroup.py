@@ -345,7 +345,7 @@ class TestWorkgroupManagerPureMethods:
 
     def test_get_task_result_found(self, tmp_path):
         mgr = self._make_manager(tmp_path)
-        mgr._task_results["dev-1-1"] = {"status": "done", "result": "ok"}
+        mgr.tasks._results["dev-1-1"] = {"status": "done", "result": "ok"}
         result = mgr.get_task_result("dev-1-1")
         assert result["ok"] is True
         assert result["status"] == "done"
@@ -356,7 +356,7 @@ class TestWorkgroupManagerPureMethods:
 
     def test_get_running_tasks_with_running(self, tmp_path):
         mgr = self._make_manager(tmp_path)
-        mgr._task_results["dev-1-1"] = {
+        mgr.tasks._results["dev-1-1"] = {
             "status": "running", "target": "dev-1", "started_at": time.time(),
         }
         # No pool, so active=False
@@ -367,7 +367,7 @@ class TestWorkgroupManagerPureMethods:
 
     def test_get_running_tasks_ignores_done(self, tmp_path):
         mgr = self._make_manager(tmp_path)
-        mgr._task_results["dev-1-1"] = {"status": "done", "target": "dev-1"}
+        mgr.tasks._results["dev-1-1"] = {"status": "done", "target": "dev-1"}
         assert mgr._get_running_tasks("test-wg") == []
 
     def test_save_and_load_specialists(self, tmp_path):

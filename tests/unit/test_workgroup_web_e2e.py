@@ -177,7 +177,7 @@ async def test_admin_dispatch_to_specialist_e2e(tmp_path):
     assert result == {"ok": True, "task_id": "sp1-1", "specialist": "sp1"}
 
     # Wait for the background _run task to complete.
-    await asyncio.wait_for(manager._tasks["sp1-1"], timeout=5.0)
+    await asyncio.wait_for(manager.tasks._tasks["sp1-1"], timeout=5.0)
 
     # 1) Specialist backend received the wrapped prompt.
     sp_prompts = [p for fp in fakes["sp1"] for p in fp.received_prompts]
@@ -199,7 +199,7 @@ async def test_admin_dispatch_to_specialist_e2e(tmp_path):
     assert "stream_end" in event_types, f"specialist stream not closed; got {event_types}"
 
     # 3) Task result recorded.
-    info = manager._task_results["sp1-1"]
+    info = manager.tasks._results["sp1-1"]
     assert info["status"] == "done", info
     assert info["result"] == "done by sp1"
 

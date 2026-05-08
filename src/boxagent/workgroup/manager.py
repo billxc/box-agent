@@ -27,6 +27,7 @@ from boxagent.workgroup.specialist_skills import (
     apply_template_skills,
     symlink_template_skills,
 )
+from boxagent.workgroup.task_queue import SpecialistTaskQueue
 from boxagent.router import Router
 from boxagent.sessions import SessionPool
 from boxagent.workgroup.template_loader import (
@@ -98,10 +99,8 @@ class WorkgroupManager:
     pools: dict[str, SessionPool] = field(default_factory=dict)  # name → Pool
     procs: dict[str, object] = field(default_factory=dict)       # name → CLI process
     adapters: dict[str, WorkgroupChannelAdapter] = field(default_factory=dict)  # workgroup_name → adapter
-    # Async task tracking
-    _tasks: dict[str, asyncio.Task] = field(default_factory=dict, repr=False)
-    _task_results: dict[str, dict] = field(default_factory=dict, repr=False)
-    _task_counter: int = field(default=0, repr=False)
+    # Async task tracking — delegated to a dedicated queue.
+    tasks: SpecialistTaskQueue = field(default_factory=SpecialistTaskQueue, repr=False)
     _heartbeats: dict[str, HeartbeatManager] = field(default_factory=dict, repr=False)
 
     # Injected by Gateway
@@ -376,8 +375,7 @@ class WorkgroupManager:
         if router is None:
             return {"ok": False, "error": f"specialist '{target}' not found"}
 
-        self._task_counter += 1
-        task_id = f"{target}-{self._task_counter}"
+        task_id = self.tasks.alloc_id(target)
 
         # Resolve the workgroup that owns this specialist + its adapter
         adapter: WorkgroupChannelAdapter = NullWorkgroupChannelAdapter()
@@ -415,18 +413,10 @@ class WorkgroupManager:
 
                 raw_result = await router.dispatch_sync(wrapped_text, chat_id, from_bot=from_bot)
                 result = _extract_specialist_response(raw_result)
-                self._task_results[task_id] = {
-                    "status": "done",
-                    "result": result,
-                    "finished_at": time.time(),
-                }
+                self.tasks.finish(task_id, result)
                 logger.info("Task %s completed (%d chars)", task_id, len(result))
             except Exception as e:
-                self._task_results[task_id] = {
-                    "status": "error",
-                    "error": str(e),
-                    "finished_at": time.time(),
-                }
+                self.tasks.fail(task_id, str(e))
                 logger.error("Task %s failed: %s", task_id, e)
                 result = f"Error: {e}"
 
@@ -455,13 +445,8 @@ class WorkgroupManager:
                     except Exception as e:
                         logger.warning("Failed to deliver task result to admin: %s", e)
 
-        self._task_results[task_id] = {
-            "status": "running",
-            "target": target,
-            "started_at": time.time(),
-        }
-        task = asyncio.create_task(_run())
-        self._tasks[task_id] = task
+        self.tasks.start(task_id, target)
+        self.tasks.register(task_id, asyncio.create_task(_run()))
 
         return {"ok": True, "task_id": task_id, "specialist": target}
 
@@ -478,8 +463,8 @@ class WorkgroupManager:
             for specialist_name, specialist_config in workgroup_config.specialists.items():
                 # Check running tasks
                 running_tasks = [
-                    tid for tid, info in self._task_results.items()
-                    if tid.startswith(f"{specialist_name}-") and info.get("status") == "running"
+                    tid for tid, info in self.tasks.running_targets()
+                    if tid.startswith(f"{specialist_name}-")
                 ]
                 specialists.append({
                     "name": specialist_name,
@@ -514,7 +499,7 @@ class WorkgroupManager:
 
     def get_task_result(self, task_id: str) -> dict:
         """Check the status/result of an async task."""
-        info = self._task_results.get(task_id)
+        info = self.tasks.get(task_id)
         if info is None:
             return {"ok": False, "error": f"task '{task_id}' not found"}
         return {"ok": True, **info}
@@ -536,18 +521,17 @@ class WorkgroupManager:
 
         # Recent tasks
         tasks = []
-        for tid, info in self._task_results.items():
-            if info.get("target") == target:
-                entry = {"task_id": tid, "status": info.get("status", "?")}
-                if info.get("started_at"):
-                    entry["started_at"] = info["started_at"]
-                if info.get("finished_at"):
-                    entry["finished_at"] = info["finished_at"]
-                if info.get("result"):
-                    entry["result_preview"] = info["result"][:300]
-                if info.get("error"):
-                    entry["error"] = info["error"]
-                tasks.append(entry)
+        for tid, info in self.tasks.all_for_target(target):
+            entry = {"task_id": tid, "status": info.get("status", "?")}
+            if info.get("started_at"):
+                entry["started_at"] = info["started_at"]
+            if info.get("finished_at"):
+                entry["finished_at"] = info["finished_at"]
+            if info.get("result"):
+                entry["result_preview"] = info["result"][:300]
+            if info.get("error"):
+                entry["error"] = info["error"]
+            tasks.append(entry)
 
         # Recent transcript from session
         transcript_lines = []
@@ -584,57 +568,38 @@ class WorkgroupManager:
 
     async def cancel_task(self, task_id: str) -> dict:
         """Cancel a running specialist task."""
-        info = self._task_results.get(task_id)
-        if info is None:
-            return {"ok": False, "error": f"task '{task_id}' not found"}
-        if info.get("status") != "running":
-            return {"ok": False, "error": f"task '{task_id}' is not running (status={info.get('status')})"}
+        async def _cancel_specialist(target: str) -> None:
+            pool = self.pools.get(target)
+            if pool:
+                for proc in pool._active.values():
+                    await proc.cancel()
 
-        target = info.get("target", "")
-
-        # Cancel the specialist's active process
-        pool = self.pools.get(target)
-        if pool:
-            for proc in pool._active.values():
-                await proc.cancel()
-
-        # Cancel the asyncio task
-        async_task = self._tasks.get(task_id)
-        if async_task and not async_task.done():
-            async_task.cancel()
-
-        self._task_results[task_id] = {
-            "status": "cancelled",
-            "target": target,
-            "finished_at": time.time(),
-        }
-        logger.info("Task %s cancelled (specialist=%s)", task_id, target)
-        return {"ok": True, "task_id": task_id, "specialist": target}
+        return await self.tasks.cancel(task_id, cancel_specialist=_cancel_specialist)
 
     def _get_running_tasks(self, workgroup_name: str) -> list[dict]:
         """Return currently running tasks for a workgroup."""
         result = []
-        for tid, info in self._task_results.items():
-            if info.get("status") != "running":
-                continue
+        workgroup_config = self.config.get(workgroup_name)
+        if workgroup_config is None:
+            return result
+        for tid, info in self.tasks.running_targets():
             target = info.get("target", "")
-            # Check if target belongs to this workgroup
-            workgroup_config = self.config.get(workgroup_name)
-            if workgroup_config and target in workgroup_config.specialists:
-                # Check if the specialist's process is actively busy
-                pool = self.pools.get(target)
-                active = False
-                if pool:
-                    for proc in pool._active.values():
-                        if getattr(proc, "state", "idle") == "busy":
-                            active = True
-                            break
-                result.append({
-                    "task_id": tid,
-                    "target": target,
-                    "started_at": info.get("started_at", 0),
-                    "active": active,
-                })
+            if target not in workgroup_config.specialists:
+                continue
+            # Check if the specialist's process is actively busy
+            pool = self.pools.get(target)
+            active = False
+            if pool:
+                for proc in pool._active.values():
+                    if getattr(proc, "state", "idle") == "busy":
+                        active = True
+                        break
+            result.append({
+                "task_id": tid,
+                "target": target,
+                "started_at": info.get("started_at", 0),
+                "active": active,
+            })
         return result
 
     def reset_specialist(self, target: str) -> dict:

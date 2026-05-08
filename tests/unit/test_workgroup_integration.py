@@ -98,7 +98,7 @@ class TestSendToSpecialist:
         result = await mgr.send_to_specialist("dev-1", "work")
         task_id = result["task_id"]
         # Wait for background task to complete
-        await mgr._tasks[task_id]
+        await mgr.tasks._tasks[task_id]
 
         info = mgr.get_task_result(task_id)
         assert info["status"] == "done"
@@ -114,7 +114,7 @@ class TestSendToSpecialist:
         mgr.pools["dev-1"] = _mock_pool()
 
         result = await mgr.send_to_specialist("dev-1", "work")
-        await mgr._tasks[result["task_id"]]
+        await mgr.tasks._tasks[result["task_id"]]
 
         info = mgr.get_task_result(result["task_id"])
         assert info["result"] == "Final result"
@@ -127,7 +127,7 @@ class TestSendToSpecialist:
         mgr.pools["dev-1"] = _mock_pool()
 
         result = await mgr.send_to_specialist("dev-1", "work")
-        await mgr._tasks[result["task_id"]]
+        await mgr.tasks._tasks[result["task_id"]]
 
         info = mgr.get_task_result(result["task_id"])
         assert info["status"] == "error"
@@ -149,7 +149,7 @@ class TestSendToSpecialist:
         result = await mgr.send_to_specialist(
             "dev-1", "work", from_bot="admin", reply_chat_id="admin-ch",
         )
-        await mgr._tasks[result["task_id"]]
+        await mgr.tasks._tasks[result["task_id"]]
 
         # Admin router should receive the task result callback
         admin_router.handle_message.assert_called_once()
