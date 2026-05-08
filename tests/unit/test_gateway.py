@@ -130,10 +130,8 @@ class TestGateway:
 
         bot_cfg = MagicMock()
         bot_cfg.telegram_token = "123:ABC"
-        bot_cfg.discord_token = ""
         bot_cfg.allowed_users = [111]
         bot_cfg.telegram_allowed_users = [111]
-        bot_cfg.discord_allowed_users = []
         bot_cfg.workspace = str(tmp_path)
         bot_cfg.display_tool_calls = "summary"
         bot_cfg.model = ""

@@ -56,8 +56,7 @@ def _infer_platform(chat_id: str) -> str:
     if chat_id.startswith("web-"):
         return "web"
     if chat_id.lstrip("-").isdigit():
-        # Telegram user ids are typically <= 12 digits; Discord snowflakes are 17-19.
-        return "discord" if len(chat_id.lstrip("-")) >= 17 else "telegram"
+        return "telegram"
     return "other"
 
 
@@ -168,14 +167,6 @@ class Gateway:
     _web_channels: dict[str, WebChannel] = field(
         default_factory=dict, repr=False
     )
-    # Shared Discord channels keyed by identity (bot_id or token).
-    _discord_channels: dict[str, object] = field(
-        default_factory=dict, repr=False
-    )
-    # Maps bot_name → Discord identity key for shared channel lookup.
-    _bot_discord_key: dict[str, str] = field(
-        default_factory=dict, repr=False
-    )
     _cli_processes: dict[str, object] = field(
         default_factory=dict, repr=False
     )
@@ -199,13 +190,6 @@ class Gateway:
     _start_time: float = 0.0
     _workgroup_mgr: WorkgroupManager | None = field(default=None, repr=False)
 
-    def _get_bot_discord_channel(self, bot_name: str) -> object | None:
-        """Return the shared Discord channel for a bot, or None."""
-        key = self._bot_discord_key.get(bot_name)
-        if key is None:
-            return None
-        return self._discord_channels.get(key)
-
     async def start(self) -> None:
         self._start_time = time.time()
         self._storage = Storage(local_dir=self.local_dir)
@@ -214,25 +198,17 @@ class Gateway:
         # Start Web UI first so the page is reachable while the rest boots.
         await self._start_web_http()
 
-        # Phase 1: Create shared Discord channel instances (one per unique bot identity)
-        self._create_shared_discord_channels()
-
-        # Phase 2: Start each bot (registers routes on shared Discord channels)
+        # Start each bot
         for name, bot_cfg in self.config.bots.items():
             if not node_matches(bot_cfg.enabled_on_nodes, self.config.node_id):
                 logger.info("Bot '%s' skipped (enabled_on_nodes=%s, current=%s)", name, bot_cfg.enabled_on_nodes, self.config.node_id)
                 continue
             await self._start_bot(name, bot_cfg)
 
-        # Phase 2b: Register the synthetic ``raw`` bot (web-only passthrough).
+        # Register the synthetic ``raw`` bot (web-only passthrough).
         await self._start_raw_bot()
 
-        # Phase 3: Start all shared Discord channels (one start() per unique client)
-        for dc_key, dc_ch in self._discord_channels.items():
-            await dc_ch.start()
-            logger.info("Shared Discord channel '%s' started", dc_key)
-
-        # Phase 4: Start workgroups (after Discord channels are started)
+        # Start workgroups
         if self.config.workgroups:
             self._workgroup_mgr = WorkgroupManager(
                 config=self.config.workgroups,
@@ -241,7 +217,6 @@ class Gateway:
                 local_dir=self._storage.local_dir if self._storage else None,
                 start_time=self._start_time,
                 storage=self._storage,
-                discord_channels=self._discord_channels,
                 web_channels=self._web_channels,
                 _create_backend=_create_backend,
                 _ensure_git_repo=_ensure_git_repo,
@@ -270,33 +245,6 @@ class Gateway:
         logger.info(
             "Gateway ready: %d bot(s) active", len(self.config.bots)
         )
-
-    def _create_shared_discord_channels(self) -> None:
-        """Pre-create one DiscordChannel per unique Discord bot identity."""
-        from boxagent.channels.discord import DiscordChannel
-
-        for name, bot_cfg in self.config.bots.items():
-            if not node_matches(bot_cfg.enabled_on_nodes, self.config.node_id):
-                continue
-            if not bot_cfg.discord_token:
-                continue
-            key = bot_cfg.discord_bot_id or bot_cfg.discord_token
-            if key not in self._discord_channels:
-                self._discord_channels[key] = DiscordChannel(
-                    token=bot_cfg.discord_token,
-                    tool_calls_display=bot_cfg.display_tool_calls,
-                )
-            self._bot_discord_key[name] = key
-
-        # Ensure workgroup Discord identities are also created
-        for workgroup_name, workgroup_config in self.config.workgroups.items():
-            if not node_matches(workgroup_config.enabled_on_nodes, self.config.node_id):
-                continue
-            key = workgroup_config.discord_bot_id
-            if key and key not in self._discord_channels:
-                self._discord_channels[key] = DiscordChannel(
-                    token=workgroup_config.discord_token,
-                )
 
     async def _start_bot(self, name: str, bot_cfg: BotConfig) -> None:
         session_id = None
@@ -355,12 +303,6 @@ class Gateway:
             primary_channel = channel
             self._channels[name] = channel
 
-        # --- Discord channel (shared instance) ---
-        discord_channel = self._get_bot_discord_channel(name)
-        if discord_channel is not None:
-            if primary_channel is None:
-                primary_channel = discord_channel
-
         router = Router(
             cli_process=cli_process,
             channel=primary_channel,
@@ -387,17 +329,6 @@ class Gateway:
             self._channels[name].on_message = router.handle_message
             await self._channels[name].start()
 
-        # Register route on shared Discord channel (start() happens later in Gateway.start)
-        if discord_channel is not None:
-            from boxagent.channels.discord import DM_CATEGORY
-
-            categories: list = list(bot_cfg.discord_allowed_categories)
-            if bot_cfg.discord_dm:
-                categories.append(DM_CATEGORY)
-            if categories:
-                discord_channel.register_route(router.handle_message, categories)
-            router._channels["discord"] = discord_channel
-
         # Peer messaging: regular bots have no send_to_peer capability.
         # Workgroup admins get it via WorkgroupManager.start_workgroup, routed
         # through Gateway.send_peer (cluster-aware: local in-process / remote RPC).
@@ -418,8 +349,8 @@ class Gateway:
         channels_active = []
         if bot_cfg.telegram_token:
             channels_active.append("telegram")
-        if discord_channel is not None:
-            channels_active.append("discord")
+        if bot_cfg.web_enabled:
+            channels_active.append("web")
         info_lines = [
             f"\U0001f7e2 *{display_name}* is online",
             f"node: `{self.config.node_id or '(any)'}`",
@@ -444,31 +375,11 @@ class Gateway:
                     logger.warning("Failed to send Telegram startup notification for '%s': %s", bot_name, e)
             asyncio.create_task(_send_tg_notify())
 
-        # Discord: send DM after bot is ready (on_ready fires async)
-        discord_user_id = str(bot_cfg.discord_allowed_users[0]) if bot_cfg.discord_token and bot_cfg.discord_allowed_users else ""
-        if discord_user_id and discord_channel is not None:
-            async def _send_discord_notify(ch=discord_channel, uid=discord_user_id, text=notify_text, bot_name=name):
-                # Wait for Discord client to be created (Phase 3) and connected
-                for _ in range(60):
-                    if ch._client is not None:
-                        break
-                    await asyncio.sleep(0.5)
-                else:
-                    logger.warning("Discord client never initialized for '%s', skipping startup notification", bot_name)
-                    return
-                await ch._client.wait_until_ready()
-                try:
-                    await ch.send_dm(uid, text)
-                except Exception as e:
-                    logger.warning("Failed to send Discord startup notification for '%s': %s", bot_name, e)
-
-            asyncio.create_task(_send_discord_notify())
-
         async def restart_bot(n=name, bc=bot_cfg):
             await self._restart_bot(n, bc)
 
         # Watchdog chat_id for error notifications
-        wd_chat_id = tg_chat_id or discord_user_id
+        wd_chat_id = tg_chat_id
 
         wd = Watchdog(
             cli_process=cli_process,
@@ -502,7 +413,7 @@ class Gateway:
     async def _start_raw_bot(self) -> None:
         """Register the synthetic ``raw`` bot.
 
-        ``raw`` is a web-only passthrough bot: no Telegram/Discord, no
+        ``raw`` is a web-only passthrough bot: no Telegram, no
         BoxAgent context/MCP injection, per-chat backend chosen at resume
         time. Used as a clean ``--resume`` shell for native claude / codex
         sessions.
@@ -576,7 +487,7 @@ class Gateway:
                 continue  # synthetic web-only bot, never a scheduler target
             bot_cfg = self.config.bots[name]
             chat_id = str(bot_cfg.allowed_users[0]) if bot_cfg.allowed_users else ""
-            primary_channel = self._channels.get(name) or self._get_bot_discord_channel(name)
+            primary_channel = self._channels.get(name)
             bot_refs[name] = BotRef(
                 cli_process=self._cli_processes[name],
                 channel=primary_channel,
@@ -671,7 +582,6 @@ class Gateway:
         app.router.add_post("/api/workgroup/create_specialist", self._handle_create_specialist)
         app.router.add_post("/api/workgroup/reset_specialist", self._handle_reset_specialist)
         app.router.add_post("/api/workgroup/delete_specialist", self._handle_delete_specialist)
-        app.router.add_post("/api/workgroup/update_topic", self._handle_update_topic)
         app.router.add_post("/api/workgroup/cancel_task", self._handle_cancel_task)
         app.router.add_post("/api/peer/send", self._handle_peer_send)
         # NOTE: /api/wg/peer/recv lives on `web_app` (the web UI port) instead of
@@ -1276,33 +1186,6 @@ class Gateway:
         status = 200 if result.get("ok") else 400
         return web.json_response(result, status=status)
 
-    async def _handle_update_topic(self, request: web.Request) -> web.Response:
-        """Handle POST /api/workgroup/update_topic — update a Discord channel's topic."""
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
-
-        channel_id = body.get("channel_id", "")
-        topic = body.get("topic", "")
-        if not channel_id:
-            return web.json_response({"ok": False, "error": "missing 'channel_id'"}, status=400)
-
-        # Find the Discord channel object from any workgroup
-        discord_channel = None
-        if self._workgroup_mgr:
-            for dc in self._workgroup_mgr.discord_channels.values():
-                discord_channel = dc
-                break
-        if discord_channel is None:
-            return web.json_response({"ok": False, "error": "no Discord channel available"}, status=400)
-
-        try:
-            await discord_channel.update_channel_topic(int(channel_id), topic)
-            return web.json_response({"ok": True})
-        except Exception as e:
-            return web.json_response({"ok": False, "error": str(e)}, status=400)
-
     async def _handle_cancel_task(self, request: web.Request) -> web.Response:
         """Handle POST /api/workgroup/cancel_task — cancel a running specialist task."""
         try:
@@ -1412,8 +1295,8 @@ class Gateway:
     async def _dispatch_local_peer(self, target: str, sender: str, body: str) -> None:
         """Inject a peer message into the local workgroup admin's router.
 
-        Wraps `body` in the historical envelope (matches the old Discord peer
-        path so admin sees the same shape regardless of transport).
+        Wraps `body` in the workgroup peer envelope (admin always sees the
+        same shape regardless of transport).
 
         Routed to the same chat_id heartbeat dispatches into
         (``heartbeat:<target>``) so the message lands in the admin's main
@@ -1989,7 +1872,7 @@ class Gateway:
             # a ~/.claude/projects/<encoded>/<sid>.jsonl with full tool_use /
             # tool_result blocks — use that for the richest history (text +
             # tool cards). Independent of chat_id shape (Telegram digits /
-            # Discord ids / web-uuid / wg:specialist all included).
+            # web-uuid / wg:specialist all included).
             if saved_backend == "claude-cli" and sids:
                 from boxagent.sessions import claude_native
                 base = claude_native.default_claude_projects_dir()
@@ -2306,12 +2189,6 @@ class Gateway:
                 await ch.stop()
             except Exception as e:
                 logger.error("Error stopping channel %s: %s", name, e)
-
-        for name, ch in self._discord_channels.items():
-            try:
-                await ch.stop()
-            except Exception as e:
-                logger.error("Error stopping discord channel %s: %s", name, e)
 
         for name, ch in self._web_channels.items():
             try:

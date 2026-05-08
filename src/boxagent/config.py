@@ -27,11 +27,6 @@ class BotConfig:
     telegram_token: str = ""
     allowed_users: list[int] = field(default_factory=list)
     telegram_allowed_users: list[int] = field(default_factory=list)
-    discord_token: str = ""
-    discord_bot_id: str = ""
-    discord_allowed_users: list[int] = field(default_factory=list)
-    discord_allowed_categories: list[int] = field(default_factory=list)
-    discord_dm: bool = False
     model: str = ""
     agent: str = ""
     extra_skill_dirs: list[str] = field(default_factory=list)
@@ -52,7 +47,6 @@ class SpecialistConfig:
     workspace: str = ""
     ai_backend: str = ""
     display_name: str = ""
-    discord_channel: int = 0  # optional: show activity in this Discord channel
     extra_skill_dirs: list[str] = field(default_factory=list)
     template: str = ""  # template name used at create time (metadata only)
 
@@ -68,13 +62,6 @@ class WorkgroupConfig:
     name: str
     workspace: str = ""             # root directory; admin uses {workspace}/.boxagent-workgroup/admin/
     enabled_on_nodes: str | list[str] = ""  # empty = run everywhere
-    # Channel transport: "discord" | "web" | "" (auto: discord if discord_bot_id set, else web)
-    transport: str = ""
-    # Discord config (optional — omit for non-Discord workgroups)
-    discord_bot_id: str = ""        # references discord_bots.yaml
-    discord_token: str = ""         # resolved token
-    admin_discord_category: int = 0 # admin listens on this Discord category
-    admin_discord_channel: int = 0  # text channel for heartbeat/notifications
     # Agent config
     allowed_users: list[int] = field(default_factory=list)
     model: str = ""
@@ -87,19 +74,6 @@ class WorkgroupConfig:
     display_heartbeat: bool = False
     web_enabled: bool = True
     specialists: dict[str, SpecialistConfig] = field(default_factory=dict)
-
-    @property
-    def is_discord_mode(self) -> bool:
-        """True if this workgroup uses Discord as its primary channel.
-
-        Explicit ``transport: discord`` wins; otherwise inferred from the
-        presence of ``discord_bot_id``.
-        """
-        if self.transport == "discord":
-            return True
-        if self.transport == "web":
-            return False
-        return bool(self.discord_bot_id)
 
     @property
     def workgroup_dir(self) -> str:
@@ -145,32 +119,6 @@ class AppConfig:
     bots: dict[str, BotConfig] = field(default_factory=dict)
     workgroups: dict[str, WorkgroupConfig] = field(default_factory=dict)
     telegram_bots: dict[str, str] = field(default_factory=dict)
-    discord_bots: dict[str, str] = field(default_factory=dict)
-
-
-def _validate_discord_categories(bots: dict[str, BotConfig]) -> None:
-    """Ensure no two bots sharing a Discord bot_id claim the same category or DM."""
-    # Group bots by their discord identity (bot_id or raw token).
-    groups: dict[str, list[tuple[str, BotConfig]]] = {}
-    for name, cfg in bots.items():
-        if not cfg.discord_token:
-            continue
-        key = cfg.discord_bot_id or cfg.discord_token
-        groups.setdefault(key, []).append((name, cfg))
-
-    for _key, members in groups.items():
-        seen: dict[object, str] = {}  # category_key → bot_name
-        for bot_name, cfg in members:
-            keys: list[object] = list(cfg.discord_allowed_categories)
-            if cfg.discord_dm:
-                keys.append("DM")
-            for category in keys:
-                if category in seen:
-                    raise ConfigError(
-                        f"Discord category {category!r} claimed by both "
-                        f"'{seen[category]}' and '{bot_name}'"
-                    )
-                seen[category] = bot_name
 
 
 def _validate_workgroups(
@@ -178,8 +126,6 @@ def _validate_workgroups(
     node_id: str = "",
 ) -> None:
     """Validate workgroup configuration."""
-    seen_categories: dict[int, str] = {}
-
     for workgroup_name, workgroup in workgroups.items():
         # Skip workgroups not enabled on this node
         if not node_matches(workgroup.enabled_on_nodes, node_id):
@@ -187,16 +133,6 @@ def _validate_workgroups(
 
         if not workgroup.workspace:
             raise ConfigError(f"Workgroup '{workgroup_name}': missing workspace")
-
-        # Discord category uniqueness (if configured)
-        if workgroup.admin_discord_category:
-            category = workgroup.admin_discord_category
-            if category in seen_categories:
-                raise ConfigError(
-                    f"Workgroup '{workgroup_name}': Discord category {category} "
-                    f"already used by '{seen_categories[category]}'"
-                )
-            seen_categories[category] = workgroup_name
 
 
 def load_config(
@@ -282,7 +218,6 @@ def load_config(
     cluster_tunnel = cluster_tunnel_name if has_cluster else ""
 
     telegram_bots = _load_telegram_bots(config_dir)
-    discord_bots = _load_discord_bots(config_dir)
 
     bots: dict[str, BotConfig] = {}
     for bot_name, bot_raw in effective_raw.get("bots", {}).items():
@@ -297,11 +232,7 @@ def load_config(
             box_agent_dir=box_agent_dir,
             config_dir=config_dir,
             telegram_bots=telegram_bots,
-            discord_bots=discord_bots,
         )
-
-    # Validate Discord category uniqueness across bots sharing the same bot_id
-    _validate_discord_categories(bots)
 
     # Parse workgroups
     workgroups: dict[str, WorkgroupConfig] = {}
@@ -309,7 +240,6 @@ def load_config(
         workgroups[workgroup_name] = _parse_workgroup(
             workgroup_name, workgroup_raw,
             box_agent_dir=box_agent_dir, config_dir=config_dir,
-            discord_bots=discord_bots,
         )
 
     _validate_workgroups(workgroups, node_id=node_id)
@@ -331,7 +261,6 @@ def load_config(
         bots=bots,
         workgroups=workgroups,
         telegram_bots=telegram_bots,
-        discord_bots=discord_bots,
     )
 
 
@@ -412,43 +341,6 @@ def _load_telegram_bots(config_dir: Path) -> dict[str, str]:
     return {}
 
 
-def _load_discord_bots(config_dir: Path) -> dict[str, str]:
-    """Load bot name → token mapping from discord_bots.yaml.
-
-    Format:
-      bots:
-        - id: "my-bot"
-          token: "token_string"
-
-    Returns empty dict if file doesn't exist.
-    """
-    bots_file = config_dir / "discord_bots.yaml"
-    if not bots_file.is_file():
-        return {}
-
-    with open(bots_file, encoding="utf-8") as f:
-        raw = yaml.safe_load(f)
-
-    if not raw or not isinstance(raw, dict):
-        return {}
-
-    entries = raw.get("bots")
-    if not isinstance(entries, list):
-        return {}
-
-    result = {}
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        token = str(entry.get("token", "")).strip()
-        if not token:
-            continue
-        name = entry.get("id") or entry.get("name")
-        if name:
-            result[str(name)] = token
-    return result
-
-
 def _load_local_config(local_dir: Path) -> dict:
     """Load local.yaml from the local runtime directory.
 
@@ -485,7 +377,6 @@ def _parse_bot(
     box_agent_dir: Path | str | None = None,
     config_dir: Path | str | None = None,
     telegram_bots: dict[str, str] | None = None,
-    discord_bots: dict[str, str] | None = None,
 ) -> BotConfig:
     channels = raw.get("channels", {})
 
@@ -507,45 +398,14 @@ def _parse_bot(
                 raise ConfigError(
                     f"Bot '{name}': bot_id '{bot_id}' specified but telegram_bots.yaml not found"
                 )
+            else:
+                raise ConfigError(
+                    f"Bot '{name}': channels.telegram requires at least one of 'token' or 'bot_id'"
+                )
         telegram_allowed_users = telegram.get("allowed_users", [])
 
-    # --- Discord channel (optional) ---
-    discord = channels.get("discord", {})
-    discord_token = ""
-    discord_bot_id = ""
-    discord_allowed_users: list[int] = []
-    discord_allowed_categories: list[int] = []
-    discord_dm = False
-    if discord:
-        discord_token = discord.get("token", "")
-        if not discord_token:
-            bot_id = discord.get("bot_id")
-            if bot_id and discord_bots:
-                discord_bot_id = str(bot_id)
-                discord_token = discord_bots.get(discord_bot_id)
-                if not discord_token:
-                    raise ConfigError(
-                        f"Bot '{name}': bot_id '{bot_id}' not found in discord_bots.yaml"
-                    )
-            elif bot_id:
-                raise ConfigError(
-                    f"Bot '{name}': bot_id '{bot_id}' specified but discord_bots.yaml not found"
-                )
-            else:
-                raise ConfigError(f"Bot '{name}': missing channels.discord.token or bot_id")
-        discord_allowed_users = discord.get("allowed_users", [])
-        discord_allowed_categories = discord.get("allowed_categories", [])
-        discord_dm = discord.get("dm", False)
-
-    # discord.peer_channel / discord.comm_channel removed: peer messaging is
-    # workgroup-admin-only and routed via cluster RPC. Yaml fields are silently
-    # ignored.
-
-    # At least one channel must be configured
-    if not telegram_token and not discord_token:
-        raise ConfigError(
-            f"Bot '{name}': at least one channel (telegram or discord) must be configured"
-        )
+    # Discord support has been removed; legacy channels.discord blocks in
+    # config.yaml are silently ignored.
 
     # --- Web channel (default on, additive — opt out with channels.web: false) ---
     web_cfg = channels.get("web")
@@ -558,8 +418,13 @@ def _parse_bot(
     else:
         web_enabled = True
 
-    # Union of all allowed users for Router auth
-    allowed_users = list(set(telegram_allowed_users + discord_allowed_users))
+    # At least one ingress channel must be reachable
+    if not telegram_token and not web_enabled:
+        raise ConfigError(
+            f"Bot '{name}': at least one channel (telegram or web) must be enabled"
+        )
+
+    allowed_users = list(set(telegram_allowed_users))
 
     ba_dir = resolve_boxagent_dir(box_agent_dir)
     default_workspace = str(default_workspace_dir(box_agent_dir))
@@ -600,11 +465,6 @@ def _parse_bot(
         telegram_token=telegram_token,
         allowed_users=allowed_users,
         telegram_allowed_users=telegram_allowed_users,
-        discord_token=discord_token,
-        discord_bot_id=discord_bot_id,
-        discord_allowed_users=discord_allowed_users,
-        discord_allowed_categories=discord_allowed_categories,
-        discord_dm=discord_dm,
         model=raw.get("model", ""),
         agent=raw.get("agent", ""),
         extra_skill_dirs=extra_skill_dirs,
@@ -622,7 +482,6 @@ def _parse_workgroup(
     *,
     box_agent_dir: Path | str | None = None,
     config_dir: Path | str | None = None,
-    discord_bots: dict[str, str] | None = None,
 ) -> WorkgroupConfig:
     """Parse a standalone workgroup configuration block."""
     ba_dir = resolve_boxagent_dir(box_agent_dir)
@@ -636,21 +495,8 @@ def _parse_workgroup(
             ws_path = ba_dir / ws_path
         workspace = str(ws_path)
 
-    # Discord config (optional)
-    discord_bot_id = str(raw.get("discord_bot_id", ""))
-    discord_token = ""
-    if discord_bot_id and discord_bots:
-        discord_token = discord_bots.get(discord_bot_id, "")
-        if not discord_token:
-            raise ConfigError(
-                f"Workgroup '{name}': discord_bot_id '{discord_bot_id}' "
-                f"not found in discord_bots.yaml"
-            )
-
-    admin_raw = raw.get("admin", {})
-    admin_discord_category = int(admin_raw.get("discord_category", 0))
-    admin_discord_channel = int(admin_raw.get("discord_admin_channel", 0))
-    # discord_peer_channel removed: peer messaging routes via cluster RPC.
+    # Discord support has been removed; legacy admin.discord_* / discord_bot_id
+    # / transport fields are silently ignored.
 
     # Agent config
     ai_backend = raw.get("ai_backend", "claude-cli")
@@ -669,35 +515,13 @@ def _parse_workgroup(
 
     heartbeat_interval_seconds = int(raw.get("heartbeat_interval_seconds", 0))
     display_heartbeat = bool(raw.get("display_heartbeat", False))
-    web_enabled = bool(raw.get("web_enabled", True))
-
-    # Channel transport (optional; auto-detected when omitted).
-    transport = str(raw.get("transport", "")).strip().lower()
-    if transport not in ("", "web", "discord"):
-        raise ConfigError(
-            f"Workgroup '{name}': invalid transport '{transport}' "
-            f"(allowed: 'web', 'discord', or omit for auto-detect)"
-        )
-    if transport == "web":
-        # Web transport requires the WebChannel; force-enable it so #3a's
-        # adapter has something to publish into.
-        web_enabled = True
-        if discord_bot_id:
-            logger.warning(
-                "Workgroup '%s': transport=web with discord_bot_id set — "
-                "Discord fields will be ignored.",
-                name,
-            )
+    # Workgroup admin/specialist always uses the WebChannel; force-enable.
+    web_enabled = True
 
     return WorkgroupConfig(
         name=name,
         workspace=workspace,
         enabled_on_nodes=raw.get("enabled_on_nodes", ""),
-        transport=transport,
-        discord_bot_id=discord_bot_id,
-        discord_token=discord_token,
-        admin_discord_category=admin_discord_category,
-        admin_discord_channel=admin_discord_channel,
         allowed_users=allowed_users,
         model=model,
         ai_backend=ai_backend,
