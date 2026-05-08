@@ -19,6 +19,7 @@ from .cluster_api import ClusterApiMixin
 from .http_api import HttpApiMixin
 from .peer import PeerMixin
 from .workgroup_api import WorkgroupApiMixin
+from boxagent.transports.web.server import WebServerMixin
 
 # Re-exported so tests can ``patch("boxagent.gateway.X")`` to override the
 # class used by ``_create_backend`` / ``_start_bot``. Core code looks these
@@ -29,6 +30,7 @@ from boxagent.watchdog import Watchdog
 
 
 class Gateway(
+    WebServerMixin,
     HttpApiMixin,
     WorkgroupApiMixin,
     PeerMixin,
