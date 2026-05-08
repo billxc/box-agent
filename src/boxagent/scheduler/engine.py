@@ -14,6 +14,7 @@ import yaml
 from croniter import croniter
 
 from boxagent.agent.protocol import AgentBackend
+from boxagent.transports.base import Channel
 
 from boxagent.config import node_matches
 from boxagent.utils import deep_merge_dicts
@@ -219,7 +220,7 @@ class BotRef:
     """Reference to a bot's CLIProcess and channel for scheduler use."""
 
     backend: AgentBackend  # backend process
-    channel: object  # TelegramChannel
+    channel: Channel  # primary channel (Telegram for scheduler use)
     chat_id: str
     ai_backend: str = "claude-cli"
     telegram_token: str = ""
@@ -236,7 +237,7 @@ def _summarize_tool_calls(calls: list[str]) -> str:
 class _SchedulerCallback:
     """Callback that collects agent output and sends result to Telegram."""
 
-    channel: object | None
+    channel: Channel | None
     chat_id: str
     task_id: str
     _text: str = ""

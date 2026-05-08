@@ -1,24 +1,32 @@
-"""Mock backend for tests.
+"""Mock backend + channel for tests.
 
-Implements ``boxagent.agent.protocol.AgentBackend``. Records every
-``send`` / ``cancel`` / ``reset_session`` / ``stop`` call so tests can
-assert. Lets tests script the callback events emitted during a turn.
+Implements ``boxagent.agent.protocol.AgentBackend`` and
+``boxagent.transports.base.Channel``. Records every interaction so tests
+can assert on them; lets tests script callback events / channel
+behaviour without re-discovering the interface every time.
 
-Example:
+Example (backend):
 
     backend = MockBackend(bot_name="test")
     backend.start()
     backend.script(["hello", "world"])           # two stream chunks
     await backend.send("hi", callback)
     assert backend.sends == [SendCall(message="hi", ...)]
-    assert callback.stream_chunks == ["hello", "world"]
+
+Example (channel):
+
+    channel = MockChannel()
+    await channel.send_text("123", "hi there")
+    assert channel.sent_texts == [("123", "hi there")]
 """
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
+
+from boxagent.transports.base import IncomingMessage, StreamHandle
 
 if TYPE_CHECKING:
     from boxagent.agent.callback import AgentCallback
@@ -176,3 +184,175 @@ class MockBackend:
 
     async def wait_idle(self) -> None:
         await self._idle_event.wait()
+
+
+# ── MockChannel ────────────────────────────────────────────────────────
+
+
+@dataclass
+class StreamRecord:
+    """Recorded stream lifecycle: (message_id, chunks emitted, finalized)."""
+
+    message_id: str
+    chat_id: str
+    chunks: list[str] = field(default_factory=list)
+    final_text: str = ""
+    closed: bool = False
+
+
+@dataclass
+class ToolCallRecord:
+    """Recorded ``on_tool_call`` invocation."""
+
+    chat_id: str
+    tool_id: str
+    name: str
+    input: dict
+    result: str
+
+
+@dataclass
+class ToolUpdateRecord:
+    """Recorded ``on_tool_update`` invocation."""
+
+    chat_id: str
+    tool_call_id: str
+    title: str
+    status: str | None
+    input: object
+    output: object
+
+
+@dataclass
+class MockChannel:
+    """Test double for ``Channel``.
+
+    Drop-in for any ``channel: Channel`` field. Records every outbound
+    interaction (``sent_texts``, ``streams``, ``tool_calls``,
+    ``tool_updates``, ``typing_calls``) so tests can assert on the wire.
+
+    To simulate an inbound message (Telegram delivery, web /api/send),
+    call ``await channel.deliver(IncomingMessage(...))`` — this invokes
+    the registered ``on_message`` callback synchronously.
+
+    By default ``on_tool_call`` / ``on_tool_update`` return False (no
+    paragraph break needed). Override via ``tool_call_uses_stream`` /
+    ``tool_update_uses_stream``.
+    """
+
+    on_message: Callable[[IncomingMessage], Awaitable[None]] = field(
+        default=None, repr=False  # set via .deliver() / Router wiring
+    )
+
+    started: bool = field(default=False, init=False)
+    stopped: bool = field(default=False, init=False)
+
+    sent_texts: list[tuple[str, str]] = field(default_factory=list, init=False)
+    streams: list[StreamRecord] = field(default_factory=list, init=False)
+    tool_calls: list[ToolCallRecord] = field(default_factory=list, init=False)
+    tool_updates: list[ToolUpdateRecord] = field(default_factory=list, init=False)
+    typing_calls: list[str] = field(default_factory=list, init=False)
+
+    tool_call_uses_stream: bool = False
+    tool_update_uses_stream: bool = False
+
+    _next_message_id: int = field(default=1, init=False, repr=False)
+
+    # ── Channel protocol ──
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+    async def send_text(
+        self,
+        chat_id: str,
+        text: str,
+        parse_mode: str = "Markdown",
+        **kwargs,
+    ) -> str:
+        self.sent_texts.append((chat_id, text))
+        return self._mint_id()
+
+    async def stream_start(self, chat_id: str, **kwargs) -> StreamHandle:
+        record = StreamRecord(message_id=self._mint_id(), chat_id=chat_id)
+        self.streams.append(record)
+        return StreamHandle(message_id=record.message_id, chat_id=chat_id)
+
+    async def stream_update(self, handle: StreamHandle, text: str) -> None:
+        record = self._find_stream(handle.message_id)
+        if record is not None:
+            record.chunks.append(text)
+
+    async def stream_end(self, handle: StreamHandle) -> str:
+        record = self._find_stream(handle.message_id)
+        if record is not None:
+            record.final_text = record.chunks[-1] if record.chunks else ""
+            record.closed = True
+        return handle.message_id
+
+    async def show_typing(self, chat_id: str) -> None:
+        self.typing_calls.append(chat_id)
+
+    async def on_tool_call(
+        self,
+        chat_id: str,
+        tool_id: str,
+        name: str,
+        input: dict,
+        result: str,
+        *,
+        stream_handle: StreamHandle | None = None,
+        webhook_name: str = "",
+    ) -> bool:
+        self.tool_calls.append(ToolCallRecord(
+            chat_id=chat_id, tool_id=tool_id, name=name,
+            input=input, result=result,
+        ))
+        return self.tool_call_uses_stream
+
+    async def on_tool_update(
+        self,
+        chat_id: str,
+        tool_call_id: str,
+        title: str,
+        *,
+        status: str | None = None,
+        input: object = None,
+        output: object = None,
+        stream_handle: StreamHandle | None = None,
+        webhook_name: str = "",
+    ) -> bool:
+        self.tool_updates.append(ToolUpdateRecord(
+            chat_id=chat_id, tool_call_id=tool_call_id, title=title,
+            status=status, input=input, output=output,
+        ))
+        return self.tool_update_uses_stream
+
+    # ── Test utilities ──
+
+    async def deliver(self, msg: IncomingMessage) -> None:
+        """Simulate an inbound message by invoking the wired ``on_message``.
+
+        The default ``on_message`` is None; raise an explicit error so
+        tests don't silently no-op.
+        """
+        if self.on_message is None:
+            raise RuntimeError(
+                "MockChannel.on_message is unset — wire it (e.g. via Router) "
+                "before calling .deliver()."
+            )
+        await self.on_message(msg)
+
+    def _mint_id(self) -> str:
+        out = f"mock-{self._next_message_id}"
+        self._next_message_id += 1
+        return out
+
+    def _find_stream(self, message_id: str) -> StreamRecord | None:
+        for s in self.streams:
+            if s.message_id == message_id:
+                return s
+        return None
