@@ -7,13 +7,13 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
 from boxagent.agent_env import ChannelInfo
-from boxagent.transports.base import Attachment, IncomingMessage, StreamHandle
+from boxagent.transports.base import Attachment, Channel, IncomingMessage, StreamHandle
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class WebChannel:
+class WebChannel(Channel):
     """In-process pub/sub for web UI sessions.
 
     Frontend connects via SSE on /api/stream, server fans out events from

@@ -11,7 +11,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import Message as AiogramMessage
 
 from boxagent.agent_env import ChannelInfo
-from boxagent.transports.base import Attachment, IncomingMessage, StreamHandle
+from boxagent.transports.base import Attachment, Channel, IncomingMessage, StreamHandle
 from boxagent.transports.telegram.md_format import md_to_telegram
 from boxagent.transports.telegram.splitter import split_message, _find_split_point
 
@@ -24,7 +24,7 @@ STREAM_SPLIT_THRESHOLD = 3800  # Leave ~300 char margin for Telegram limit
 
 
 @dataclass
-class TelegramChannel:
+class TelegramChannel(Channel):
     """Telegram bot channel using aiogram 3."""
 
     token: str

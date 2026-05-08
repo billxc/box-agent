@@ -26,7 +26,8 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 
-from boxagent.transports.base import IncomingMessage, StreamHandle
+from boxagent.agent.protocol import AgentBackend
+from boxagent.transports.base import Channel, IncomingMessage, StreamHandle
 
 if TYPE_CHECKING:
     from boxagent.agent.callback import AgentCallback
@@ -45,7 +46,7 @@ class SendCall:
 
 
 @dataclass
-class MockBackend:
+class MockBackend(AgentBackend):
     """Test double for ``AgentBackend``.
 
     Drop-in for any ``backend: AgentBackend`` field. State transitions
@@ -224,7 +225,7 @@ class ToolUpdateRecord:
 
 
 @dataclass
-class MockChannel:
+class MockChannel(Channel):
     """Test double for ``Channel``.
 
     Drop-in for any ``channel: Channel`` field. Records every outbound
