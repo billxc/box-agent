@@ -1,44 +1,56 @@
-"""BoxAgent MCP server — consolidated HTTP (streamable-http) endpoint.
+"""BoxAgent MCP HTTP server — exposes the registry to claude-cli / codex-cli.
 
-Runs as a long-lived server inside the Gateway process.  All tools from
-the former stdio MCP servers (schedule, admin, peer, telegram) are merged
-here.  Tools call Gateway methods directly — no HTTP round-trip.
+Per-bot endpoints (path-based routing) carry tools filtered by capability
+so each agent only sees what its env allows. Path → group mapping mirrors
+the names SDK adapters use, so the agent sees the same tool namespaces
+regardless of backend:
 
-Per-session context (bot_name, chat_id) is injected via HTTP headers:
-  X-BoxAgent-Bot-Name, X-BoxAgent-Chat-Id
+  /mcp/base      — group="base"     (schedule, sessions)
+  /mcp/telegram  — group="telegram" (media — bots with telegram channel)
+  /mcp/admin     — group="admin"    (workgroup admin tools)
+  /mcp/peer      — group="peer"     (cross-admin messaging)
+
+Tool definitions live in :mod:`boxagent.tools.builtin`. This file is just
+the HTTP transport — adapters/mcp_http.py does the registry → FastMCP
+conversion.
+
+Per-request context (bot_name, chat_id) comes from HTTP headers
+``X-BoxAgent-Bot-Name`` / ``X-BoxAgent-Chat-Id``, captured into ContextVars
+by the middleware below and read by the adapter at handler-call time.
 """
 
 from __future__ import annotations
 
+import contextlib
 import logging
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
-import httpx
 from mcp.server.fastmcp import FastMCP
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.applications import Starlette
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.routing import Route
+
+# Importing builtin triggers @boxagent_tool side-effect registration.
+import boxagent.tools.builtin  # noqa: F401
+from boxagent.tools import tools_for
+from boxagent.tools.adapters.mcp_http import register_into
 
 if TYPE_CHECKING:
     from boxagent.gateway import Gateway
 
 logger = logging.getLogger(__name__)
 
+
 # ── Per-request context (set by middleware from HTTP headers) ──
 
 _ctx_bot_name: ContextVar[str] = ContextVar("bot_name", default="")
 _ctx_chat_id: ContextVar[str] = ContextVar("chat_id", default="")
 
-# ── Module-level refs set by create_mcp_app() ──
-
-_gateway: Gateway | None = None
-_config_dir: str = ""
-_local_dir: str = ""
-_node_id: str = ""
-
 
 class _ContextMiddleware(BaseHTTPMiddleware):
-    """Extract BoxAgent headers and store in ContextVars."""
+    """Extract X-BoxAgent-* headers and store in ContextVars."""
 
     async def dispatch(self, request, call_next):
         bot = request.headers.get("x-boxagent-bot-name", "")
@@ -52,507 +64,19 @@ class _ContextMiddleware(BaseHTTPMiddleware):
             _ctx_chat_id.reset(t2)
 
 
-# ── Helper ──
-
-def _resolve_telegram_token(bot_name: str) -> str:
-    """Look up Telegram bot token from Gateway config."""
-    if not _gateway:
-        return ""
-    cfg = _gateway.config.bots.get(bot_name)
-    if cfg and cfg.telegram_token:
-        return cfg.telegram_token
-    workgroup = _gateway.config.workgroups.get(bot_name)
-    if workgroup:
-        # Workgroup admin bots don't have direct telegram_token;
-        # try the telegram_bots mapping.
-        return _gateway.config.telegram_bots.get(bot_name, "")
-    return ""
-
-
-# ════════════════════════════════════════════════════════════════
-#  Schedule tools
-# ════════════════════════════════════════════════════════════════
-
-def _register_schedule_tools(mcp: FastMCP) -> None:
-
-    @mcp.tool()
-    def schedule_list() -> str:
-        """List all configured scheduled tasks with their cron, mode, and prompt."""
-        if not _config_dir:
-            return "Config dir not set."
-        from boxagent.scheduler.cli import format_schedule_list
-        return format_schedule_list(_config_dir, _node_id)
-
-    @mcp.tool()
-    def schedule_add(
-        task_id: str,
-        cron: str,
-        prompt: str,
-        mode: str = "isolate",
-        bot: str = "",
-        ai_backend: str = "",
-        model: str = "",
-    ) -> str:
-        """Add a new scheduled task.
-
-        Args:
-            task_id: Unique task ID
-            cron: Cron expression (5-field, e.g. "0 9 * * 1-5")
-            prompt: Prompt to send when the schedule fires
-            mode: Execution mode - "isolate" (standalone) or "append" (send to bot)
-            bot: Bot name (required when mode=append)
-            ai_backend: Backend for isolate mode (claude-cli, codex-cli)
-            model: Model for isolate mode (e.g. sonnet, opus). Empty = default model
-        """
-        if not _config_dir:
-            return "Config dir not set."
-        from boxagent.scheduler.cli import add_schedule as _add
-        return _add(
-            config_dir=_config_dir,
-            task_id=task_id,
-            cron=cron,
-            prompt=prompt,
-            mode=mode,
-            bot=bot,
-            ai_backend=ai_backend,
-            model=model,
-        )
-
-    @mcp.tool()
-    def schedule_logs(task_id: str = "") -> str:
-        """Show recent schedule execution logs.
-
-        Args:
-            task_id: Optional task ID to filter logs for a specific schedule
-        """
-        if not _local_dir:
-            return "Local dir not set."
-        from boxagent.scheduler.cli import format_schedule_logs
-        return format_schedule_logs(_local_dir, task_id=task_id)
-
-    @mcp.tool()
-    def schedule_show(task_id: str) -> str:
-        """Show detailed configuration for a specific scheduled task.
-
-        Args:
-            task_id: The schedule task ID to show
-        """
-        if not _config_dir:
-            return "Config dir not set."
-        from boxagent.scheduler.cli import format_schedule_show
-        return format_schedule_show(_config_dir, _node_id, task_id)
-
-    @mcp.tool()
-    def schedule_run(task_id: str) -> str:
-        """Trigger a scheduled task to run immediately (async).
-
-        Args:
-            task_id: The schedule task ID to run
-        """
-        if not _local_dir:
-            return "Local dir not set."
-        from boxagent.scheduler.cli import trigger_schedule_run
-        return trigger_schedule_run(_local_dir, task_id)
-
-    @mcp.tool()
-    def schedule_run_detail(task_id: str, run_index: int = 1) -> str:
-        """Show full details for a specific schedule run log entry.
-
-        Args:
-            task_id: The schedule task ID
-            run_index: Which run to show (1 = most recent, 2 = second most recent, etc.)
-        """
-        if not _local_dir:
-            return "Local dir not set."
-        from boxagent.scheduler.cli import format_schedule_run_detail
-        return format_schedule_run_detail(_local_dir, task_id, run_index)
-
-
-# ════════════════════════════════════════════════════════════════
-#  Session tools
-# ════════════════════════════════════════════════════════════════
-
-def _register_session_tools(mcp: FastMCP) -> None:
-
-    @mcp.tool()
-    def sessions_list(query: str = "", workspace: str = "") -> str:
-        """Search and list sessions (Claude CLI + BoxAgent history + Codex).
-
-        By default, only sessions matching *workspace* are shown.
-        Use ``--all`` in the query to search across all projects.
-
-        Query syntax (all tokens are optional, order-independent):
-            --all           Show sessions from all projects (skip workspace filter)
-            <keywords>      Text search on summary/prompt/project/path (multi-word AND)
-            cwd:<substr>    Fuzzy match on session projectPath (bypasses workspace filter)
-            grep:<substr>   Full-text search inside session JSONL content (applied last)
-            <N>d            Only sessions modified in the last N days (e.g. 7d)
-            backend:<name>  Filter by backend (e.g. claude-cli, codex-cli)
-            bot:<name>      Filter by bot name
-            p<N>            Page number (e.g. p2)
-            <hex-prefix>    Lookup session by ID prefix (4+ hex chars)
-
-        Args:
-            query: Search query string (see syntax above)
-            workspace: Project directory path to scope results (default: all projects)
-        """
-        from boxagent.sessions.cli import format_sessions_list
-        from boxagent.sessions import Storage
-        storage = Storage(_local_dir) if _local_dir else None
-        return format_sessions_list(query=query, storage=storage, workspace=workspace)
-
-
-# ════════════════════════════════════════════════════════════════
-#  Workgroup admin tools
-# ════════════════════════════════════════════════════════════════
-
-def _register_admin_tools(mcp: FastMCP) -> None:
-
-    @mcp.tool()
-    def list_specialists() -> str:
-        """List all specialist agents in your workgroup with their details.
-
-        Returns each specialist's name, model, workspace, and status.
-        """
-        if not _gateway or not _gateway._workgroup_mgr:
-            return "Error: workgroup manager not available"
-        bot_name = _ctx_bot_name.get()
-        result = _gateway._workgroup_mgr.list_specialists(bot_name)
-        if not result.get("ok"):
-            return f"Error: {result.get('error', 'unknown error')}"
-        specialists = result.get("specialists", [])
-        if not specialists:
-            return "No specialists found in this workgroup."
-        lines = []
-        for specialist in specialists:
-            parts = [f"**{specialist['name']}**"]
-            if specialist.get("display_name") and specialist["display_name"] != specialist["name"]:
-                parts.append(f"({specialist['display_name']})")
-            parts.append(f"— model: {specialist.get('model', 'default')}")
-            if specialist.get("template"):
-                parts.append(f"| template: {specialist['template']}")
-            if specialist.get("workspace"):
-                parts.append(f"| workspace: {specialist['workspace']}")
-            if specialist.get("running_tasks"):
-                parts.append(f"| running: {', '.join(specialist['running_tasks'])}")
-            lines.append(" ".join(parts))
-        return f"Specialists ({len(specialists)}):\n" + "\n".join(lines)
-
-    @mcp.tool()
-    def list_templates() -> str:
-        """List specialist templates available in your workgroup.
-
-        Templates are pre-configured roles you can pass to create_specialist
-        via the `template` argument. Each template ships a CLAUDE.md prompt
-        and may also bundle skills.
-        """
-        if not _gateway or not _gateway._workgroup_mgr:
-            return "Error: workgroup manager not available"
-        bot_name = _ctx_bot_name.get()
-        if not bot_name:
-            return "Error: bot_name not set — cannot determine workgroup"
-        result = _gateway._workgroup_mgr.list_templates(bot_name)
-        if not result.get("ok"):
-            return f"Error: {result.get('error', 'unknown error')}"
-        templates = result.get("templates", [])
-        if not templates:
-            return "No templates available."
-        lines = ["Available templates:"]
-        for t in templates:
-            lines.append(f"- {t['name']}: {t['description']}")
-        return "\n".join(lines)
-
-    @mcp.tool()
-    def get_specialist_status(agent_name: str) -> str:
-        """Get a specialist's current status, recent tasks, and chat history.
-
-        Args:
-            agent_name: Name of the specialist to check
-        """
-        if not _gateway or not _gateway._workgroup_mgr:
-            return "Error: workgroup manager not available"
-        result = _gateway._workgroup_mgr.get_specialist_status(agent_name)
-        if not result.get("ok"):
-            return f"Error: {result.get('error', 'unknown error')}"
-        lines = [f"**{agent_name}** — {'active' if result.get('active') else 'idle'}"]
-        tasks = result.get("tasks", [])
-        if tasks:
-            lines.append(f"\nTasks ({len(tasks)}):")
-            for t in tasks[-5:]:
-                status = t.get("status", "?")
-                tid = t.get("task_id", "?")
-                preview = t.get("result_preview", "")
-                error = t.get("error", "")
-                line = f"  - {tid}: {status}"
-                if preview:
-                    line += f" — {preview[:100]}"
-                if error:
-                    line += f" — ERROR: {error[:100]}"
-                lines.append(line)
-        chat = result.get("recent_chat", [])
-        if chat:
-            lines.append(f"\nRecent chat ({len(chat)} lines):")
-            for c in chat:
-                lines.append(f"  {c}")
-        return "\n".join(lines)
-
-    @mcp.tool()
-    async def send_to_agent(agent_name: str, message: str) -> str:
-        """Dispatch a task to a specialist agent in your workgroup.
-
-        The task is dispatched asynchronously — this tool returns immediately.
-        The specialist processes the task in the background; results are visible
-        in the specialist's web view.
-
-        Args:
-            agent_name: Name of the specialist agent to delegate to
-            message: The task description or question to send
-        """
-        if not _gateway or not _gateway._workgroup_mgr:
-            return "Error: workgroup manager not available"
-        bot_name = _ctx_bot_name.get()
-        chat_id = _ctx_chat_id.get()
-        try:
-            result = await _gateway._workgroup_mgr.send_to_specialist(
-                target=agent_name,
-                text=message,
-                from_bot=bot_name,
-                reply_chat_id=chat_id,
-            )
-            if result.get("ok"):
-                task_id = result.get("task_id", "")
-                return f"Task dispatched to {agent_name} (task_id: {task_id})."
-            return f"Error: {result.get('error', 'unknown error')}"
-        except Exception as e:
-            return f"Error: {e}"
-
-    @mcp.tool()
-    async def create_specialist(
-        name: str,
-        model: str = "",
-        template: str = "",
-        extra_skill_dirs: list[str] | None = None,
-        display_name: str = "",
-    ) -> str:
-        """Dynamically create a new specialist agent in your workgroup.
-
-        Starts a new AI backend in its own isolated workspace directory. The
-        specialist is reachable at the virtual chat_id ``wg:<name>`` via web.
-
-        Args:
-            name: Unique name for the specialist
-            model: AI model to use (default: inherit from workgroup)
-            template: Optional template name (see list_templates). The template's
-                CLAUDE.md is appended to the system prompt and its skills are
-                symlinked into the specialist workspace.
-            extra_skill_dirs: Additional skill parent directories to symlink in.
-                Relative paths resolve against ~/.boxagent/.
-            display_name: Optional human-readable name shown in channels.
-        """
-        if not _gateway or not _gateway._workgroup_mgr:
-            return "Error: workgroup manager not available"
-        bot_name = _ctx_bot_name.get()
-        if not bot_name:
-            return "Error: bot_name not set — cannot determine workgroup"
-        try:
-            result = await _gateway._workgroup_mgr.create_specialist(
-                bot_name, name, model=model,
-                template=template,
-                extra_skill_dirs=extra_skill_dirs,
-                display_name=display_name,
-            )
-            if result.get("ok"):
-                msg = f"Created specialist '{name}'"
-                if template:
-                    msg += f" from template '{template}'"
-                chat_id = result.get("chat_id", "")
-                if chat_id:
-                    msg += f" (chat_id: {chat_id})"
-                return msg
-            return f"Error: {result.get('error', 'unknown error')}"
-        except Exception as e:
-            return f"Error: {e}"
-
-    @mcp.tool()
-    def reset_specialist(agent_name: str) -> str:
-        """Reset a specialist's session so the next task starts with a clean context.
-
-        Args:
-            agent_name: Name of the specialist to reset
-        """
-        if not _gateway or not _gateway._workgroup_mgr:
-            return "Error: workgroup manager not available"
-        result = _gateway._workgroup_mgr.reset_specialist(agent_name)
-        if result.get("ok"):
-            return f"Specialist '{agent_name}' session reset. Next task will start fresh."
-        return f"Error: {result.get('error', 'unknown error')}"
-
-    @mcp.tool()
-    async def delete_specialist(agent_name: str) -> str:
-        """Delete a dynamically created specialist agent from your workgroup.
-
-        Args:
-            agent_name: Name of the specialist to delete
-        """
-        if not _gateway or not _gateway._workgroup_mgr:
-            return "Error: workgroup manager not available"
-        try:
-            result = await _gateway._workgroup_mgr.delete_specialist(agent_name)
-            if result.get("ok"):
-                return f"Specialist '{agent_name}' deleted."
-            return f"Error: {result.get('error', 'unknown error')}"
-        except Exception as e:
-            return f"Error: {e}"
-
-    @mcp.tool()
-    async def cancel_task(task_id: str) -> str:
-        """Cancel a running specialist task.
-
-        Args:
-            task_id: The task ID to cancel (e.g. "dev-1-3")
-        """
-        if not _gateway or not _gateway._workgroup_mgr:
-            return "Error: workgroup manager not available"
-        try:
-            result = await _gateway._workgroup_mgr.cancel_task(task_id)
-            if result.get("ok"):
-                return f"Task '{task_id}' cancelled."
-            return f"Error: {result.get('error', 'unknown error')}"
-        except Exception as e:
-            return f"Error: {e}"
-
-
-# ════════════════════════════════════════════════════════════════
-#  Peer messaging tools
-# ════════════════════════════════════════════════════════════════
-
-def _register_peer_tools(mcp: FastMCP) -> None:
-
-    @mcp.tool()
-    async def send_to_peer(target: str, message: str, wait: bool = False) -> str:
-        """Send a message to another admin bot.
-
-        Routes via cluster RPC: if the target lives on this machine the
-        message is dispatched in-process; otherwise it's sent over the
-        guest WS to the node that owns the target.
-
-        Default is fire-and-forget: returns "queued" immediately, lets the
-        target admin process the message in the background. Pass wait=True
-        when you specifically need confirmation that the send chain
-        succeeded (target resolved, RPC accepted) — that still does NOT
-        wait for the target admin to actually reply.
-
-        Args:
-            target: Name of the target workgroup admin (e.g. "alpha", "beta")
-            message: The message to send
-            wait: If True, await the full delivery chain before returning.
-                  Default False for low-latency fire-and-forget.
-        """
-        if not _gateway:
-            return "Error: gateway not available"
-        bot_name = _ctx_bot_name.get()
-        if not bot_name:
-            return "Error: bot_name not set"
-        if not wait:
-            import asyncio as _asyncio
-            _asyncio.create_task(
-                _gateway.send_peer(target, bot_name, message),
-                name=f"send_to_peer:{target}",
-            )
-            return f"Queued message to {target} (fire-and-forget; pass wait=True for confirmation)."
-        result = await _gateway.send_peer(target, bot_name, message)
-        if result.get("ok"):
-            via = result.get("via", "?")
-            return f"Message sent to {target} (via {via})."
-        return f"Error: {result.get('error', 'unknown')}"
-
-
-# ════════════════════════════════════════════════════════════════
-#  Telegram media tools
-# ════════════════════════════════════════════════════════════════
-
-def _register_telegram_tools(mcp: FastMCP) -> None:
-
-    async def _send_media(method: str, field: str, file_path: str, caption: str = "") -> str:
-        """Upload a file to Telegram via Bot API multipart POST."""
-        bot_name = _ctx_bot_name.get()
-        chat_id = _ctx_chat_id.get()
-        if not chat_id:
-            return "Error: chat_id not set"
-        token = _resolve_telegram_token(bot_name)
-        if not token:
-            return f"Error: no Telegram token for bot '{bot_name}'"
-        base_url = f"https://api.telegram.org/bot{token}"
-        # Async httpx so a 60s upload doesn't block the whole event loop
-        # (peer messages, web UI, guest heartbeats all share this loop).
-        async with httpx.AsyncClient(timeout=60) as client:
-            with open(file_path, "rb") as f:
-                files = {field: f}
-                data: dict[str, str] = {"chat_id": chat_id}
-                if caption:
-                    data["caption"] = caption
-                r = await client.post(f"{base_url}/{method}", data=data, files=files)
-                r.raise_for_status()
-        return f"Sent {field} to chat {chat_id}"
-
-    @mcp.tool()
-    async def send_photo(file_path: str, caption: str = "") -> str:
-        """Send a photo/image to the user via Telegram.
-
-        Args:
-            file_path: Absolute path to the image file (jpg, png, etc.)
-            caption: Optional caption text
-        """
-        return await _send_media("sendPhoto", "photo", file_path, caption)
-
-    @mcp.tool()
-    async def send_document(file_path: str, caption: str = "") -> str:
-        """Send a file/document to the user via Telegram.
-
-        Args:
-            file_path: Absolute path to the file
-            caption: Optional caption text
-        """
-        return await _send_media("sendDocument", "document", file_path, caption)
-
-    @mcp.tool()
-    async def send_video(file_path: str, caption: str = "") -> str:
-        """Send a video to the user via Telegram.
-
-        Args:
-            file_path: Absolute path to the video file (mp4, etc.)
-            caption: Optional caption text
-        """
-        return await _send_media("sendVideo", "video", file_path, caption)
-
-    @mcp.tool()
-    async def send_audio(file_path: str, caption: str = "") -> str:
-        """Send an audio file to the user via Telegram.
-
-        Args:
-            file_path: Absolute path to the audio file (mp3, ogg, etc.)
-            caption: Optional caption text
-        """
-        return await _send_media("sendAudio", "audio", file_path, caption)
-
-    @mcp.tool()
-    async def send_animation(file_path: str, caption: str = "") -> str:
-        """Send a GIF animation to the user via Telegram.
-
-        Args:
-            file_path: Absolute path to the GIF file
-            caption: Optional caption text
-        """
-        return await _send_media("sendAnimation", "animation", file_path, caption)
-
-
-# ════════════════════════════════════════════════════════════════
-#  Factory
-# ════════════════════════════════════════════════════════════════
-
 def _make_mcp(name: str, path: str) -> FastMCP:
-    """Create a FastMCP instance with a custom streamable_http_path."""
     return FastMCP(name, stateless_http=True, streamable_http_path=path)
+
+
+# Path → (server name, registry group) mapping.
+# Server names match the SDK adapter naming (boxagent / boxagent-telegram /
+# boxagent-admin / boxagent-peer) so the LLM sees consistent tool prefixes.
+_ENDPOINTS = [
+    ("/mcp/base",     "boxagent",          "base"),
+    ("/mcp/telegram", "boxagent-telegram", "telegram"),
+    ("/mcp/admin",    "boxagent-admin",    "admin"),
+    ("/mcp/peer",     "boxagent-peer",     "peer"),
+]
 
 
 def create_mcp_app(
@@ -562,50 +86,28 @@ def create_mcp_app(
     node_id: str,
     gateway: Gateway,
 ) -> Starlette:
-    """Build a Starlette ASGI app with MCP tools on separate path-based endpoints.
+    """Build a Starlette ASGI app with one MCP endpoint per tool group."""
+    mcps: list[FastMCP] = []
 
-    Endpoints:
-      /mcp/base      — schedule + session tools (all bots)
-      /mcp/admin     — workgroup admin tools
-      /mcp/telegram  — Telegram media tools
-      /mcp/peer      — peer messaging tools
-    """
-    global _gateway, _config_dir, _local_dir, _node_id
-    _gateway = gateway
-    _config_dir = config_dir
-    _local_dir = local_dir
-    _node_id = node_id
-
-    mcps = []
-
-    mcp_base = _make_mcp("boxagent", "/mcp/base")
-    _register_schedule_tools(mcp_base)
-    _register_session_tools(mcp_base)
-    mcps.append(mcp_base)
-
-    mcp_admin = _make_mcp("boxagent-admin", "/mcp/admin")
-    _register_admin_tools(mcp_admin)
-    mcps.append(mcp_admin)
-
-    mcp_telegram = _make_mcp("boxagent-telegram", "/mcp/telegram")
-    _register_telegram_tools(mcp_telegram)
-    mcps.append(mcp_telegram)
-
-    mcp_peer = _make_mcp("boxagent-peer", "/mcp/peer")
-    _register_peer_tools(mcp_peer)
-    mcps.append(mcp_peer)
-
-    # Collect routes from all FastMCP apps into a single Starlette app.
-    # Each FastMCP registers its route at its own streamable_http_path.
-    from contextlib import asynccontextmanager
-    from starlette.routing import Route
+    for path, server_name, group in _ENDPOINTS:
+        mcp = _make_mcp(server_name, path)
+        register_into(
+            mcp,
+            tools_for(group=group),
+            bot_name_var=_ctx_bot_name,
+            chat_id_var=_ctx_chat_id,
+            gateway=gateway,
+            config_dir=config_dir,
+            local_dir=local_dir,
+            node_id=node_id,
+        )
+        mcps.append(mcp)
 
     routes: list[Route] = []
     for m in mcps:
         sub_app = m.streamable_http_app()
         routes.extend(sub_app.routes)
 
-    # Shared lifespan: start/stop all session managers.
     @asynccontextmanager
     async def lifespan(app):
         async with contextlib.AsyncExitStack() as stack:
@@ -613,7 +115,6 @@ def create_mcp_app(
                 await stack.enter_async_context(m.session_manager.run())
             yield
 
-    import contextlib
     app = Starlette(routes=routes, lifespan=lifespan)
     app.add_middleware(_ContextMiddleware)
     return app
