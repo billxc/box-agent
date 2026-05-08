@@ -80,6 +80,7 @@ class AgentSDKCopilot(AgentBackend):
     _active_callback: AgentCallback | None = field(default=None, init=False, repr=False)
     _tool_inputs: dict[str, dict] = field(default_factory=dict, init=False, repr=False)
     _tool_names: dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    record_received_stream: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._idle_event.set()
@@ -135,6 +136,7 @@ class AgentSDKCopilot(AgentBackend):
         self._active_callback = callback
         self._tool_inputs.clear()
         self._tool_names.clear()
+        self.record_received_stream = False
         self.last_turn_failed = False
         self.last_turn_error = ""
 
@@ -152,7 +154,7 @@ class AgentSDKCopilot(AgentBackend):
             await self._turn_complete.wait()
         except asyncio.CancelledError:
             try:
-                self._session.abort()  # type: ignore[union-attr]
+                await self._session.abort()  # type: ignore[union-attr]
             except Exception:
                 pass
             raise
@@ -172,7 +174,7 @@ class AgentSDKCopilot(AgentBackend):
     async def cancel(self) -> None:
         if self._session is not None:
             try:
-                self._session.abort()
+                await self._session.abort()
             except Exception as e:
                 logger.warning("CopilotSession.abort failed: %s", e)
         # Unblock any in-flight send waiting on turn completion.
@@ -210,6 +212,10 @@ class AgentSDKCopilot(AgentBackend):
             ),
             "on_event": self._on_event,
             "working_directory": self.workspace or None,
+            # Without streaming=True the SDK only emits the final
+            # AssistantMessageData; with it we also get
+            # AssistantStreamingDeltaData chunks during generation.
+            "streaming": True,
         }
         if model:
             kwargs["model"] = model
@@ -248,18 +254,26 @@ class AgentSDKCopilot(AgentBackend):
         if isinstance(data, AssistantStreamingDeltaData):
             text = getattr(data, "content", "") or getattr(data, "delta", "")
             if text:
+                self.record_received_stream = True
                 self._schedule(cb.on_stream(text))
             return
 
         if isinstance(data, AssistantMessageDeltaData):
             text = getattr(data, "content", "") or ""
             if text:
+                self.record_received_stream = True
                 self._schedule(cb.on_stream(text))
             return
 
         if isinstance(data, AssistantMessageData):
-            # Final assistant message — usually already covered by streaming
-            # deltas. Skip to avoid duplicating output.
+            # Final assistant message. When streaming=True these arrive
+            # *after* the streaming deltas — emit only if we haven't seen
+            # any streaming chunks yet (defensive fallback). Otherwise
+            # the user would see the full text duplicated at the end.
+            if not self.record_received_stream:
+                text = getattr(data, "content", "") or ""
+                if text:
+                    self._schedule(cb.on_stream(text))
             return
 
         if isinstance(data, ToolExecutionStartData):
