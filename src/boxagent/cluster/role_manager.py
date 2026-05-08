@@ -39,7 +39,8 @@ from typing import TYPE_CHECKING
 
 import aiohttp
 
-from .guest_client import GuestClient, _devtunnel_connect_token, _devtunnel_resolve_url
+from . import devtunnel
+from .guest_client import GuestClient
 from .registry import GuestRegistry
 from .tunnel import ClusterTunnel
 
@@ -188,12 +189,12 @@ class ClusterRoleManager:
         if not tunnel or not shutil.which("devtunnel"):
             return ""
         try:
-            url = await _devtunnel_resolve_url(tunnel, port=self.config.web_port or 9292)
+            url = await devtunnel.resolve_url(tunnel, port=self.config.web_port or 9292)
         except Exception as e:
             logger.debug("role manager: tunnel resolve failed: %s", e)
             return ""
         try:
-            token = await _devtunnel_connect_token(tunnel)
+            token = await devtunnel.connect_token(tunnel)
         except Exception as e:
             logger.debug("role manager: devtunnel token mint failed: %s", e)
             return ""

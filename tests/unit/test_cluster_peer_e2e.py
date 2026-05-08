@@ -16,7 +16,7 @@ import json
 import pytest
 from aiohttp import web
 
-from boxagent.cluster import guest_client as guest_client_mod
+from boxagent.cluster import devtunnel as devtunnel_mod
 from boxagent.cluster.registry import GuestRegistry
 from boxagent.cluster.guest_client import GuestClient
 
@@ -70,9 +70,7 @@ def _stub_devtunnel(monkeypatch):
     async def _fake_token(tunnel_name: str) -> str:
         return "fake-jwt"
 
-    monkeypatch.setattr(
-        guest_client_mod, "_devtunnel_connect_token", _fake_token,
-    )
+    monkeypatch.setattr(devtunnel_mod, "connect_token", _fake_token)
 
 
 # ---------------------------------------------------------------------------

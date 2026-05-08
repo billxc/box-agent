@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
-import shutil
 import uuid
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Callable
@@ -14,75 +12,13 @@ from typing import AsyncIterator, Callable
 import aiohttp
 from aiohttp import ClientSession, WSMsgType
 
+from . import devtunnel
 from .registry import _PendingResponse
 
 logger = logging.getLogger(__name__)
 
 
-async def _devtunnel_resolve_url(tunnel_name: str, port: int = 9292) -> str:
-    """Look up the public portUri of a tunnel by name. Same Microsoft account
-    only — that's our auth model."""
-    if not shutil.which("devtunnel"):
-        raise RuntimeError("devtunnel CLI not found on PATH")
-    proc = await asyncio.create_subprocess_exec(
-        "devtunnel", "show", tunnel_name, "-j",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    out, err = await proc.communicate()
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"devtunnel show '{tunnel_name}' failed: "
-            + err.decode("utf-8", "replace").strip()
-        )
-    try:
-        data = json.loads(out)
-    except Exception as e:
-        raise RuntimeError(f"devtunnel show: bad JSON: {e}")
-    tunnel = data.get("tunnel") or {}
-    for p in tunnel.get("ports") or []:
-        if int(p.get("portNumber") or 0) == port:
-            url = str(p.get("portUri") or "").rstrip("/")
-            if url:
-                return url
-    raise RuntimeError(
-        f"tunnel '{tunnel_name}' has no port {port} or hasn't been hosted yet"
-    )
 
-
-async def _devtunnel_connect_token(tunnel_name: str) -> str:
-    """Use the locally-authenticated devtunnel CLI to mint a connect JWT.
-
-    The guest host machine is expected to be logged in via `devtunnel user
-    login` against the same Microsoft account that owns the host's cluster
-    tunnel.  This is what gates membership at the devtunnel layer — without
-    this token the guest cannot even reach the host's HTTP server.
-    """
-    if not shutil.which("devtunnel"):
-        raise RuntimeError("devtunnel CLI not found on PATH")
-    proc = await asyncio.create_subprocess_exec(
-        "devtunnel", "token", tunnel_name, "--scopes", "connect",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    out, err = await proc.communicate()
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"devtunnel token failed: {err.decode('utf-8', 'replace').strip()}"
-        )
-    text = out.decode("utf-8", "replace")
-    m = re.search(r"^Token:\s*(\S+)\s*$", text, re.MULTILINE)
-    if not m:
-        raise RuntimeError("devtunnel token: no token in output")
-    return m.group(1)
-
-
-def _tunnel_name_from_url(url: str) -> str:
-    """Extract tunnel id from a portUri like https://abc-9292.jpe1.devtunnels.ms/."""
-    m = re.match(r"https?://([^.-]+)(?:-\d+)?\.([^.]+)\.devtunnels\.ms/?", url)
-    if not m:
-        return ""
-    return f"{m.group(1)}.{m.group(2)}"
 
 
 @dataclass
@@ -225,14 +161,14 @@ class GuestClient:
         """
         if self._session is None:
             self._session = ClientSession()
-        effective_tunnel_name = self.tunnel_name or _tunnel_name_from_url(self.host_url)
+        effective_tunnel_name = self.tunnel_name or devtunnel.tunnel_name_from_url(self.host_url)
         if not effective_tunnel_name:
             raise RuntimeError("guest: cannot derive tunnel name for fetch_host_json")
         if self.host_url:
             base = self.host_url.rstrip("/")
         else:
-            base = (await _devtunnel_resolve_url(effective_tunnel_name, port=self.local_web_port)).rstrip("/")
-        devtunnel_token = await _devtunnel_connect_token(effective_tunnel_name)
+            base = (await devtunnel.resolve_url(effective_tunnel_name, port=self.local_web_port)).rstrip("/")
+        devtunnel_token = await devtunnel.connect_token(effective_tunnel_name)
         headers = {"X-Tunnel-Authorization": f"tunnel {devtunnel_token}"}
         if self.host_token:
             headers["Authorization"] = f"Bearer {self.host_token}"
@@ -247,7 +183,7 @@ class GuestClient:
                 return {"ok": False, "error": f"non-json response status={resp.status}"}
 
     async def _run_forever(self) -> None:
-        effective_tunnel_name = self.tunnel_name or _tunnel_name_from_url(self.host_url)
+        effective_tunnel_name = self.tunnel_name or devtunnel.tunnel_name_from_url(self.host_url)
         if not effective_tunnel_name:
             logger.error("guest: cannot derive tunnel name from %s", self.host_url)
             return
@@ -262,7 +198,7 @@ class GuestClient:
                     resolved_url = self.host_url
                 else:
                     try:
-                        resolved_url = await _devtunnel_resolve_url(
+                        resolved_url = await devtunnel.resolve_url(
                             effective_tunnel_name, port=self.local_web_port,
                         )
                     except Exception as e:
@@ -273,7 +209,7 @@ class GuestClient:
                 ws_url = self._derive_ws_url(resolved_url)
                 # Mint a fresh devtunnel connect token each attempt.
                 try:
-                    devtunnel_token = await _devtunnel_connect_token(effective_tunnel_name)
+                    devtunnel_token = await devtunnel.connect_token(effective_tunnel_name)
                 except Exception as e:
                     logger.warning("guest: devtunnel token mint failed: %s", e)
                     await asyncio.sleep(min(backoff, 60.0))
