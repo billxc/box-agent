@@ -8,7 +8,7 @@ from aiohttp import web
 logger = logging.getLogger(__name__)
 
 
-class ClusterApiMixin:
+class ClusterRpcMixin:
     async def _dispatch_machine_request(
         self,
         machine: str,
