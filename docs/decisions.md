@@ -4,6 +4,16 @@
 
 ---
 
+## 2026-05-08: 完全删除 Discord 支持
+
+**决定**: 删除 `channels/discord.py`、所有 BotConfig/WorkgroupConfig 里的 `discord_*` 字段、agent_env 里的 `discord_*` ChannelInfo、workgroup admin 的 Discord category/webhook 路径、`discord.py>=2.0` 运行时依赖、专门测试与 `docs/workgroup-discord-dependency.md`。
+
+**原因**: Owner 决定单人自用场景下 Discord 维护成本高且不好用，用 Telegram + Web/iOS 已经覆盖所有日常使用。继续保留两套渲染（webhook/category 路由 vs Telegram MarkdownV2）只是负债。
+
+**应用**: `channels.discord` / `discord_bot_id` / `transport: discord` 等遗留 yaml 字段会被静默忽略——不会报错也不再生效；只走 Telegram 和 Web。Workgroup admin 之间走 cluster RPC（已有），specialist 走虚拟 chat_id `wg:<name>`。
+
+---
+
 ## 2026-03-22: 删除 max_workers 和 display.streaming
 
 **决定**: 从 BotConfig 中删除 `max_workers` 和 `display_streaming` 字段。

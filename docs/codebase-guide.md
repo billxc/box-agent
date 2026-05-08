@@ -13,7 +13,7 @@
 
 当前 BoxAgent 的真实范围比最早设计稿收敛得多，核心是：
 
-- 单进程管理多个 Telegram / Discord / Web 三种 channel 的 bot。
+- 单进程管理多个 Telegram / Web 两种 channel 的 bot。
 - 每个 bot 绑定一个主 AI backend，当前支持 `claude-cli`、`codex-cli` 和 `codex-acp`。
 - 普通消息走 `Channel -> Router -> backend -> Channel`。
 - 支持定时任务，模式分为 `append` 和 `isolate`。
@@ -50,7 +50,7 @@
 | `src/boxagent/` | 运行时代码 |
 | `src/boxagent/paths.py` | 路径解析集中入口（`resolve_boxagent_dir`、`default_config_dir`、`default_local_dir`、`default_workspace_dir`） |
 | `src/boxagent/agent/` | 三种 AI backend 适配层 |
-| `src/boxagent/channels/` | Channel 抽象与 Telegram/Discord/Web 实现（含 `md_format.py` 格式转换器） |
+| `src/boxagent/channels/` | Channel 抽象与 Telegram/Web 实现（含 `md_format.py` 格式转换器） |
 | `src/boxagent/web/static/` | Web UI 前端（vanilla HTML/CSS/JS，无 build step） |
 | `src/boxagent/cluster/` | Hub-and-spoke 集群：host 端 registry / WS handler、guest WS 客户端、devtunnel 自动管理 |
 | `src/boxagent/sessions/` | Storage、SessionPool、Claude 原生 JSONL 解析（`claude_native.py`） |
@@ -89,7 +89,7 @@ Gateway
 
 ## Web UI (channels/web.py + web/static/)
 
-`WebChannel` 是 Channel 协议的第三种实现，跟 Telegram/Discord 平级。它**不主动连任何外部服务**，只在内存里维护 per-`chat_id` 的 `asyncio.Queue` 列表。每个浏览器 tab 通过 SSE (`GET /api/stream`) 订阅一个 queue，channel 的 `send_text / stream_start / stream_update / stream_end / show_typing` 都打成事件 publish 到 queue。
+`WebChannel` 是 Channel 协议的第二种实现，跟 Telegram 平级。它**不主动连任何外部服务**，只在内存里维护 per-`chat_id` 的 `asyncio.Queue` 列表。每个浏览器 tab 通过 SSE (`GET /api/stream`) 订阅一个 queue，channel 的 `send_text / stream_start / stream_update / stream_end / show_typing` 都打成事件 publish 到 queue。
 
 Gateway 启动时（与 Telegram channel 平行）：
 
@@ -97,7 +97,7 @@ Gateway 启动时（与 Telegram channel 平行）：
 - 跑一个独立的 aiohttp 应用在 `127.0.0.1:9292`（端口可配 `global.web_port`），路由：
   - `GET /` → `web/static/index.html`
   - `GET /api/bots` → 本机所有 web-enabled bot/workgroup admin（开了 cluster 时会再 federate guest 上的）
-  - `GET /api/sessions?bot=X` → 跨平台列出该 bot 的所有 chat（telegram chat_id / discord channel id / web uuid）
+  - `GET /api/sessions?bot=X` → 跨平台列出该 bot 的所有 chat（telegram chat_id / web uuid）
   - `GET /api/history?bot=X&chat_id=Y` → 把对应 transcript 还原成 `[{role,text,ts}]`
   - `POST /api/send` → `WebChannel.inject` 注入 `IncomingMessage` 给 router
   - `GET /api/stream` → SSE，订阅 channel queue 把事件写出
@@ -115,7 +115,7 @@ Gateway 启动时（与 Telegram channel 平行）：
 
 Admin agent + N specialist agent 的协作单元。每个 specialist 是一个独立的 CLI 进程，admin 通过 MCP `send_to_agent` 工具把任务派给 specialist。
 
-- **消息中枢**：`WebChannel` 唯一。Discord/Telegram 是平级入口，不再是 substrate（重构后；见 `workgroup-design.md` §Transports）。
+- **消息中枢**：`WebChannel` 唯一。Telegram 是平级入口，不再是 substrate（重构后；见 `workgroup-design.md` §Transports）。
 - **Specialist 可见性**：每个 specialist 用虚拟 chat_id `wg:<sp_name>`，admin 的 web UI sidebar 会自动列出本地 workgroup 的 specialist 子项（`web/static/app.js renderMachines()`）。
 - **Adapter 抽象**：`workgroup/channel_adapter.py` 定义 `WorkgroupChannelAdapter` Protocol。当前实现 `WebWorkgroupAdapter`（生产）+ `NullWorkgroupChannelAdapter`（测试）。`WorkgroupManager._build_adapter` 选取。
 - **跨 admin peer messaging**：`Gateway.send_peer(target, sender, message)`。本地直接 dispatch，远端通过 `GuestSession.call("POST", "/api/wg/peer/recv", body=…)` 走 cluster RPC。
@@ -315,11 +315,11 @@ typing loop 每 4 秒发送一次 `ChatAction.TYPING`。这套生命周期在 `t
 | 3 | `backend:X` | `backend:codex-cli` | 按 backend 过滤 |
 | 4 | `bot:X` | `bot:claw-mac` | 按 bot 过滤 |
 | 5 | 4+ 位 hex 且匹配 session ID 前缀 | `aa3f` | 直接定位 session |
-| 6 | 其余 | `chromium`, `discord fix` | 搜索关键词（多词 AND，多字段 OR） |
+| 6 | 其余 | `chromium`, `auth fix` | 搜索关键词（多词 AND，多字段 OR） |
 
 ### 三端入口
 
-- **Chat**（Telegram/Discord）：`router_commands.cmd_sessions()` → `format_sessions_list(storage=self.storage)`
+- **Chat**（Telegram）：`router_commands.cmd_sessions()` → `format_sessions_list(storage=self.storage)`
 - **MCP**：`mcp_server.sessions_list()` → `format_sessions_list(storage=Storage(LOCAL_DIR))`
 - **CLI**：`sessions_cli.sessions_list(args)` → `_load_all_unified_sessions(storage=...)`
 
@@ -573,7 +573,7 @@ Codex ACP 这边要区分两层语义：
 | `tests/unit/test_storage.py` | session 辅助逻辑 |
 | `tests/unit/test_watchdog.py` | dead process 检测与通知 |
 | `tests/unit/test_splitter.py` | 长消息拆分与 code fence 保护 |
-| `tests/unit/test_md_format.py` | Markdown 格式转换器（Telegram MarkdownV2 + Discord） |
+| `tests/unit/test_md_format.py` | Markdown 格式转换器（Telegram MarkdownV2） |
 | `tests/unit/test_telegram_channel.py` | Telegram 发送、流式编辑、tool display |
 | `tests/unit/test_typing_indicator.py` | typing loop 的完整生命周期 |
 | `tests/unit/test_display.py` | `/verbose` 与 `format_tool_call()` |
@@ -633,7 +633,7 @@ agent/base_cli.py
 
 channels/telegram.py
   ├── channels/base.py      (Attachment, IncomingMessage, StreamHandle, Channel)
-  ├── channels/md_format.py  (md_to_telegram, md_to_discord — format conversion)
+  ├── channels/md_format.py  (md_to_telegram — format conversion)
   ├── channels/splitter.py  (split_message)
   └── aiogram 3
 ```

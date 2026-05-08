@@ -196,7 +196,7 @@ Any other text message is sent to the configured backend as a prompt. Photos and
 Every BoxAgent process exposes a browser chat at `http://127.0.0.1:9292/` by default. Vanilla HTML/CSS/JS, mobile-first, dark/light auto.
 
 - Lists every web-enabled bot/workgroup admin in a sidebar.
-- Per-chat sessions (telegram chat id, discord channel id, web uuid) are surfaced together; click a session to load its full transcript (chained across `/compact` boundaries).
+- Per-chat sessions (telegram chat id, web uuid) are surfaced together; click a session to load its full transcript (chained across `/compact` boundaries).
 - Streaming output renders incrementally as the backend produces tokens.
 - Dedicated "Resume Claude session" picker: lists every session in `~/.claude/projects/*` grouped by project, picks a session, resumes via `claude --resume` while routing the chat through the original cwd.
 
@@ -434,7 +434,7 @@ src/boxagent/
 │   └── acp_process.py       # ACP session bridge for codex-acp
 └── channels/
     ├── base.py          # Channel protocol + data types
-    ├── md_format.py     # Markdown format converter (Telegram MarkdownV2 + Discord)
+    ├── md_format.py     # Markdown format converter (Telegram MarkdownV2)
     ├── splitter.py      # Message splitting (4096 char limit)
     └── telegram.py      # Telegram bot via aiogram 3
 ```
@@ -458,7 +458,7 @@ tests/
 │   ├── test_storage.py            # Session persistence helpers
 │   ├── test_watchdog.py           # Dead process detection
 │   ├── test_splitter.py           # Message splitting logic
-│   ├── test_md_format.py           # Markdown format conversion (Telegram + Discord)
+│   ├── test_md_format.py           # Markdown format conversion (Telegram)
 │   ├── test_telegram_channel.py   # TelegramChannel send/stream/throttle
 │   ├── test_typing_indicator.py   # Typing indicator lifecycle management
 │   ├── test_display.py            # Tool call formatting modes

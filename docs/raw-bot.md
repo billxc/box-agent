@@ -12,7 +12,7 @@ resume 一个原生 session 时，看到的对话和**直接在终端 `claude --
 
 1. **不在配置文件里**：`raw` 是 BoxAgent 启动时合成出来的 BotConfig，用户不需要也
    不能在 `bots.yaml` 里声明它。
-2. **Web-only**：不绑任何 Telegram / Discord token，外部 IM 物理上无法访问。
+2. **Web-only**：不绑任何 Telegram token，外部 IM 物理上无法访问。
 3. **多后端共存**：同一个 `raw` bot 下不同 chat 可以分别跑 claude / codex /
    copilot —— backend 在 resume 时由前端选定，写入 `sessions.yaml`，由专用 pool
    按需 lazy spawn。
@@ -73,7 +73,7 @@ self.config.bots["raw"] = BotConfig(
 ```
 
 然后 `_start_bot("raw", ...)` 走特殊分支：**不创建普通 SessionPool**，改创建
-`RawSessionPool`（见下）；不订 Telegram/Discord（自然无 token）。
+`RawSessionPool`（见下）；不订 Telegram（自然无 token）。
 
 ### 6. `RawSessionPool`
 
@@ -150,7 +150,7 @@ raw 分支的实现：
 
 ## 测试计划
 
-1. 启动 BoxAgent，验证 `raw` bot 出现在 web 侧栏，无 Telegram/Discord 通道。
+1. 启动 BoxAgent，验证 `raw` bot 出现在 web 侧栏，无 Telegram 通道。
 2. Resume 一个普通 `claude` 旧 session，发一句话：
    - 抓 `claude` 子进程命令行：**不应**出现 `--append-system-prompt` 和
      `--mcp-config`。

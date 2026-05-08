@@ -176,7 +176,6 @@ Telegram → TelegramChannel → Router → ClaudeProcess / CodexProcess / ACPPr
 
 ### 能用的
 - ✅ Telegram 收发消息
-- ✅ Discord 收发（含 workgroup admin 走 category）
 - ✅ Claude CLI backend（流式、恢复、/compact）
 - ✅ Codex CLI backend（codex exec --json，流式、恢复）
 - ✅ 定时任务（append + isolate）
@@ -186,7 +185,7 @@ Telegram → TelegramChannel → Router → ClaudeProcess / CodexProcess / ACPPr
 - ✅ **Web UI channel**（默认开启，端口 9292，token 鉴权，移动端 UI，session 恢复，Claude 原生 session 选择恢复）
 - ✅ **Session 链式保存**：跨 `/compact` 不丢历史
 - ✅ **Hub-and-spoke 集群**：host 节点自动管理 devtunnel，satellites WS 接入，host web UI 联邦显示所有节点的 bot
-- ✅ **Workgroup over web**：admin/specialist 内部消息走 WebChannel；Discord 退化为可选入口（与 Telegram 平级）。跨 admin peer messaging 走 cluster RPC（同机 in-process / 跨机 `POST /api/wg/peer/recv`），不再依赖 Discord 共享频道。
+- ✅ **Workgroup over web**：admin/specialist 内部消息走 WebChannel。跨 admin peer messaging 走 cluster RPC（同机 in-process / 跨机 `POST /api/wg/peer/recv`）。
 
 ### 有 Bug 的
 - 已知问题见 `docs/decisions.md` 和 git history
@@ -233,7 +232,6 @@ Telegram → TelegramChannel → Router → ClaudeProcess / CodexProcess / ACPPr
 | `src/boxagent/agent/codex_process.py` | Codex CLI backend |
 | `src/boxagent/agent/acp_process.py` | Codex ACP backend |
 | `src/boxagent/channels/telegram.py` | Telegram 输入输出、流式编辑 |
-| `src/boxagent/channels/discord.py` | Discord 输入输出、category 路由、webhook 发送 |
 | `src/boxagent/channels/web.py` | Web UI channel（per-chat SSE 队列，stream_start/update/end） |
 | `src/boxagent/web/static/` | Web UI 前端（vanilla HTML/CSS/JS，markdown 流式渲染、Claude session picker） |
 | `src/boxagent/cluster/registry.py` | Host 端：satellite WS 接入 + RemoteBot 注册表 + RPC 路由 |
@@ -241,7 +239,7 @@ Telegram → TelegramChannel → Router → ClaudeProcess / CodexProcess / ACPPr
 | `src/boxagent/cluster/tunnel.py` | Host 自动 `devtunnel create + host`（不带 -a，认证 tunnel） |
 | `src/boxagent/sessions/claude_native.py` | 解析 ~/.claude/projects 下的原生 JSONL（项目列举、transcript 抽取） |
 | `src/boxagent/channels/splitter.py` | 长消息拆分 |
-| `src/boxagent/channels/md_format.py` | Markdown 格式转换（Telegram MarkdownV2 + Discord） |
+| `src/boxagent/channels/md_format.py` | Markdown 格式转换（Telegram MarkdownV2） |
 | `src/boxagent/scheduler.py` | 定时任务 |
 | `src/boxagent/schedule_cli.py` | schedule 子命令（add/list/show 等） |
 | `src/boxagent/config.py` | 配置解析 |
