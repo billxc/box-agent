@@ -44,11 +44,12 @@ class TestLoadConfig:
         assert bot.allowed_users == [111222]
         assert bot.display_tool_calls == "summary"
 
-    def test_missing_bot_token_raises(self, tmp_path):
+    def test_telegram_block_without_token_loads_web_only(self, tmp_path):
+        """A telegram block without token/bot_id is now valid — bot runs on web only."""
         config = dedent("""\
             global: {}
             bots:
-              bad-bot:
+              web-only-bot:
                 ai_backend: claude-cli
                 workspace: /tmp
                 channels:
@@ -56,8 +57,10 @@ class TestLoadConfig:
                     allowed_users: [111]
         """)
         (tmp_path / "config.yaml").write_text(config)
-        with pytest.raises(ConfigError, match="requires at least one of"):
-            load_config(tmp_path)
+        cfg = load_config(tmp_path)
+        bot = cfg.bots["web-only-bot"]
+        assert bot.telegram_token == ""
+        assert bot.web_enabled is True
 
     def test_env_override_workspace(self, config_dir):
         with patch.dict(
@@ -332,7 +335,9 @@ class TestTelegramBotsYaml:
         cfg = load_config(tmp_path)
         assert cfg.bots["my-bot"].telegram_token == "123:DIRECT"
 
-    def test_missing_both_token_and_bot_id_raises_error(self, tmp_path):
+    def test_missing_both_token_and_bot_id_loads_web_only(self, tmp_path):
+        """telegram block with neither token nor bot_id is not an error;
+        the bot just runs on the web channel."""
         config = dedent("""\
             global: {}
             bots:
@@ -344,8 +349,9 @@ class TestTelegramBotsYaml:
                     allowed_users: [111]
         """)
         (tmp_path / "config.yaml").write_text(config)
-        with pytest.raises(ConfigError, match="requires at least one of"):
-            load_config(tmp_path)
+        cfg = load_config(tmp_path)
+        assert cfg.bots["my-bot"].telegram_token == ""
+        assert cfg.bots["my-bot"].web_enabled is True
 
     def test_numeric_bot_id_also_works(self, tmp_path):
         """bot_id as int in YAML should still resolve."""

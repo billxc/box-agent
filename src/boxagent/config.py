@@ -380,16 +380,16 @@ def _parse_bot(
 ) -> BotConfig:
     channels = raw.get("channels", {})
 
-    # --- Telegram channel (optional) ---
+    # --- Telegram channel (optional — web is always available as ingress) ---
     telegram = channels.get("telegram", {})
     telegram_token = ""
     telegram_allowed_users: list[int] = []
     if telegram:
-        telegram_token = telegram.get("token")
+        telegram_token = telegram.get("token", "") or ""
         if not telegram_token:
             bot_id = telegram.get("bot_id")
             if bot_id and telegram_bots:
-                telegram_token = telegram_bots.get(str(bot_id))
+                telegram_token = telegram_bots.get(str(bot_id), "") or ""
                 if not telegram_token:
                     raise ConfigError(
                         f"Bot '{name}': bot_id '{bot_id}' not found in telegram_bots.yaml"
@@ -398,10 +398,8 @@ def _parse_bot(
                 raise ConfigError(
                     f"Bot '{name}': bot_id '{bot_id}' specified but telegram_bots.yaml not found"
                 )
-            else:
-                raise ConfigError(
-                    f"Bot '{name}': channels.telegram requires at least one of 'token' or 'bot_id'"
-                )
+            # else: no token + no bot_id → telegram is just not configured;
+            # bot will run on the web channel only.
         telegram_allowed_users = telegram.get("allowed_users", [])
 
     # Discord support has been removed; legacy channels.discord blocks in
@@ -418,11 +416,9 @@ def _parse_bot(
     else:
         web_enabled = True
 
-    # At least one ingress channel must be reachable
-    if not telegram_token and not web_enabled:
-        raise ConfigError(
-            f"Bot '{name}': at least one channel (telegram or web) must be enabled"
-        )
+    # No "at least one channel" check — web is always reachable in-process even
+    # if web_enabled is false (the bot can still be driven via API/scheduler),
+    # and telegram is purely optional.
 
     allowed_users = list(set(telegram_allowed_users))
 
