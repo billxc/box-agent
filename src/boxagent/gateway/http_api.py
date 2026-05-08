@@ -45,20 +45,6 @@ class HttpApiMixin:
         # Start MCP HTTP server (streamable-http)
         await self._start_mcp_http()
 
-    def _register_extra_web_routes(self, web_app: web.Application) -> None:
-        """Cluster routes that share the web UI port (the WebServerMixin
-        invokes this hook from ``_start_web_http`` before mounting static
-        files).
-
-        ``/api/peer/send`` and ``/api/wg/peer/recv`` live here because
-        ``guest_client`` forwards cross-machine RPCs to the web port (not the
-        internal API port); ``/api/guest/ws`` is the WS endpoint guests dial
-        to attach to a host.
-        """
-        web_app.router.add_post("/api/wg/peer/recv", self._handle_wg_peer_recv)
-        web_app.router.add_post("/api/peer/send", self._handle_peer_send)
-        web_app.router.add_get("/api/guest/ws", self._handle_guest_ws)
-
     async def _stop_http(self) -> None:
         """Stop the HTTP API server."""
         if self._http_runner:

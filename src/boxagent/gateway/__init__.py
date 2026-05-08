@@ -18,6 +18,7 @@ from .core import (
 from boxagent.cluster.rpc import ClusterRpcMixin
 from .http_api import HttpApiMixin
 from boxagent.cluster.peer import PeerMixin
+from boxagent.cluster.routes import ClusterRoutesMixin
 from .workgroup_api import WorkgroupApiMixin
 from boxagent.transports.web.server import WebServerMixin
 
@@ -34,6 +35,7 @@ class Gateway(
     HttpApiMixin,
     WorkgroupApiMixin,
     PeerMixin,
+    ClusterRoutesMixin,
     ClusterRpcMixin,
     _GatewayCore,
 ):
