@@ -291,7 +291,7 @@ class HeartbeatManager:
             )
             return None
 
-        ctx = pool._get_ctx(chat_id)
+        ctx = pool._get_state(chat_id)
         if ctx.session_id:
             logger.info(
                 "Heartbeat '%s': fork source via main chat_id=%s session=%s",

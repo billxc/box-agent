@@ -37,7 +37,7 @@ def _mock_pool():
     pool = MagicMock()
     pool.clear_session = MagicMock()
     pool._active = {}
-    pool._chat_contexts = {}
+    pool._chat_states = {}
     return pool
 
 
@@ -393,12 +393,13 @@ class TestHeartbeatTick:
 
     async def test_find_fork_session_via_main_chat_provider(self, tmp_path):
         """Fork source = pool ctx for the chat_id returned by main_chat_id_provider."""
-        from boxagent.sessions.pool import SessionPool, ChatContext
+        from boxagent.sessions.pool import SessionPool
+        from boxagent.sessions.base_pool import ChatState
 
         pool = MagicMock(spec=SessionPool)
-        ctx = ChatContext(session_id="sess-main")
-        pool._get_ctx = MagicMock(return_value=ctx)
-        pool._chat_contexts = {}
+        ctx = ChatState(session_id="sess-main")
+        pool._get_state = MagicMock(return_value=ctx)
+        pool._chat_states = {}
 
         hb = HeartbeatManager(
             workgroup_name="wg", admin_pool=pool, admin_router=AsyncMock(),
@@ -407,15 +408,16 @@ class TestHeartbeatTick:
         )
 
         assert hb._find_fork_session_id() == "sess-main"
-        pool._get_ctx.assert_called_once_with("main-wg-1")
+        pool._get_state.assert_called_once_with("main-wg-1")
 
     async def test_find_fork_session_no_provider_does_not_scan_pool(self, tmp_path):
         """No provider → return None without scanning pool (no silent fallback)."""
-        from boxagent.sessions.pool import SessionPool, ChatContext
+        from boxagent.sessions.pool import SessionPool
+        from boxagent.sessions.base_pool import ChatState
 
         pool = MagicMock(spec=SessionPool)
-        pool._get_ctx = MagicMock(return_value=ChatContext(session_id="should-not-be-used"))
-        pool._chat_contexts = {"some-chat": ChatContext(session_id="should-not-be-used")}
+        pool._get_state = MagicMock(return_value=ChatState(session_id="should-not-be-used"))
+        pool._chat_states = {"some-chat": ChatState(session_id="should-not-be-used")}
 
         hb = HeartbeatManager(
             workgroup_name="wg", admin_pool=pool, admin_router=AsyncMock(),
@@ -423,15 +425,16 @@ class TestHeartbeatTick:
         )
 
         assert hb._find_fork_session_id() is None
-        pool._get_ctx.assert_not_called()
+        pool._get_state.assert_not_called()
 
     async def test_find_fork_session_main_chat_has_no_session(self, tmp_path):
         """Provider returns chat_id but ctx has no session yet → None, no pool scan."""
-        from boxagent.sessions.pool import SessionPool, ChatContext
+        from boxagent.sessions.pool import SessionPool
+        from boxagent.sessions.base_pool import ChatState
 
         pool = MagicMock(spec=SessionPool)
-        pool._get_ctx = MagicMock(return_value=ChatContext(session_id=""))
-        pool._chat_contexts = {"other": ChatContext(session_id="leak")}
+        pool._get_state = MagicMock(return_value=ChatState(session_id=""))
+        pool._chat_states = {"other": ChatState(session_id="leak")}
 
         hb = HeartbeatManager(
             workgroup_name="wg", admin_pool=pool, admin_router=AsyncMock(),
@@ -440,7 +443,7 @@ class TestHeartbeatTick:
         )
 
         assert hb._find_fork_session_id() is None
-        pool._get_ctx.assert_called_once_with("main-wg-1")
+        pool._get_state.assert_called_once_with("main-wg-1")
 
     async def test_find_fork_session_no_pool(self, tmp_path):
         hb = HeartbeatManager(

@@ -1,77 +1,51 @@
-"""SessionPool — connection-pool style manager for CLI backend processes."""
+"""SessionPool — fixed-size queue of pre-spawned backends shared across chats."""
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from typing import Callable
+
+from boxagent.agent.protocol import AgentBackend
+from boxagent.sessions.base_pool import BaseSessionPool
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_POOL_SIZE = 3
 
 
-@dataclass
-class ChatContext:
-    """Per-chat state restored onto a borrowed process."""
+class SessionPool(BaseSessionPool):
+    """Pool of pre-spawned backends shared across chats.
 
-    session_id: str | None = None
-    model: str = ""
-    workspace: str = ""
+    All chats served by this pool share a single backend kind (set by the
+    ``factory`` passed to :meth:`start`). Up to ``size`` chats can be
+    running a turn concurrently; further acquires block until one
+    releases.
 
-
-@dataclass
-class SessionPool:
-    """Pool of backendes shared across chats.
-
-    Each chat gets its own session_id, model, and workspace but borrows
-    a process from the pool for the duration of a turn.  Different chats
-    can run concurrently up to ``size`` simultaneous turns.
+    Per-chat session_id / model / workspace are restored onto the
+    borrowed backend on each acquire — see ``BaseSessionPool``.
     """
 
-    size: int = DEFAULT_POOL_SIZE
-    default_model: str = ""
-    default_workspace: str = ""
-    storage: object = None  # Storage instance for lazy-loading saved sessions
-    bot_name: str = ""
-    _factory: object = None  # Callable[[], backend]
-    _pool: asyncio.Queue = field(default=None, repr=False)
-    _chat_contexts: dict[str, ChatContext] = field(default_factory=dict, repr=False)
-    _active: dict[str, object] = field(default_factory=dict, repr=False)
-    _all: list[object] = field(default_factory=list, repr=False)
+    def __init__(
+        self,
+        *,
+        size: int = DEFAULT_POOL_SIZE,
+        default_model: str = "",
+        default_workspace: str = "",
+        storage: object | None = None,
+        bot_name: str = "",
+    ) -> None:
+        super().__init__(
+            storage=storage,
+            bot_name=bot_name,
+            default_model=default_model,
+            default_workspace=default_workspace,
+        )
+        self.size = size
+        self._factory: Callable[[], AgentBackend] | None = None
+        self._pool: asyncio.Queue = asyncio.Queue(maxsize=size)
+        self._all: list[AgentBackend] = []
 
-    def __post_init__(self):
-        self._pool = asyncio.Queue(maxsize=self.size)
-
-    def _get_ctx(self, chat_id: str) -> ChatContext:
-        """Get or create context for a chat.
-
-        On first access, tries to restore session state from storage.
-        """
-        ctx = self._chat_contexts.get(chat_id)
-        if ctx is None:
-            ctx = ChatContext(
-                model=self.default_model,
-                workspace=self.default_workspace,
-            )
-            if self.storage and self.bot_name:
-                saved = self.storage.load_session(self.bot_name, chat_id=chat_id)
-                if isinstance(saved, dict):
-                    ctx.session_id = saved.get("session_id")
-                    if saved.get("model"):
-                        ctx.model = saved["model"]
-                    if saved.get("workspace"):
-                        ctx.workspace = saved["workspace"]
-                elif isinstance(saved, str):
-                    # Legacy format: plain session_id string
-                    ctx.session_id = saved
-            self._chat_contexts[chat_id] = ctx
-        return ctx
-
-    def start(self, factory) -> None:
-        """Create pool members and start their queues.
-
-        ``factory`` is a callable returning a fresh backend (already
-        configured with workspace/model/etc but no session_id).
-        """
+    def start(self, factory: Callable[[], AgentBackend]) -> None:
+        """Spawn ``size`` backends from ``factory`` and seed the queue."""
         self._factory = factory
         for _ in range(self.size):
             proc = factory()
@@ -80,103 +54,27 @@ class SessionPool:
             self._pool.put_nowait(proc)
         logger.info("SessionPool started with %d processes", self.size)
 
-    async def acquire(self, chat_id: str) -> object:
-        """Borrow a process for *chat_id*, restoring its context."""
-        proc = await self._pool.get()
-        ctx = self._get_ctx(chat_id)
-        proc.session_id = ctx.session_id
-        proc.model = ctx.model
-        proc.workspace = ctx.workspace
-        self._active[chat_id] = proc
-        return proc
+    # ── BaseSessionPool hooks ──
 
-    def release(self, chat_id: str, proc: object) -> None:
-        """Return a process to the pool, saving its context."""
-        ctx = self._get_ctx(chat_id)
-        ctx.session_id = proc.session_id
-        ctx.model = proc.model
-        ctx.workspace = proc.workspace
-        self._active.pop(chat_id, None)
+    async def _borrow(self, chat_id: str) -> AgentBackend:
+        return await self._pool.get()
+
+    def _return(self, chat_id: str, proc: AgentBackend) -> None:
+        # Clear session_id before returning — next borrower restores its own.
         proc.session_id = None
         self._pool.put_nowait(proc)
 
-    def get_active(self, chat_id: str) -> object | None:
-        """Return the process currently serving *chat_id*, if any."""
-        return self._active.get(chat_id)
-
-    def get_session_id(self, chat_id: str) -> str | None:
-        """Return the stored session_id for *chat_id*."""
-        active = self._active.get(chat_id)
-        if active:
-            return active.session_id
-        ctx = self._chat_contexts.get(chat_id)
-        return ctx.session_id if ctx else None
-
-    def set_session_id(self, chat_id: str, session_id: str | None) -> None:
-        """Directly set the session_id for *chat_id*."""
-        active = self._active.get(chat_id)
-        if active:
-            active.session_id = session_id
-        self._get_ctx(chat_id).session_id = session_id
-
-    def get_model(self, chat_id: str) -> str:
-        """Return the model for *chat_id*."""
-        active = self._active.get(chat_id)
-        if active:
-            return active.model
-        ctx = self._chat_contexts.get(chat_id)
-        return ctx.model if ctx else self.default_model
-
-    def set_model(self, chat_id: str, model: str) -> None:
-        """Set the model for *chat_id*."""
-        active = self._active.get(chat_id)
-        if active:
-            active.model = model
-        self._get_ctx(chat_id).model = model
-
-    def get_workspace(self, chat_id: str) -> str:
-        """Return the workspace for *chat_id*."""
-        active = self._active.get(chat_id)
-        if active:
-            return active.workspace
-        ctx = self._chat_contexts.get(chat_id)
-        return ctx.workspace if ctx else self.default_workspace
-
-    def set_workspace(self, chat_id: str, workspace: str) -> None:
-        """Set the workspace for *chat_id*."""
-        active = self._active.get(chat_id)
-        if active:
-            active.workspace = workspace
-        self._get_ctx(chat_id).workspace = workspace
-
-    def clear_session(self, chat_id: str) -> None:
-        """Drop session continuity for *chat_id* (keeps model/workspace)."""
-        ctx = self._chat_contexts.get(chat_id)
-        if ctx:
-            ctx.session_id = None
-        active = self._active.get(chat_id)
-        if active:
-            active.session_id = None
-
-    def has_session(self, chat_id: str) -> bool:
-        """Whether *chat_id* has a stored session_id."""
-        ctx = self._chat_contexts.get(chat_id)
-        return bool(ctx and ctx.session_id)
-
     @property
-    def all_processes(self) -> list[object]:
-        """All processes in the pool (for watchdog monitoring)."""
+    def all_processes(self) -> list[AgentBackend]:
         return list(self._all)
 
     async def stop(self) -> None:
-        """Stop all processes in the pool."""
         for proc in self._all:
             try:
                 await proc.stop()
             except Exception as e:
                 logger.warning("Error stopping pool process: %s", e)
         self._all.clear()
-        # Drain the queue
         while not self._pool.empty():
             try:
                 self._pool.get_nowait()
@@ -185,11 +83,10 @@ class SessionPool:
         logger.info("SessionPool stopped")
 
     async def restart_dead(self) -> int:
-        """Replace any dead processes in the pool. Returns count restarted."""
         if not self._factory:
             return 0
         restarted = 0
-        new_all = []
+        new_all: list[AgentBackend] = []
         for proc in self._all:
             if getattr(proc, "state", "idle") == "dead":
                 try:
@@ -205,7 +102,7 @@ class SessionPool:
                 new_all.append(proc)
         if restarted:
             self._all = new_all
-            # Rebuild pool queue with only idle (non-active) processes
+            # Rebuild queue with only idle (non-active) processes.
             while not self._pool.empty():
                 try:
                     self._pool.get_nowait()
