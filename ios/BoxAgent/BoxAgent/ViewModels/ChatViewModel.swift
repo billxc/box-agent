@@ -110,6 +110,7 @@ final class ChatViewModel {
     }
 
     func connect() {
+        guard sseClient == nil else { return }
         guard let url = api.sseURL(bot: bot, machine: machine, chatId: chatId) else { return }
         sseClient = SSEClient(url: url, tunnelToken: api.tunnelToken)
         isConnected = true
@@ -119,6 +120,7 @@ final class ChatViewModel {
                 self.handleSSE(event)
             }
             self.isConnected = false
+            self.sseClient = nil
         }
     }
 

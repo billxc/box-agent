@@ -9,6 +9,7 @@ struct ChatView: View {
     @State var viewModel: ChatViewModel
     var botDisplayName: String = ""
     @Environment(BotsViewModel.self) private var botsVM
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("showToolCalls") private var showToolCalls = true
     @State private var inputText = ""
     @FocusState private var inputFocused: Bool
@@ -61,6 +62,20 @@ struct ChatView: View {
         }
         .onDisappear {
             viewModel.disconnect()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            switch newPhase {
+            case .background:
+                AppLog.shared.info("scenePhase=background, disconnect SSE")
+                viewModel.disconnect()
+            case .active:
+                if !viewModel.isConnected {
+                    AppLog.shared.info("scenePhase=active, reconnect SSE")
+                    viewModel.connect()
+                }
+            default:
+                break
+            }
         }
         #if os(iOS)
         .toolbar(.hidden, for: .tabBar)
