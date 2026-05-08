@@ -244,7 +244,9 @@ class _SchedulerCallback:
     async def on_stream(self, text: str) -> None:
         self._text += text
 
-    async def on_tool_call(self, name: str, input: dict, result: str) -> None:
+    async def on_tool_call(
+        self, name: str, input: dict, result: str, tool_id: str = ""
+    ) -> None:
         self._tool_calls.append(name)
 
     async def on_tool_update(
