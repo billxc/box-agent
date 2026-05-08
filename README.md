@@ -124,7 +124,7 @@ global:
 
 bots:
   my-bot:
-    ai_backend: claude-cli       # claude-cli | codex-cli | agent-sdk-claude
+    ai_backend: claude-cli       # claude-cli | codex-cli | agent-sdk-claude | agent-sdk-copilot
     model: opus                  # backend-specific model name, passed through as-is
     agent: ""                    # used by claude-cli; ignored by codex-cli
     workspace: ~/projects
@@ -266,6 +266,7 @@ These tools are injected automatically when a chat-backed turn is running. Isola
 | `claude-cli` | Spawns `claude` per turn with `--resume` | Persists across turns and gateway restarts | Restored from `sessions.yaml` | `agent` is passed through as `--agent` |
 | `codex-cli` | Spawns `codex exec` per turn with `--json` | Persists via `thread_id` across turns and restarts | Restored from `sessions.yaml`; resume via `codex exec resume <thread_id>` | Uses JSONL output parsing; `--dangerously-bypass-approvals-and-sandbox` for non-interactive use |
 | `agent-sdk-claude` | Calls `claude_agent_sdk.query()` in-process per turn | Persists via SDK's `resume` option | Restored from `sessions.yaml`; passes `session_id` to `ClaudeAgentOptions.resume` | Typed message stream (no NDJSON parsing); `yolo` maps to `permission_mode="bypassPermissions"`. Same `claude` CLI under the hood, but the SDK manages it. |
+| `agent-sdk-copilot` | Maintains a long-lived `CopilotClient` (subprocess to GitHub Copilot CLI) and a per-bot `CopilotSession` | Persists via `client.resume_session(session_id)` | Restored from `sessions.yaml` | `yolo` maps to `PermissionHandler.approve_all`; non-yolo currently denies all tool calls (interactive approval not yet wired). `agent` is ignored. |
 
 ## Cluster (multi-machine)
 

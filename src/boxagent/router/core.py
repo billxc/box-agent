@@ -373,7 +373,7 @@ class Router:
             chat_id, f"Workspace switched: {current} → {new_path}"
         )
 
-    _VALID_BACKENDS = {"claude-cli", "codex-cli", "agent-sdk-claude"}
+    _VALID_BACKENDS = {"claude-cli", "codex-cli", "agent-sdk-claude", "agent-sdk-copilot"}
 
     async def _cmd_backend(self, msg: IncomingMessage):
         """Show or switch the AI backend."""
@@ -427,6 +427,15 @@ class Router:
             from boxagent.agent.sdk_claude_process import AgentSDKClaude
 
             new_backend = AgentSDKClaude(
+                workspace=workspace,
+                model=model,
+                agent=agent,
+                yolo=yolo,
+            )
+        elif new_kind == "agent-sdk-copilot":
+            from boxagent.agent.sdk_copilot_process import AgentSDKCopilot
+
+            new_backend = AgentSDKCopilot(
                 workspace=workspace,
                 model=model,
                 agent=agent,
