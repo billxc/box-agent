@@ -17,7 +17,7 @@ def _make_gateway_with_routers(*router_names: str) -> Gateway:
     gw._workgroup_mgr = SimpleNamespace(
         routers={name: AsyncMock(handle_message=AsyncMock()) for name in router_names},
     )
-    gw._guest_registry = None
+    gw._host_election = None
     return gw
 
 
@@ -106,9 +106,9 @@ def test_peer_send_remote_admin_routes_via_cluster_rpc():
     sess = MagicMock()
     sess.call = AsyncMock(return_value={"status": 200, "body": {"ok": True}})
     bot = SimpleNamespace(name="admin-b", kind="workgroup")
-    gw._guest_registry = MagicMock()
-    gw._guest_registry.list_bots = MagicMock(return_value=[("sat1", bot)])
-    gw._guest_registry.get = MagicMock(return_value=sess)
+    gw._host_election = SimpleNamespace(registry=MagicMock(), client=None, tunnel=None)
+    gw._host_election.registry.list_bots = MagicMock(return_value=[("sat1", bot)])
+    gw._host_election.registry.get = MagicMock(return_value=sess)
 
     resp = _post(gw, "_handle_peer_send", {
         "target": "admin-b", "from": "admin-a", "message": "hi",
@@ -129,9 +129,9 @@ def test_peer_send_remote_skips_non_workgroup_kinds():
     sess = MagicMock()
     sess.call = AsyncMock()
     bot = SimpleNamespace(name="admin-b", kind="bot")  # wrong kind
-    gw._guest_registry = MagicMock()
-    gw._guest_registry.list_bots = MagicMock(return_value=[("sat1", bot)])
-    gw._guest_registry.get = MagicMock(return_value=sess)
+    gw._host_election = SimpleNamespace(registry=MagicMock(), client=None, tunnel=None)
+    gw._host_election.registry.list_bots = MagicMock(return_value=[("sat1", bot)])
+    gw._host_election.registry.get = MagicMock(return_value=sess)
 
     resp = _post(gw, "_handle_peer_send", {
         "target": "admin-b", "from": "admin-a", "message": "hi",
@@ -159,9 +159,9 @@ def test_peer_send_502_on_rpc_failure():
     sess = MagicMock()
     sess.call = AsyncMock(side_effect=RuntimeError("ws closed"))
     bot = SimpleNamespace(name="admin-b", kind="workgroup")
-    gw._guest_registry = MagicMock()
-    gw._guest_registry.list_bots = MagicMock(return_value=[("sat1", bot)])
-    gw._guest_registry.get = MagicMock(return_value=sess)
+    gw._host_election = SimpleNamespace(registry=MagicMock(), client=None, tunnel=None)
+    gw._host_election.registry.list_bots = MagicMock(return_value=[("sat1", bot)])
+    gw._host_election.registry.get = MagicMock(return_value=sess)
 
     resp = _post(gw, "_handle_peer_send", {
         "target": "admin-b", "from": "admin-a", "message": "hi",
@@ -176,9 +176,9 @@ def test_peer_send_local_takes_priority_over_remote_with_same_name():
     sess = MagicMock()
     sess.call = AsyncMock()
     bot = SimpleNamespace(name="admin-a", kind="workgroup")
-    gw._guest_registry = MagicMock()
-    gw._guest_registry.list_bots = MagicMock(return_value=[("sat1", bot)])
-    gw._guest_registry.get = MagicMock(return_value=sess)
+    gw._host_election = SimpleNamespace(registry=MagicMock(), client=None, tunnel=None)
+    gw._host_election.registry.list_bots = MagicMock(return_value=[("sat1", bot)])
+    gw._host_election.registry.get = MagicMock(return_value=sess)
 
     resp = _post(gw, "_handle_peer_send", {
         "target": "admin-a", "from": "admin-b", "message": "hi",

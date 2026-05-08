@@ -188,12 +188,27 @@ class _GatewayCore:
     _scheduler: Scheduler | None = field(default=None, repr=False)
     _scheduler_task: asyncio.Task | None = field(default=None, repr=False)
     _http_runner: web.AppRunner | None = field(default=None, repr=False)
-    _guest_registry: GuestRegistry | None = field(default=None, repr=False)
-    _guest_client: GuestClient | None = field(default=None, repr=False)
-    _cluster_tunnel: ClusterTunnel | None = field(default=None, repr=False)
     _host_election: object | None = field(default=None, repr=False)
     _start_time: float = 0.0
     _workgroup_mgr: WorkgroupManager | None = field(default=None, repr=False)
+
+    # Public read-only views into HostElection-owned components. Read sites
+    # use these instead of reaching into ``_host_election.registry`` directly,
+    # so HostElection-vs-None checks stay in one place.
+    @property
+    def guest_registry(self) -> "GuestRegistry | None":
+        he = self._host_election
+        return he.registry if he is not None else None
+
+    @property
+    def guest_client(self) -> "GuestClient | None":
+        he = self._host_election
+        return he.client if he is not None else None
+
+    @property
+    def cluster_tunnel(self) -> "ClusterTunnel | None":
+        he = self._host_election
+        return he.tunnel if he is not None else None
 
     async def start(self) -> None:
         self._start_time = time.time()
@@ -244,7 +259,11 @@ class _GatewayCore:
         # is host vs guest at runtime, with failover when primary disappears).
         if self.config.cluster_tunnel:
             from boxagent.cluster.host_election import HostElection
-            self._host_election = HostElection(config=self.config, gateway=self)
+            self._host_election = HostElection(
+                config=self.config,
+                on_topology_change=self._on_topology_change,
+                bot_provider=self._local_bot_descriptors,
+            )
             await self._host_election.start()
 
         logger.info(
@@ -612,10 +631,10 @@ class _GatewayCore:
         Sources combined:
         - Local workgroups (from ``self._workgroup_mgr.routers``)
         - Remote workgroup-kind bots from connected guests
-          (``self._guest_registry.list_bots()``)
+          (``self.guest_registry.list_bots()``)
         - Remote workgroup-kind bots from disconnected-but-known guests
-          (``self._guest_registry.history``) — flagged ``online=False``
-        - On a guest (no local registry): ``self._guest_client.remote_peers``
+          (``self.guest_registry.history``) — flagged ``online=False``
+        - On a guest (no local registry): ``self.guest_client.remote_peers``
           pushed by host via ``peers_snapshot`` frames.
 
         Each entry: ``{name, machine, online, kind, description}``. Used by
@@ -637,8 +656,8 @@ class _GatewayCore:
                     "kind": "workgroup",
                     "description": workgroup.display_name or "",
                 })
-        if self._guest_registry is not None:
-            for machine_id, bot in self._guest_registry.list_bots():
+        if self.guest_registry is not None:
+            for machine_id, bot in self.guest_registry.list_bots():
                 if bot.kind != "workgroup" or bot.name == exclude:
                     continue
                 out.append({
@@ -649,7 +668,7 @@ class _GatewayCore:
                     "description": bot.display_name or "",
                 })
             seen = {(p["name"], p["machine"]) for p in out}
-            for machine_id, info in (self._guest_registry.history or {}).items():
+            for machine_id, info in (self.guest_registry.history or {}).items():
                 for b in info.get("bots") or []:
                     if b.get("kind") != "workgroup":
                         continue
@@ -663,10 +682,10 @@ class _GatewayCore:
                         "kind": "workgroup",
                         "description": b.get("display_name") or "",
                     })
-        elif self._guest_client is not None:
+        elif self.guest_client is not None:
             # Guest mode: registry is None, but host pushes peers_snapshot
             # frames containing the cross-cluster workgroup peer list.
-            for p in self._guest_client.remote_peers:
+            for p in self.guest_client.remote_peers:
                 if not isinstance(p, dict):
                     continue
                 if p.get("name") == exclude:
@@ -692,10 +711,10 @@ class _GatewayCore:
         we always re-broadcast to everyone since one guest's change affects what
         the others can route to.
         """
-        if self._guest_registry is None:
+        if self.guest_registry is None:
             return
         # Collect per-guest exclusion sets up front (avoid recompute per send).
-        for machine_id, sess in list(self._guest_registry.sessions.items()):
+        for machine_id, sess in list(self.guest_registry.sessions.items()):
             self_workgroup_names = {
                 b.name for b in sess.bots if b.kind == "workgroup"
             }
@@ -716,7 +735,7 @@ class _GatewayCore:
                         "description": workgroup.display_name or "",
                     })
             # Other sats' workgroup-kind bots
-            for other_mid, other_bot in self._guest_registry.list_bots():
+            for other_mid, other_bot in self.guest_registry.list_bots():
                 if other_mid == machine_id:
                     continue  # don't tell a guest about itself
                 if other_bot.kind != "workgroup":
@@ -760,8 +779,8 @@ class _GatewayCore:
             "bots": self._local_bot_descriptors(),
             "last_seen": time.time(),
         }]
-        if self._guest_registry is not None:
-            for m in self._guest_registry.list_machines():
+        if self.guest_registry is not None:
+            for m in self.guest_registry.list_machines():
                 m["role"] = "guest"
                 m["self"] = False
                 mid = m.get("machine_id") or ""
@@ -775,10 +794,10 @@ class _GatewayCore:
         snapshot is filtered to drop the receiving guest's own row (the guest
         already renders itself from local state with ``self: true``).
         """
-        if self._guest_registry is None:
+        if self.guest_registry is None:
             return
         all_machines = self._collect_machines()
-        for machine_id, sess in list(self._guest_registry.sessions.items()):
+        for machine_id, sess in list(self.guest_registry.sessions.items()):
             filtered = [m for m in all_machines if m.get("machine_id") != machine_id]
             try:
                 await sess.ws.send_json({"type": "machines_snapshot", "machines": filtered})
@@ -805,11 +824,11 @@ class _GatewayCore:
 
     def _remote_session_for(self, machine_id: str, bot: str):
         """Return GuestSession owning `bot` on `machine_id`, or None."""
-        if self._guest_registry is None:
+        if self.guest_registry is None:
             return None
-        if self._guest_registry.get_bot(machine_id, bot) is None:
+        if self.guest_registry.get_bot(machine_id, bot) is None:
             return None
-        return self._guest_registry.get(machine_id)
+        return self.guest_registry.get(machine_id)
 
     def _get_or_create_main_chat_id(self, bot: str) -> str:
         """Return the persisted main chat_id for a bot, minting one if unset.
@@ -844,22 +863,6 @@ class _GatewayCore:
             except Exception as e:
                 logger.error("Error stopping host election: %s", e)
             self._host_election = None
-
-        # Stop guest WS client (if still running — host election normally owns this)
-        if self._guest_client is not None:
-            try:
-                await self._guest_client.stop()
-            except Exception as e:
-                logger.error("Error stopping guest client: %s", e)
-            self._guest_client = None
-
-        # Stop cluster devtunnel (host only — likewise normally torn down by role manager)
-        if self._cluster_tunnel is not None:
-            try:
-                await self._cluster_tunnel.stop()
-            except Exception as e:
-                logger.error("Error stopping cluster tunnel: %s", e)
-            self._cluster_tunnel = None
 
         # Stop scheduler
         if self._scheduler:

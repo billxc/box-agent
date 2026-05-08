@@ -27,12 +27,12 @@ class ClusterApiMixin:
         """
         if machine == self._local_machine_id():
             return None
-        if self._guest_registry is not None:
-            sess = self._guest_registry.get(machine)
+        if self.guest_registry is not None:
+            sess = self.guest_registry.get(machine)
             if sess is None:
                 return web.json_response({"ok": False, "error": "unknown machine"}, status=404)
             return await self._proxy_to_remote(sess, method, path, request, body=body)
-        if self._guest_client is not None:
+        if self.guest_client is not None:
             return await self._proxy_via_host(method, path, request, body=body)
         return web.json_response({"ok": False, "error": "no cluster routing available"}, status=503)
 
@@ -45,12 +45,12 @@ class ClusterApiMixin:
         """Streaming counterpart to `_dispatch_machine_request` for SSE."""
         if machine == self._local_machine_id():
             return None
-        if self._guest_registry is not None:
-            sess = self._guest_registry.get(machine)
+        if self.guest_registry is not None:
+            sess = self.guest_registry.get(machine)
             if sess is None:
                 return web.json_response({"ok": False, "error": "unknown machine"}, status=404)
             return await self._proxy_stream_to_remote(sess, path, request)
-        if self._guest_client is not None:
+        if self.guest_client is not None:
             return await self._proxy_via_host_stream(path, request)
         return web.json_response({"ok": False, "error": "no cluster routing available"}, status=503)
 
@@ -63,7 +63,7 @@ class ClusterApiMixin:
     ) -> web.Response:
         """Guest-side: forward an HTTP request to the host over the existing WS."""
         try:
-            result = await self._guest_client.call(
+            result = await self.guest_client.call(
                 method, path, query=dict(request.query), body=body,
             )
         except asyncio.TimeoutError:
@@ -90,7 +90,7 @@ class ClusterApiMixin:
         await resp.prepare(request)
         await resp.write(b": connected\n\n")
         try:
-            async for data in self._guest_client.call_stream(
+            async for data in self.guest_client.call_stream(
                 "GET", path, query=dict(request.query),
             ):
                 await resp.write(f"data: {data}\n\n".encode("utf-8"))
@@ -148,7 +148,7 @@ class ClusterApiMixin:
         """Permanent route — delegates to the GuestRegistry only when this
         node is the active host; otherwise returns 503 so the dialing peer
         falls back / reconnects elsewhere."""
-        registry = self._guest_registry
+        registry = self.guest_registry
         if registry is None:
             return web.json_response(
                 {"ok": False, "error": "not host"}, status=503,

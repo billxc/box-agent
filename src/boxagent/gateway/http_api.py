@@ -259,8 +259,8 @@ class HttpApiMixin:
                 })
         # Federate: include bots from connected guests (host role) or
         # from the cached cluster snapshot pushed by host (guest role).
-        if self._guest_registry is not None:
-            for mid, b in self._guest_registry.list_bots():
+        if self.guest_registry is not None:
+            for mid, b in self.guest_registry.list_bots():
                 bots.append({
                     "name": b.name,
                     "display_name": (b.display_name or b.name) + f"  @{mid}",
@@ -269,8 +269,8 @@ class HttpApiMixin:
                     "kind": b.kind,
                     "machine": mid,
                 })
-        elif self._guest_client is not None:
-            for m in self._guest_client.remote_machines:
+        elif self.guest_client is not None:
+            for m in self.guest_client.remote_machines:
                 mid = m.get("machine_id") or ""
                 if not mid or mid == local_mid:
                     continue
@@ -290,7 +290,7 @@ class HttpApiMixin:
         so the UI can render a grouped sidebar with online/offline status."""
         if not self._web_authorized(request):
             return self._web_unauthorized()
-        if self._guest_registry is not None:
+        if self.guest_registry is not None:
             return web.json_response({"machines": self._collect_machines()})
         # Guest role: render local machine + cached snapshot from host.
         local_mid = self._local_machine_id()
@@ -303,8 +303,8 @@ class HttpApiMixin:
             "bots": self._local_bot_descriptors(),
             "last_seen": time.time(),
         }]
-        if self._guest_client is not None:
-            for m in self._guest_client.remote_machines:
+        if self.guest_client is not None:
+            for m in self.guest_client.remote_machines:
                 if m.get("machine_id") == local_mid:
                     continue
                 m = dict(m)
@@ -502,9 +502,9 @@ class HttpApiMixin:
         if request.query.get("cluster") not in ("1", "true", "yes"):
             return web.json_response({"ok": True, **local})
         # Host mode: ask each connected guest via cluster RPC.
-        if self._guest_registry is not None:
+        if self.guest_registry is not None:
             sats: dict[str, object] = {}
-            for machine_id, sess in list(self._guest_registry.sessions.items()):
+            for machine_id, sess in list(self.guest_registry.sessions.items()):
                 try:
                     result = await sess.call("GET", "/api/version", timeout=5.0)
                     sats[machine_id] = result.get("body") or {"error": "no body"}
@@ -512,9 +512,9 @@ class HttpApiMixin:
                     sats[machine_id] = {"error": str(e)}
             return web.json_response({"ok": True, "self": local, "sats": sats})
         # Guest mode: ask host via tunnel HTTP, merge.
-        if self._guest_client is not None:
+        if self.guest_client is not None:
             try:
-                host_result = await self._guest_client.fetch_host_json("/api/version", {"cluster": "1"})
+                host_result = await self.guest_client.fetch_host_json("/api/version", {"cluster": "1"})
             except Exception as e:
                 host_result = {"error": str(e)}
             return web.json_response({"ok": True, "self": local, "host": host_result})
@@ -546,7 +546,7 @@ class HttpApiMixin:
         """
         if not self._web_authorized(request):
             return self._web_unauthorized()
-        if self._guest_registry is None:
+        if self.guest_registry is None:
             return web.json_response(
                 {"ok": False, "error": "not in host mode"}, status=400,
             )
@@ -562,7 +562,7 @@ class HttpApiMixin:
         except Exception:
             pass
         results: dict[str, object] = {}
-        for machine_id, sess in list(self._guest_registry.sessions.items()):
+        for machine_id, sess in list(self.guest_registry.sessions.items()):
             if target_filter is not None and machine_id not in target_filter:
                 continue
             try:

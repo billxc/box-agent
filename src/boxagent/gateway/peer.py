@@ -24,11 +24,11 @@ class PeerMixin:
         ):
             await self._dispatch_local_peer(target, sender, message)
             return {"ok": True, "via": "local"}
-        if self._guest_registry is not None:
-            for machine_id, bot in self._guest_registry.list_bots():
+        if self.guest_registry is not None:
+            for machine_id, bot in self.guest_registry.list_bots():
                 if bot.name != target or bot.kind != "workgroup":
                     continue
-                sess = self._guest_registry.get(machine_id)
+                sess = self.guest_registry.get(machine_id)
                 if sess is None:
                     continue
                 try:
@@ -56,9 +56,9 @@ class PeerMixin:
         # Guest mode: not host, can't see registry — forward to host's
         # /api/peer/send and let host resolve. Without this, sats can only
         # peer-message workgroups they host themselves.
-        if self._guest_client is not None:
+        if self.guest_client is not None:
             try:
-                result = await self._guest_client.fetch_host_json(
+                result = await self.guest_client.fetch_host_json(
                     "/api/peer/send", method="POST",
                     body={"target": target, "from": sender, "message": message},
                 )

@@ -26,16 +26,21 @@ recovering primary boots, its first probe sees the lower-priority host
 hosting the tunnel and joins it as a guest. The lower-priority host's next
 tick spots the higher-priority sess in its registry and voluntarily demotes.
 The recovering primary's next tick then finds no host and promotes itself.
+
+Ownership: this object owns ``tunnel`` / ``registry`` / ``client`` for the
+lifetime of the elected role. Callers (Gateway) read them via the public
+attributes; they don't write back. Topology-change and bot-descriptor
+callbacks are injected at construction so this module never reaches into
+``gateway._xxx`` private state.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import shutil
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import Awaitable, Callable, TYPE_CHECKING
 
 import aiohttp
 
@@ -46,9 +51,12 @@ from .tunnel import ClusterTunnel
 
 if TYPE_CHECKING:
     from ..config import AppConfig
-    from ..gateway import Gateway
 
 logger = logging.getLogger(__name__)
+
+
+TopologyChangeCb = Callable[[str | None], Awaitable[None]]
+BotProviderCb = Callable[[], list[dict]]
 
 
 @dataclass
@@ -56,11 +64,17 @@ class HostElection:
     """Decides this node's host/guest role and keeps it in sync with reality."""
 
     config: "AppConfig"
-    gateway: "Gateway"
+    on_topology_change: TopologyChangeCb | None = None
+    bot_provider: BotProviderCb | None = None
     probe_interval: float = 10.0
 
     state: str = "init"  # "init" | "host" | "guest" | "standalone"
     current_upstream: str = ""
+
+    # Owned cluster components — populated by transitions, read by Gateway.
+    tunnel: ClusterTunnel | None = field(default=None, repr=False)
+    registry: GuestRegistry | None = field(default=None, repr=False)
+    client: GuestClient | None = field(default=None, repr=False)
 
     _task: asyncio.Task | None = field(default=None, repr=False)
     _stop: bool = False
@@ -84,8 +98,8 @@ class HostElection:
         try:
             await self._tick()
         except Exception as e:
-            logger.warning("role manager: initial tick failed: %s", e)
-        self._task = asyncio.create_task(self._run(), name="cluster-role-manager")
+            logger.warning("host election: initial tick failed: %s", e)
+        self._task = asyncio.create_task(self._run(), name="cluster-host-election")
 
     async def stop(self) -> None:
         self._stop = True
@@ -114,7 +128,15 @@ class HostElection:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning("role manager tick failed: %s", e)
+                logger.warning("host election tick failed: %s", e)
+
+    async def _fire_topology_change(self, changed: str | None) -> None:
+        if self.on_topology_change is None:
+            return
+        try:
+            await self.on_topology_change(changed)
+        except Exception:
+            pass
 
     # ── core decision logic ──
 
@@ -135,13 +157,13 @@ class HostElection:
 
         if self.state == "host":
             # Sanity: is the tunnel actually serving *us*?
-            tunnel = self.gateway._cluster_tunnel
+            tunnel = self.tunnel
             proc = getattr(tunnel, "_host_proc", None) if tunnel is not None else None
             tunnel_dead = proc is None or proc.returncode is not None
             stolen = upstream and upstream != me
             if tunnel_dead or stolen:
                 logger.warning(
-                    "role manager: lost host status (tunnel_dead=%s, "
+                    "host election: lost host status (tunnel_dead=%s, "
                     "probe_says='%s', expected='%s') — demoting",
                     tunnel_dead, upstream, me,
                 )
@@ -155,12 +177,12 @@ class HostElection:
             # alive, accept that — could be a transient devtunnel show hiccup.
             # Then check whether a higher-priority candidate has joined as a
             # guest and we should yield.
-            registry = self.gateway._guest_registry
+            registry = self.registry
             if registry is not None and my_idx > 0:
                 for sess_mid in list(registry.sessions.keys()):
                     if sess_mid in priority and priority.index(sess_mid) < my_idx:
                         logger.info(
-                            "role manager: demoting; higher-priority candidate '%s' is here",
+                            "host election: demoting; higher-priority candidate '%s' is here",
                             sess_mid,
                         )
                         await self._become_guest(sess_mid)
@@ -191,12 +213,12 @@ class HostElection:
         try:
             url = await devtunnel.resolve_url(tunnel, port=self.config.web_port or 9292)
         except Exception as e:
-            logger.debug("role manager: tunnel resolve failed: %s", e)
+            logger.debug("host election: tunnel resolve failed: %s", e)
             return ""
         try:
             token = await devtunnel.connect_token(tunnel)
         except Exception as e:
-            logger.debug("role manager: devtunnel token mint failed: %s", e)
+            logger.debug("host election: devtunnel token mint failed: %s", e)
             return ""
         if self._http is None:
             self._http = aiohttp.ClientSession()
@@ -214,7 +236,7 @@ class HostElection:
                 data = await resp.json(content_type=None)
                 return str(data.get("machine_id") or "")
         except Exception as e:
-            logger.debug("role manager: probe /api/version failed: %s", e)
+            logger.debug("host election: probe /api/version failed: %s", e)
             return ""
 
     # ── transitions ──
@@ -223,7 +245,7 @@ class HostElection:
         async with self._transition_lock:
             if self.state == "host":
                 return
-            logger.info("role manager: attempting promote to active host")
+            logger.info("host election: attempting promote to active host")
             await self._teardown_guest()
 
             tunnel = ClusterTunnel(
@@ -233,28 +255,24 @@ class HostElection:
             try:
                 url = await tunnel.start()
             except Exception as e:
-                logger.warning("role manager: promote failed (tunnel host busy?): %s", e)
+                logger.warning("host election: promote failed (tunnel host busy?): %s", e)
                 # Fall back to guest mode — someone else owns the tunnel.
                 await self._ensure_guest_locked("")
                 return
-            self.gateway._cluster_tunnel = tunnel
+            self.tunnel = tunnel
 
-            registry = GuestRegistry(
+            self.registry = GuestRegistry(
                 expected_token=self.config.guest_token or self.config.host_token,
-                on_topology_change=self.gateway._on_topology_change,
+                on_topology_change=self.on_topology_change,
                 local_web_port=self.config.web_port or 9292,
                 local_web_token=self.config.web_token or "",
             )
-            self.gateway._guest_registry = registry
 
             self.state = "host"
             self.current_upstream = ""
-            logger.info("role manager: promoted to active host (tunnel %s)", url)
+            logger.info("host election: promoted to active host (tunnel %s)", url)
             # Refresh sidebar for whoever's currently watching.
-            try:
-                await self.gateway._on_topology_change(None)
-            except Exception:
-                pass
+            await self._fire_topology_change(None)
 
     async def _ensure_guest(self, upstream: str) -> None:
         async with self._transition_lock:
@@ -264,22 +282,20 @@ class HostElection:
         if self.state == "host":
             await self._teardown_host()
 
-        client = self.gateway._guest_client
-        if client is None:
+        if self.client is None:
             mid = self.config.machine_id or self.config.node_id or "guest"
-            client = GuestClient(
+            self.client = GuestClient(
                 host_url="",
                 host_token=self.config.host_token,
                 machine_id=mid,
                 local_web_port=self.config.web_port or 9292,
                 local_web_token=self.config.web_token or "",
                 tunnel_name=self.config.cluster_tunnel,
-                bot_provider=self.gateway._local_bot_descriptors,
+                bot_provider=self.bot_provider,
             )
-            self.gateway._guest_client = client
-            client.start()
+            self.client.start()
             logger.info(
-                "role manager: guest mode — dialing tunnel '%s' (upstream=%s)",
+                "host election: guest mode — dialing tunnel '%s' (upstream=%s)",
                 self.config.cluster_tunnel, upstream or "?",
             )
         self.state = "guest"
@@ -293,34 +309,31 @@ class HostElection:
     # ── teardown helpers ──
 
     async def _teardown_host(self) -> None:
-        registry = self.gateway._guest_registry
-        if registry is not None:
+        if self.registry is not None:
             try:
-                await registry.close_all_sessions()
+                await self.registry.close_all_sessions()
             except Exception as e:
-                logger.warning("role manager: close registry sessions failed: %s", e)
+                logger.warning("host election: close registry sessions failed: %s", e)
             try:
-                await registry.aclose()
+                await self.registry.aclose()
             except Exception:
                 pass
-            self.gateway._guest_registry = None
+            self.registry = None
 
-        tunnel = self.gateway._cluster_tunnel
-        if tunnel is not None:
+        if self.tunnel is not None:
             try:
-                await tunnel.stop()
+                await self.tunnel.stop()
             except Exception as e:
-                logger.warning("role manager: stop cluster tunnel failed: %s", e)
-            self.gateway._cluster_tunnel = None
+                logger.warning("host election: stop cluster tunnel failed: %s", e)
+            self.tunnel = None
 
     async def _teardown_guest(self) -> None:
-        client = self.gateway._guest_client
-        if client is not None:
+        if self.client is not None:
             try:
-                await client.stop()
+                await self.client.stop()
             except Exception as e:
-                logger.warning("role manager: stop guest client failed: %s", e)
-            self.gateway._guest_client = None
+                logger.warning("host election: stop guest client failed: %s", e)
+            self.client = None
 
     async def _teardown_all(self) -> None:
         await self._teardown_host()

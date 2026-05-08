@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 from aiohttp import web
@@ -307,7 +308,7 @@ async def test_send_peer_surfaces_404_from_sat_recv():
     # any HTTP servers.
     gw = Gateway.__new__(Gateway)
     gw._workgroup_mgr = None       # target not local
-    gw._guest_registry = _FakeRegistry()
+    gw._host_election = SimpleNamespace(registry=_FakeRegistry(), client=None, tunnel=None)
 
     result = await gw.send_peer("remote-wg", "local-wg", "hello")
     assert result["ok"] is False, f"send_peer must NOT report success on 404; got {result}"
@@ -353,7 +354,7 @@ def test_build_peer_descriptors_combines_local_and_remote():
         "bots": [{"name": "old-mbp-wg", "display_name": "Old", "kind": "workgroup"}],
         "last_seen": 0,
     }
-    gw._guest_registry = reg
+    gw._host_election = SimpleNamespace(registry=reg, client=None, tunnel=None)
 
     peers = gw._build_peer_descriptors(exclude="war-room")
 
@@ -381,7 +382,7 @@ def test_build_peer_descriptors_guest_node_returns_local_only():
         "guest-wg": WorkgroupConfig(name="guest-wg", display_name="Guest WG"),
     })
     gw._workgroup_mgr = type("M", (), {"routers": {"guest-wg": object()}})()
-    gw._guest_registry = None
+    gw._host_election = None
 
     peers = gw._build_peer_descriptors(exclude="")
     assert [p["name"] for p in peers] == ["guest-wg"]
