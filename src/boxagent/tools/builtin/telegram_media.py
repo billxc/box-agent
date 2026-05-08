@@ -62,3 +62,59 @@ async def send_photo(args: dict, ctx: ToolContext) -> str:
         "sendPhoto", "photo",
         args["file_path"], args.get("caption", ""), ctx,
     )
+
+
+@boxagent_tool(
+    name="send_document",
+    group="telegram",
+    description="Send a file/document to the user via Telegram.",
+    schema={"file_path": str, "caption": str},
+    requires=["telegram"],
+)
+async def send_document(args: dict, ctx: ToolContext) -> str:
+    return await _send_media(
+        "sendDocument", "document",
+        args["file_path"], args.get("caption", ""), ctx,
+    )
+
+
+@boxagent_tool(
+    name="send_video",
+    group="telegram",
+    description="Send a video (mp4, etc.) to the user via Telegram.",
+    schema={"file_path": str, "caption": str},
+    requires=["telegram"],
+)
+async def send_video(args: dict, ctx: ToolContext) -> str:
+    return await _send_media(
+        "sendVideo", "video",
+        args["file_path"], args.get("caption", ""), ctx,
+    )
+
+
+@boxagent_tool(
+    name="send_audio",
+    group="telegram",
+    description="Send an audio file (mp3, ogg, etc.) to the user via Telegram.",
+    schema={"file_path": str, "caption": str},
+    requires=["telegram"],
+)
+async def send_audio(args: dict, ctx: ToolContext) -> str:
+    return await _send_media(
+        "sendAudio", "audio",
+        args["file_path"], args.get("caption", ""), ctx,
+    )
+
+
+@boxagent_tool(
+    name="send_animation",
+    group="telegram",
+    description="Send a GIF animation to the user via Telegram.",
+    schema={"file_path": str, "caption": str},
+    requires=["telegram"],
+)
+async def send_animation(args: dict, ctx: ToolContext) -> str:
+    return await _send_media(
+        "sendAnimation", "animation",
+        args["file_path"], args.get("caption", ""), ctx,
+    )
