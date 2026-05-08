@@ -3,8 +3,8 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from boxagent.channels.base import IncomingMessage
-from boxagent.channels.telegram import TelegramChannel
+from boxagent.transports.base import IncomingMessage
+from boxagent.transports.telegram import TelegramChannel
 from boxagent.router import Router
 
 

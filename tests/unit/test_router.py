@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from boxagent.channels.base import IncomingMessage
+from boxagent.transports.base import IncomingMessage
 from boxagent.router import Router
 from boxagent.router import ChannelCallback
 

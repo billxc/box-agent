@@ -3,7 +3,7 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-from boxagent.channels.web import WebChannel
+from boxagent.transports.web import WebChannel
 from boxagent.router.callback import ChannelCallback
 
 

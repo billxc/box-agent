@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from boxagent.channels.base import IncomingMessage
+from boxagent.transports.base import IncomingMessage
 from boxagent.router import Router
 from boxagent.router import ChannelCallback
 from tests.unit.helpers import FakeProcess
@@ -248,7 +248,7 @@ class TestRouterPromptSplit:
         assert "[Previous conversation summary]" not in user_message
 
     async def test_attachments_stay_in_message(self, mock_cli, mock_channel):
-        from boxagent.channels.base import Attachment
+        from boxagent.transports.base import Attachment
 
         msg = IncomingMessage(
             channel="telegram",

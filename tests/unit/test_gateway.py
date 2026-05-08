@@ -142,7 +142,7 @@ class TestGateway:
         bot_cfg.enabled_on_nodes = ""
 
         with patch("boxagent.gateway.ClaudeProcess") as MockCLI, \
-             patch("boxagent.channels.telegram.TelegramChannel") as MockChan, \
+             patch("boxagent.transports.telegram.TelegramChannel") as MockChan, \
              patch("boxagent.gateway.Router"), \
              patch("boxagent.gateway.Watchdog") as MockWD:
             mock_cli = MagicMock()
@@ -226,7 +226,7 @@ class TestGateway:
         bot_cfg.extra_skill_dirs = []
 
         with patch("boxagent.agent.acp_process.ACPProcess") as MockACP, \
-             patch("boxagent.channels.telegram.TelegramChannel") as MockChan, \
+             patch("boxagent.transports.telegram.TelegramChannel") as MockChan, \
              patch("boxagent.gateway.Router"), \
              patch("boxagent.gateway.Watchdog") as MockWD:
             mock_cli = MagicMock()

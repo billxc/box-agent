@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from boxagent.channels.base import IncomingMessage
+from boxagent.transports.base import IncomingMessage
 from boxagent.router.callback import ChannelCallback, TextCollector, log_turn
 from boxagent.router.commands import (
     cmd_exec,

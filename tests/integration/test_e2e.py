@@ -71,7 +71,7 @@ def _mock_channel(channel, response_collector):
     tests never hit the real Telegram API. Collected text goes into
     response_collector list.
     """
-    from boxagent.channels.base import StreamHandle
+    from boxagent.transports.base import StreamHandle
 
     async def fake_send_text(chat_id, text, **kwargs):
         response_collector.append(text)
@@ -95,7 +95,7 @@ def _mock_channel(channel, response_collector):
 class TestE2ESmoke:
     async def test_bot_responds_to_message(self, gateway):
         """Send a message, verify bot eventually responds."""
-        from boxagent.channels.base import IncomingMessage
+        from boxagent.transports.base import IncomingMessage
 
         router = list(gateway._routers.values())[0]
         channel = list(gateway._channels.values())[0]
@@ -118,7 +118,7 @@ class TestE2ESmoke:
 
     async def test_unauthorized_rejected(self, gateway):
         """Unauthorized user gets rejection."""
-        from boxagent.channels.base import IncomingMessage
+        from boxagent.transports.base import IncomingMessage
 
         router = list(gateway._routers.values())[0]
         channel = list(gateway._channels.values())[0]
@@ -139,7 +139,7 @@ class TestE2ESmoke:
 
     async def test_status_command(self, gateway):
         """System command /status returns response."""
-        from boxagent.channels.base import IncomingMessage
+        from boxagent.transports.base import IncomingMessage
 
         router = list(gateway._routers.values())[0]
         channel = list(gateway._channels.values())[0]
@@ -160,7 +160,7 @@ class TestE2ESmoke:
 
     async def test_new_clears_context(self, gateway):
         """After /new, next message has no prior context."""
-        from boxagent.channels.base import IncomingMessage
+        from boxagent.transports.base import IncomingMessage
 
         router = list(gateway._routers.values())[0]
         channel = list(gateway._channels.values())[0]
@@ -179,7 +179,7 @@ class TestE2ESmoke:
 
     async def test_cancel_interrupts(self, gateway):
         """Cancel interrupts a running task."""
-        from boxagent.channels.base import IncomingMessage
+        from boxagent.transports.base import IncomingMessage
 
         router = list(gateway._routers.values())[0]
         channel = list(gateway._channels.values())[0]

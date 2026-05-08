@@ -3,8 +3,8 @@
 import asyncio
 import pytest
 
-from boxagent.channels.base import IncomingMessage, StreamHandle
-from boxagent.channels.web import WebChannel
+from boxagent.transports.base import IncomingMessage, StreamHandle
+from boxagent.transports.web import WebChannel
 
 
 @pytest.fixture

@@ -1,6 +1,6 @@
 """Tests for Telegram message splitting logic."""
 
-from boxagent.channels.splitter import split_message
+from boxagent.transports.telegram.splitter import split_message
 
 TELEGRAM_LIMIT = 4096
 

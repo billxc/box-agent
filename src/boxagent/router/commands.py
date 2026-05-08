@@ -15,7 +15,7 @@ import sys
 import time
 from pathlib import Path
 
-from boxagent.channels.base import IncomingMessage
+from boxagent.transports.base import IncomingMessage
 
 logger = logging.getLogger(__name__)
 

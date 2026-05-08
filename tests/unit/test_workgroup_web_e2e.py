@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from boxagent.channels.web import WebChannel
+from boxagent.transports.web import WebChannel
 from boxagent.config import SpecialistConfig, WorkgroupConfig
 from boxagent.workgroup.manager import WorkgroupManager
 

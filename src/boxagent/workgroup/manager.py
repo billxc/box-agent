@@ -226,7 +226,7 @@ class WorkgroupManager:
         # Web is the workgroup's substrate — always create the WebChannel
         # (even if web_enabled was set false in yaml; workgroup needs it).
         if workgroup_name not in self.web_channels:
-            from boxagent.channels.web import WebChannel
+            from boxagent.transports.web import WebChannel
             self.web_channels[workgroup_name] = WebChannel(bot_name=workgroup_name)
 
         adapter = self._build_adapter(workgroup_config)
@@ -431,7 +431,7 @@ class WorkgroupManager:
                 # 2. Full result to admin router (internal, admin AI processes it)
                 admin_router = self.routers.get(workgroup_name)
                 if admin_router:
-                    from boxagent.channels.base import IncomingMessage
+                    from boxagent.transports.base import IncomingMessage
                     callback_msg = IncomingMessage(
                         channel="internal",
                         chat_id=reply_chat_id,

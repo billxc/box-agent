@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from boxagent.channels.base import IncomingMessage
+from boxagent.transports.base import IncomingMessage
 from boxagent.router import Router
 
 

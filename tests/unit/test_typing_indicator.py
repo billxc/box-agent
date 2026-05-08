@@ -5,7 +5,7 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from boxagent.channels.base import Attachment, IncomingMessage, StreamHandle
+from boxagent.transports.base import Attachment, IncomingMessage, StreamHandle
 from boxagent.router import Router
 from boxagent.router import ChannelCallback
 

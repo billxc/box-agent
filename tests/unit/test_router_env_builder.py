@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 
 from boxagent.agent_env import ChannelInfo
-from boxagent.channels.base import IncomingMessage
+from boxagent.transports.base import IncomingMessage
 from boxagent.router.env_builder import build_env
 
 

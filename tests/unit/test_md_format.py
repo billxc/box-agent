@@ -2,7 +2,7 @@
 
 import pytest
 
-from boxagent.channels.md_format import (
+from boxagent.transports.telegram.md_format import (
     escape_telegram,
     escape_telegram_code,
     md_to_telegram,

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from boxagent.channels.base import IncomingMessage, StreamHandle
+from boxagent.transports.base import IncomingMessage, StreamHandle
 
 
 @pytest.fixture
@@ -23,7 +23,7 @@ def mock_bot():
 @pytest.fixture
 def make_channel(mock_bot):
     """Factory for TelegramChannel with mocked bot."""
-    from boxagent.channels.telegram import TelegramChannel
+    from boxagent.transports.telegram import TelegramChannel
 
     def _make(on_message=None, tool_calls_display="summary"):
         channel = TelegramChannel(

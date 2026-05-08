@@ -122,7 +122,7 @@ class WebWorkgroupAdapter:
     chat_id in addition to its own and renders the specialist's stream alongside.
     """
 
-    web_channel: object  # boxagent.channels.web.WebChannel
+    web_channel: object  # boxagent.transports.web.WebChannel
 
     @property
     def channel_name(self) -> str:

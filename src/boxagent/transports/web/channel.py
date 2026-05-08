@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
 from boxagent.agent_env import ChannelInfo
-from boxagent.channels.base import Attachment, IncomingMessage, StreamHandle
+from boxagent.transports.base import Attachment, IncomingMessage, StreamHandle
 
 logger = logging.getLogger(__name__)
 

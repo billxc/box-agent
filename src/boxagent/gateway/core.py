@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from boxagent.agent.claude_process import ClaudeProcess
-from boxagent.channels.web import WebChannel
+from boxagent.transports.web import WebChannel
 from boxagent.cluster import ClusterTunnel, GuestClient, GuestRegistry
 from boxagent.config import AppConfig, BotConfig, node_matches
 from boxagent.paths import default_config_dir, default_local_dir, default_workspace_dir
@@ -318,7 +318,7 @@ class _GatewayCore:
 
         # --- Telegram channel ---
         if bot_cfg.telegram_token:
-            from boxagent.channels.telegram import TelegramChannel
+            from boxagent.transports.telegram import TelegramChannel
             channel = TelegramChannel(
                 token=bot_cfg.telegram_token,
                 allowed_users=bot_cfg.allowed_users,

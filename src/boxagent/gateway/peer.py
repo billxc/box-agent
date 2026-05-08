@@ -117,7 +117,7 @@ class PeerMixin:
             f"---\n"
             f'Reply with: send_to_peer("{sender}", "your reply")'
         )
-        from boxagent.channels.base import IncomingMessage
+        from boxagent.transports.base import IncomingMessage
         msg = IncomingMessage(
             channel="internal",
             chat_id=self._get_or_create_main_chat_id(target),

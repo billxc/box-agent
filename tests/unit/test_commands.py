@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
-from boxagent.channels.base import IncomingMessage
+from boxagent.transports.base import IncomingMessage
 from boxagent.router import Router
 
 
@@ -312,7 +312,7 @@ class TestCompactCommand:
         cli.send = fake_send
         mock_channel.show_typing = AsyncMock()
         mock_channel.stream_start = AsyncMock(
-            return_value=__import__("boxagent.channels.base", fromlist=["StreamHandle"]).StreamHandle(
+            return_value=__import__("boxagent.transports.base", fromlist=["StreamHandle"]).StreamHandle(
                 message_id="m1", chat_id="123"
             )
         )
@@ -446,7 +446,7 @@ class TestAtModelPrefix:
         cli.send = fake_send
         mock_channel.show_typing = AsyncMock()
         mock_channel.stream_start = AsyncMock(
-            return_value=__import__("boxagent.channels.base", fromlist=["StreamHandle"]).StreamHandle(
+            return_value=__import__("boxagent.transports.base", fromlist=["StreamHandle"]).StreamHandle(
                 message_id="m1", chat_id="123"
             )
         )
@@ -484,7 +484,7 @@ class TestAtModelPrefix:
         cli.send = fake_send
         mock_channel.show_typing = AsyncMock()
         mock_channel.stream_start = AsyncMock(
-            return_value=__import__("boxagent.channels.base", fromlist=["StreamHandle"]).StreamHandle(
+            return_value=__import__("boxagent.transports.base", fromlist=["StreamHandle"]).StreamHandle(
                 message_id="m1", chat_id="123"
             )
         )
@@ -520,7 +520,7 @@ class TestAtModelPrefix:
         cli.send = fake_send
         mock_channel.show_typing = AsyncMock()
         mock_channel.stream_start = AsyncMock(
-            return_value=__import__("boxagent.channels.base", fromlist=["StreamHandle"]).StreamHandle(
+            return_value=__import__("boxagent.transports.base", fromlist=["StreamHandle"]).StreamHandle(
                 message_id="m1", chat_id="123"
             )
         )
@@ -556,7 +556,7 @@ class TestAtModelPrefix:
         cli.send = fake_send
         mock_channel.show_typing = AsyncMock()
         mock_channel.stream_start = AsyncMock(
-            return_value=__import__("boxagent.channels.base", fromlist=["StreamHandle"]).StreamHandle(
+            return_value=__import__("boxagent.transports.base", fromlist=["StreamHandle"]).StreamHandle(
                 message_id="m1", chat_id="123"
             )
         )

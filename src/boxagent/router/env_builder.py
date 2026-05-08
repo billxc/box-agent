@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from boxagent.agent_env import AgentEnv, ChannelInfo
-from boxagent.channels.base import IncomingMessage
+from boxagent.transports.base import IncomingMessage
 
 if TYPE_CHECKING:
     from .core import Router
