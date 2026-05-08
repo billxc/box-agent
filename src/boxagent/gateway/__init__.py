@@ -1,20 +1,11 @@
 """Gateway package — composes the dataclass core with HTTP/peer/cluster mixins.
 
-``from boxagent.gateway import Gateway`` keeps working; module-level helpers
-(``_create_backend``, ``_ensure_git_repo``, ``sync_skills``, etc.) are
-re-exported here for tests that import them directly.
+``from boxagent.gateway import Gateway`` is the only public symbol.
 """
 
-from .core import (
-    _GatewayCore,
-    _infer_platform,
-    _parse_peer_message,
-    logger,
-)
+from .core import _GatewayCore
 from boxagent.agent import (
     BotsMixin,
-    _create_backend,
-    _ensure_git_repo,
     _supports_persistent_session,
     sync_skills,
 )
@@ -27,8 +18,9 @@ from .workgroup_api import WorkgroupApiMixin
 from boxagent.transports.web.server import WebServerMixin
 
 # Re-exported so tests can ``patch("boxagent.gateway.X")`` to override the
-# class used by ``_create_backend`` / ``_start_bot``. Core code looks these
-# up via ``boxagent.gateway`` (not its own local imports) for that reason.
+# class used by ``_create_backend`` / ``_start_bot``. Code in
+# ``agent/manager.py`` looks these up via ``boxagent.gateway`` (not its own
+# local imports) for that reason.
 from boxagent.agent.claude_process import ClaudeProcess
 from boxagent.router import Router
 from boxagent.watchdog import Watchdog
@@ -52,12 +44,6 @@ class Gateway(
 
 __all__ = [
     "Gateway",
-    "_GatewayCore",
-    "_create_backend",
-    "_ensure_git_repo",
-    "_infer_platform",
-    "_parse_peer_message",
     "_supports_persistent_session",
     "sync_skills",
-    "logger",
 ]

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from boxagent.gateway import Gateway, _parse_peer_message
+from boxagent.gateway import Gateway
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────

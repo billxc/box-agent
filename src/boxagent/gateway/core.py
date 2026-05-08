@@ -8,7 +8,6 @@ sibling mixin modules.
 
 import asyncio
 import logging
-import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,22 +27,6 @@ from boxagent.workgroup import WorkgroupManager
 from aiohttp import web
 
 logger = logging.getLogger(__name__)
-
-_PEER_HEADER_RE = re.compile(
-    r"^\[To:\s*(?P<target>[^\]]+)\]\s*\[From:\s*(?P<sender>[^\]]+)\]\s*\n?",
-)
-
-
-def _parse_peer_message(text: str) -> tuple[str, str, str]:
-    """Parse ``[To: x] [From: y]\nbody`` → (target, sender, body).
-
-    Returns ("", "", text) if the header is missing.
-    """
-    m = _PEER_HEADER_RE.match(text)
-    if not m:
-        return "", "", text
-    return m.group("target").strip(), m.group("sender").strip(), text[m.end():]
-
 
 
 def _infer_platform(chat_id: str) -> str:
