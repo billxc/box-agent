@@ -1,12 +1,9 @@
-"""End-to-end workgroup test with web substrate, no Discord, real Router.
+"""End-to-end workgroup test with web substrate, real Router.
 
 Mocks ONLY the BaseCLIProcess (the subprocess boundary). Everything above it —
 WorkgroupManager, real Router._dispatch, ChannelCallback, WebChannel,
 WebWorkgroupAdapter, SessionPool — runs as in production. This is the level
-existing test_workgroup_integration.py never reaches (it mocks Router
-itself), and is exactly where the post-Discord-removal regression hides.
-
-Acceptance scenarios for yait #1.
+existing test_workgroup_integration.py never reaches (it mocks Router itself).
 """
 
 import asyncio
@@ -149,7 +146,7 @@ def _make_manager(tmp_path: Path) -> tuple[WorkgroupManager, dict[str, FakeCLIPr
 
 @pytest.mark.asyncio
 async def test_admin_dispatch_to_specialist_e2e(tmp_path):
-    """Reproduce yait #1: admin → specialist over web substrate, no Discord."""
+    """Admin → specialist over web substrate."""
     manager, fakes = _make_manager(tmp_path)
 
     # Subscribe to the specialist's virtual chat_id BEFORE dispatch so we can

@@ -52,7 +52,6 @@ WHITELIST = {
 # the full word or replacing with a less ambiguous abbreviation.
 KNOWN_OFFENDER_TOKENS = {
     "dt",        # devtunnel
-    "dc",        # discord
     "wapp",      # web app
     "tname",     # tunnel name
     "wh",        # webhook

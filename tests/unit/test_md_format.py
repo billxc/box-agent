@@ -254,4 +254,3 @@ class TestMdToTelegramMixed:
         assert "[link](https://x.com)" in result
 
 
-# ── Discord tests ────────────────────────────────────────────────────

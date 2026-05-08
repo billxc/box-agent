@@ -93,7 +93,6 @@ struct ServerRecentRow: View {
         switch platform {
         case "web": return "globe"
         case "telegram": return "paperplane"
-        case "discord": return "bubble.left.and.bubble.right"
         case "claude": return "brain.head.profile"
         default: return "questionmark.circle"
         }
