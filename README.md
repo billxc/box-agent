@@ -2,7 +2,9 @@
 
 BoxAgent (BA) is a **Personal Agent Network**: one user, multiple machines, multiple AI agents, collaborating with each other and reachable from your phone or browser.
 
-A single user. Many machines (laptop, desktop, dev box). Many AI agents (Claude CLI, Codex, ACP). One coherent control plane via Telegram, Web, iOS, or MCP. No multi-tenant, no SaaS, no agent logic of its own — BoxAgent only orchestrates and bridges; the agents themselves are Claude / Codex / etc.
+A single user. Many machines (laptop, desktop, dev box) joined into one network. Many AI agents (Claude CLI, Codex, ACP) on each machine, with admins delegating tasks to specialists. One coherent control plane via Telegram, Web, iOS, or MCP. No multi-tenant, no SaaS, no agent logic of its own — BoxAgent only orchestrates and bridges; the agents themselves are Claude / Codex / etc.
+
+Single-machine, single-agent is just the smallest deployment shape; the full product is distributed and multi-agent by design.
 
 ## Documentation
 
@@ -32,18 +34,24 @@ A single user. Many machines (laptop, desktop, dev box). Many AI agents (Claude 
                           │   (subprocess)   │
                           └──────────────────┘
 
-                Core: a single machine running one or more bots ↑
+           ── one machine running one or more bots ──
 
-  Cluster extension       Workgroup extension
-  ─────────────────       ───────────────────
-  Multiple Core nodes     Admin agent + specialists.
-  joined into one         Admin delegates tasks via MCP;
-  network via devtunnel.  specialists can live on the same
-  Host's web UI shows     machine or another cluster node.
-  all bots across nodes.
+         ╔════════════════════════════════════════════╗
+         ║  Cluster                                   ║
+         ║   Multiple machines joined via devtunnel.  ║
+         ║   Host's web UI federates every node's     ║
+         ║   bots; remote bots are HTTP/SSE-proxied.  ║
+         ╠════════════════════════════════════════════╣
+         ║  Workgroup                                 ║
+         ║   One admin agent + N specialist agents.   ║
+         ║   Admin delegates via MCP; specialists can ║
+         ║   live on any cluster node.                ║
+         ╚════════════════════════════════════════════╝
 ```
 
-**Core** is enough to run BoxAgent on one machine with one or more bots. **Cluster** and **Workgroup** are optional extensions enabled by config.
+Cluster and Workgroup are first-class capabilities — they're what makes BoxAgent a *network* of agents instead of a single bot. The single-machine / single-bot setup at the top of the diagram is the smallest valid deployment, not the default goal.
+
+Internally the code is layered so that the Core boxes (Transports / Router / Backend / Sessions / Scheduler / Watchdog / Gateway) do not depend on `cluster/` or `workgroup/`; the dependency direction is one-way. See `docs/codebase-guide.md`.
 
 ## Quick Start
 
@@ -259,7 +267,7 @@ These tools are injected automatically when a chat-backed turn is running. Isola
 | `codex-cli` | Spawns `codex exec` per turn with `--json` | Persists via `thread_id` across turns and restarts | Restored from `sessions.yaml`; resume via `codex exec resume <thread_id>` | Uses JSONL output parsing; `--dangerously-bypass-approvals-and-sandbox` for non-interactive use |
 | `codex-acp` | Keeps an ACP connection to `codex-acp` and sends `session/prompt` turns | Native continuity while the same ACP connection stays alive | Restores the saved ACP session across gateway restart via `load_session(session_id, cwd)` when possible; `/cancel`, `/new`, or `/compact` still reset into a fresh ACP session | `agent` is currently ignored; skills sync to `{workspace}/.agents/skills/` |
 
-## Cluster (multi-machine, optional)
+## Cluster (multi-machine)
 
 For driving multiple machines from a single browser. One node is the **host** (auto-creates and hosts a [devtunnel](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/)); other nodes are **guests** that dial the host over WebSocket.
 
@@ -282,7 +290,7 @@ Each machine reads the same file; whichever has `node_id == cluster.host` become
 
 Guests do not need their own public exposure (NAT-friendly outbound WS).
 
-## Workgroup (multi-agent, optional)
+## Workgroup (multi-agent)
 
 A workgroup is one **admin** agent plus zero or more **specialist** agents. The user only talks to the admin; the admin delegates tasks to specialists via the `send_to_specialist` MCP tool, specialists return results, the admin replies. Specialists can live on the same machine or on another cluster node.
 
@@ -497,7 +505,7 @@ src/boxagent/
 │   ├── engine.py             # Scheduler loop + catch-up
 │   └── cli.py                # `boxagent schedule` subcommands + business fns
 │
-├── cluster/                # Multi-machine extension (hub-and-spoke)
+├── cluster/                # Multi-machine networking (hub-and-spoke)
 │   ├── tunnel.py             # Devtunnel lifecycle (host)
 │   ├── devtunnel.py
 │   ├── host_election.py      # Cluster role manager (host vs guest)
@@ -508,7 +516,7 @@ src/boxagent/
 │   ├── routes.py             # Cluster HTTP routes (peer/send, guest/ws)
 │   └── topology.py           # Peer descriptors + machine snapshots
 │
-├── workgroup/              # Multi-agent extension (admin + specialists)
+├── workgroup/              # Multi-agent collaboration (admin + specialists)
 │   ├── manager.py            # WorkgroupManager: admin + specialist orchestration
 │   ├── routes.py             # Workgroup HTTP routes (specialist CRUD, send)
 │   ├── channel_adapter.py    # Bridge specialist → admin channel
