@@ -443,7 +443,7 @@ def _parse_bot(
         raise ConfigError(
             f"Bot '{name}': ai_backend '{ai_backend}' has been removed; use 'claude-cli' or 'codex-cli'"
         )
-    if ai_backend not in ("claude-cli", "codex-cli"):
+    if ai_backend not in ("claude-cli", "codex-cli", "agent-sdk-claude"):
         raise ConfigError(f"Bot '{name}': unknown ai_backend '{ai_backend}'")
 
     extra_skill_dirs: list[str] = []

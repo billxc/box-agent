@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 def _supports_persistent_session(ai_backend: str) -> bool:
     """Whether a backend can resume a saved session after restart."""
-    return ai_backend in ("claude-cli", "codex-cli")
+    return ai_backend in ("claude-cli", "codex-cli", "agent-sdk-claude")
 
 
 def _create_backend(bot_cfg: BotConfig, session_id: str | None) -> AgentBackend:
@@ -42,6 +42,17 @@ def _create_backend(bot_cfg: BotConfig, session_id: str | None) -> AgentBackend:
         from boxagent.agent.codex_process import CodexProcess
 
         return CodexProcess(
+            workspace=bot_cfg.workspace,
+            session_id=session_id,
+            model=bot_cfg.model,
+            agent=bot_cfg.agent,
+            bot_name=bot_cfg.name,
+            yolo=bot_cfg.yolo,
+        )
+    if bot_cfg.ai_backend == "agent-sdk-claude":
+        from boxagent.agent.sdk_claude_process import AgentSDKClaude
+
+        return AgentSDKClaude(
             workspace=bot_cfg.workspace,
             session_id=session_id,
             model=bot_cfg.model,
@@ -92,6 +103,7 @@ def sync_skills(
 
     - Claude-style backends: {workspace}/.claude/skills/
     - Codex CLI backend: {workspace}/.agents/skills/
+    - Claude-style backends (claude-cli, agent-sdk-claude): {workspace}/.claude/skills/
     """
     skills_root = ".agents" if ai_backend == "codex-cli" else ".claude"
     skills_dir = Path(workspace) / skills_root / "skills"

@@ -44,7 +44,7 @@ def build_schedule_parser(subparsers) -> None:
     add.add_argument("--mode", default="isolate", choices=["isolate", "append"],
                      help="Execution mode (default: isolate)")
     add.add_argument("--bot", default="", help="Bot name (required for append mode)")
-    add.add_argument("--ai-backend", default="", choices=["", "claude-cli", "codex-cli"], help="Backend override (required for isolate mode)")
+    add.add_argument("--ai-backend", default="", choices=["", "claude-cli", "codex-cli", "agent-sdk-claude"], help="Backend override (required for isolate mode)")
     add.add_argument("--model", default="", help="Model override (empty = default)")
     add.add_argument(
         "--timeout-seconds",
