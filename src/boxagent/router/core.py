@@ -734,62 +734,10 @@ class Router:
 
     def _build_env(self, msg: IncomingMessage) -> AgentEnv:
         """Create an AgentEnv snapshot for this message."""
-        from boxagent.agent_env import AgentEnv, ChannelInfo
-
-        chat_id = msg.chat_id
-        channel = msg.channel_info or ChannelInfo(platform=msg.channel or "unknown")
-
-        if self.pool and chat_id:
-            model = self.pool.get_model(chat_id) or ""
-            workspace = self.pool.get_workspace(chat_id) or self.workspace
-        else:
-            model = getattr(self.cli_process, "model", "") or ""
-            workspace = self.workspace
-
-        telegram_token = self.telegram_token
-        workgroup_role = self.workgroup_role
-
-        running_tasks = self.get_running_tasks() if callable(self.get_running_tasks) else []
-        peers = self.get_peers() if callable(self.get_peers) else []
-
-        return AgentEnv(
-            channel=channel,
-            chat_id=chat_id,
-            user_id=msg.user_id,
-            via_workgroup=msg.via_workgroup,
-            bot_name=self.bot_name,
-            display_name=self.display_name,
-            node_id=self.node_id,
-            workspace=workspace,
-            config_dir=self.config_dir,
-            local_dir=str(self.local_dir) if self.local_dir else "",
-            telegram_token=telegram_token,
-            has_peer_channel=self.has_peer_channel,
-            workgroup_role=workgroup_role,
-            workgroup_agents=tuple(self.workgroup_agents),
-            running_tasks=tuple(running_tasks),
-            peers=tuple(peers),
-            ai_backend=self.ai_backend,
-            model=model,
-            yolo=getattr(self.cli_process, "yolo", False),
-            passthrough=self.passthrough,
-        )
+        from boxagent.router.env_builder import build_env
+        return build_env(msg, self)
 
     def _build_session_context(self, chat_id: str = "", env: AgentEnv | None = None) -> str:
         """Build a one-time context block for the first message of a session."""
-        from boxagent.router.context import build_session_context
-
-        if env is not None:
-            return build_session_context(env=env)
-
-        # Fallback for callers that don't have env yet
-        running_tasks = self.get_running_tasks() if callable(self.get_running_tasks) else []
-        return build_session_context(
-            bot_name=self.bot_name,
-            display_name=self.display_name,
-            node_id=self.node_id,
-            workspace=self.workspace,
-            config_dir=self.config_dir,
-            workgroup_agents=self.workgroup_agents,
-            running_tasks=running_tasks,
-        )
+        from boxagent.router.env_builder import build_session_context
+        return build_session_context(chat_id, self, env=env)
