@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 def _supports_persistent_session(ai_backend: str) -> bool:
     """Whether a backend can resume a saved session after restart."""
-    return ai_backend in ("claude-cli", "codex-cli", "codex-acp")
+    return ai_backend in ("claude-cli", "codex-cli")
 
 
 def _create_backend(bot_cfg: BotConfig, session_id: str | None) -> object:
@@ -37,16 +37,6 @@ def _create_backend(bot_cfg: BotConfig, session_id: str | None) -> object:
     ``boxagent.gateway.ClaudeProcess`` to inject mocks.
     """
     from boxagent import gateway as _gw_pkg
-    if bot_cfg.ai_backend == "codex-acp":
-        from boxagent.agent.acp_process import ACPProcess
-
-        return ACPProcess(
-            workspace=bot_cfg.workspace,
-            session_id=session_id,
-            model=bot_cfg.model,
-            agent=bot_cfg.agent,
-            bot_name=bot_cfg.name,
-        )
     if bot_cfg.ai_backend == "codex-cli":
         from boxagent.agent.codex_process import CodexProcess
 
@@ -100,9 +90,9 @@ def sync_skills(
     """Symlink skill subdirs into the backend-specific skills directory.
 
     - Claude-style backends: {workspace}/.claude/skills/
-    - Codex ACP backend: {workspace}/.agents/skills/
+    - Codex CLI backend: {workspace}/.agents/skills/
     """
-    skills_root = ".agents" if ai_backend in ("codex-acp", "codex-cli") else ".claude"
+    skills_root = ".agents" if ai_backend == "codex-cli" else ".claude"
     skills_dir = Path(workspace) / skills_root / "skills"
     skills_dir.mkdir(parents=True, exist_ok=True)
 

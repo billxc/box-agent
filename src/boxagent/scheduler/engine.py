@@ -100,7 +100,7 @@ def _validate_entry(task_id: str, raw: dict) -> ScheduleTask:
         raise ValueError(f"Schedule '{task_id}': 'bot' is required when mode=append")
 
     ai_backend = raw.get("ai_backend", "")
-    if ai_backend and ai_backend not in ("claude-cli", "codex-cli", "codex-acp"):
+    if ai_backend and ai_backend not in ("claude-cli", "codex-cli"):
         raise ValueError(
             f"Schedule '{task_id}': unknown ai_backend '{ai_backend}'"
         )
@@ -475,13 +475,6 @@ class Scheduler:
                 workspace=workspace,
                 model=task.model,
                 yolo=task.yolo,
-            )
-        elif backend == "codex-acp":
-            from boxagent.agent.acp_process import ACPProcess
-
-            proc = ACPProcess(
-                workspace=workspace,
-                model=task.model,
             )
         else:
             raise ValueError(f"Schedule '{task.id}': unsupported ai_backend '{backend}'")

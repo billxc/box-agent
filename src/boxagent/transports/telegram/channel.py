@@ -259,7 +259,7 @@ class TelegramChannel:
         input: object = None,
         output: object = None,
     ) -> str:
-        """Format richer ACP tool lifecycle updates using the same display modes."""
+        """Format richer tool lifecycle updates using the same display modes."""
         if self.tool_calls_display == "silent":
             return ""
         if self.tool_calls_display == "summary":

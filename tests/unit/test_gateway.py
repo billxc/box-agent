@@ -12,7 +12,8 @@ class TestGateway:
         from boxagent.agent import _supports_persistent_session
 
         assert _supports_persistent_session("claude-cli") is True
-        assert _supports_persistent_session("codex-acp") is True
+        assert _supports_persistent_session("codex-cli") is True
+        assert _supports_persistent_session("unknown") is False
 
     async def test_start_calls_start_bot(self, tmp_path):
         from boxagent.gateway import Gateway
@@ -203,7 +204,7 @@ class TestGateway:
 
         assert gw._scheduler.bot_refs["my-bot"].cli_process is new_cli
 
-    async def test_start_bot_loads_saved_codex_acp_session(self, tmp_path):
+    async def test_start_bot_loads_saved_codex_session(self, tmp_path):
         from boxagent.gateway import Gateway
 
         mock_config = MagicMock()
@@ -212,25 +213,26 @@ class TestGateway:
 
         gw = Gateway(config=mock_config, config_dir=tmp_path)
         gw._storage = MagicMock()
-        gw._storage.load_session.return_value = "saved-acp-session"
+        gw._storage.load_session.return_value = "saved-codex-session"
         gw._start_time = 1.0
 
         bot_cfg = MagicMock()
-        bot_cfg.ai_backend = "codex-acp"
+        bot_cfg.ai_backend = "codex-cli"
         bot_cfg.telegram_token = "123:ABC"
         bot_cfg.allowed_users = [111]
         bot_cfg.workspace = str(tmp_path)
         bot_cfg.display_tool_calls = "summary"
         bot_cfg.model = ""
         bot_cfg.agent = ""
+        bot_cfg.yolo = False
         bot_cfg.extra_skill_dirs = []
 
-        with patch("boxagent.agent.acp_process.ACPProcess") as MockACP, \
+        with patch("boxagent.agent.codex_process.CodexProcess") as MockCodex, \
              patch("boxagent.transports.telegram.TelegramChannel") as MockChan, \
              patch("boxagent.gateway.Router"), \
              patch("boxagent.gateway.Watchdog") as MockWD:
             mock_cli = MagicMock()
-            MockACP.return_value = mock_cli
+            MockCodex.return_value = mock_cli
             MockChan.return_value = AsyncMock()
             mock_wd = MagicMock()
             mock_wd.run_forever = AsyncMock()
@@ -238,8 +240,7 @@ class TestGateway:
 
             await gw._start_bot("my-bot", bot_cfg)
 
-        # First call is the primary backend (with saved session_id)
-        assert MockACP.call_args_list[0].kwargs["session_id"] == "saved-acp-session"
+        assert MockCodex.call_args_list[0].kwargs["session_id"] == "saved-codex-session"
 
     async def test_stop_persists_codex_session_reference(self, tmp_path):
         from boxagent.gateway import Gateway
@@ -260,7 +261,7 @@ class TestGateway:
 
         gw._storage.save_session.assert_called_once_with("test-bot", "sess_123")
 
-    def test_sync_skills_uses_agents_dir_for_codex_acp(self, tmp_path):
+    def test_sync_skills_uses_agents_dir_for_codex_cli(self, tmp_path):
         from boxagent.agent import sync_skills
 
         workspace = tmp_path / "workspace"
@@ -271,7 +272,7 @@ class TestGateway:
         linked = sync_skills(
             str(workspace),
             [str(source_root)],
-            ai_backend="codex-acp",
+            ai_backend="codex-cli",
         )
 
         assert linked == ["demo-skill"]

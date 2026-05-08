@@ -132,7 +132,7 @@ async def cmd_help(
         "/compact — Summarize and start a new session with context\n"
         "/model — Show or switch model (e.g. /model sonnet)\n"
         "/cd — Show or switch workspace (e.g. /cd ~/projects)\n"
-        "/backend — Show or switch AI backend (claude-cli/codex-cli/codex-acp)\n"
+        "/backend — Show or switch AI backend (claude-cli/codex-cli)\n"
         "/status — Show bot state and uptime\n"
         "/cancel — Cancel the current running task\n"
         "/verbose — Cycle tool call display (silent/summary/detailed)\n"

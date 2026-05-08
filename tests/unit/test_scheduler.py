@@ -68,7 +68,7 @@ def test_validate_all_fields():
     task = _validate_entry("full-task", {
         "cron": "30 8 * * 1-5", "prompt": "Weekly report",
         "mode": "isolate", "bot": "ops-bot",
-        "ai_backend": "codex-acp", "model": "gpt-5.4",
+        "ai_backend": "codex-cli", "model": "gpt-5.4",
         "enabled_on_nodes": "server-a", "enabled": False,
     })
     assert task.bot == "ops-bot"
@@ -132,10 +132,10 @@ def test_validate_ai_backend_and_model():
     task = _validate_entry("backend-task", {
         "cron": "0 9 * * *",
         "prompt": "Do it",
-        "ai_backend": "codex-acp",
+        "ai_backend": "codex-cli",
         "model": "gpt-5.4",
     })
-    assert task.ai_backend == "codex-acp"
+    assert task.ai_backend == "codex-cli"
     assert task.model == "gpt-5.4"
 
 
@@ -880,9 +880,9 @@ async def test_execute_once_isolate_uses_requested_backend_and_model(tmp_path):
     sched.default_workspace = "/ba/workspace"
     task = ScheduleTask(
         id="iso", cron="0 9 * * *", prompt="hello",
-        ai_backend="codex-acp", model="gpt-5.4",
+        ai_backend="codex-cli", model="gpt-5.4",
     )
-    with patch("boxagent.agent.acp_process.ACPProcess", FakeACP):
+    with patch("boxagent.agent.codex_process.CodexProcess", FakeACP):
         result = await sched.execute_once(task)
 
     assert result == "done"
@@ -894,7 +894,7 @@ async def test_execute_once_isolate_uses_requested_backend_and_model(tmp_path):
     assert captured["send"]["chat_id"] == ""
     assert captured["send"]["message"] == "hello"
     assert "[BoxAgent Schedule]" in captured["send"]["append_system_prompt"]
-    assert "backend: codex-acp" in captured["send"]["append_system_prompt"]
+    assert "backend: codex-cli" in captured["send"]["append_system_prompt"]
     assert captured["started"] is True
     assert captured["stopped"] is True
 
@@ -953,18 +953,18 @@ def test_build_prompt_injects_schedule_context(tmp_path):
         cron="0 9 * * *",
         prompt="Do work",
         mode="isolate",
-        ai_backend="codex-acp",
+        ai_backend="codex-cli",
         model="gpt-5.4",
         bot="my_test_bot",
     )
 
-    append_system_prompt, user_prompt = sched._build_prompt(task, effective_backend="codex-acp", effective_model="gpt-5.4")
+    append_system_prompt, user_prompt = sched._build_prompt(task, effective_backend="codex-cli", effective_model="gpt-5.4")
 
     assert "[BoxAgent Schedule]" in append_system_prompt
     assert "task: daily-sync" in append_system_prompt
     assert "mode: isolate" in append_system_prompt
     assert "node: my-canary" in append_system_prompt
-    assert "backend: codex-acp" in append_system_prompt
+    assert "backend: codex-cli" in append_system_prompt
     assert "model: gpt-5.4" in append_system_prompt
     assert "workspace: /ba/workspace" in append_system_prompt
     assert "bot: my_test_bot" in append_system_prompt

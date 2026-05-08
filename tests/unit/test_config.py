@@ -203,7 +203,8 @@ class TestLoadConfig:
         cfg = load_config(tmp_path)
         assert cfg.api_port == 9800
 
-    def test_codex_acp_backend_is_accepted(self, tmp_path):
+    def test_codex_acp_backend_is_rejected(self, tmp_path):
+        from boxagent.config import ConfigError
         config = dedent("""\
             global: {}
             bots:
@@ -216,8 +217,8 @@ class TestLoadConfig:
                     allowed_users: [111]
         """)
         (tmp_path / "config.yaml").write_text(config)
-        cfg = load_config(tmp_path)
-        assert cfg.bots["acp-bot"].ai_backend == "codex-acp"
+        with pytest.raises(ConfigError, match="codex-acp"):
+            load_config(tmp_path)
 
     def test_codex_mcp_backend_is_rejected_with_deprecation_message(self, tmp_path):
         config = dedent("""\
@@ -232,7 +233,7 @@ class TestLoadConfig:
                     allowed_users: [111]
         """)
         (tmp_path / "config.yaml").write_text(config)
-        with pytest.raises(ConfigError, match="deprecated and removed"):
+        with pytest.raises(ConfigError, match="codex-mcp"):
             load_config(tmp_path)
 
 

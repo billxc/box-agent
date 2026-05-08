@@ -126,24 +126,6 @@ class TestCodexSystemPrompt:
         assert args[-1] == "-"
 
 
-# ---- ACP system prompt tests ----
-
-class TestACPSystemPrompt:
-    async def test_append_system_prompt_prepended_to_message(self):
-        """ACP send() should prepend append_system_prompt to message in the queue."""
-        from boxagent.agent.acp_process import ACPProcess
-
-        proc = ACPProcess(workspace="/tmp/test")
-        # Directly check the queue tuple
-        done = MagicMock()
-        done.wait = AsyncMock()
-        # We can't easily test _process_queue without full ACP setup,
-        # so verify send() correctly packages append_system_prompt into the queue
-        await proc._queue.put(("msg", AsyncMock(), done, "", "", ""))
-        item = await proc._queue.get()
-        assert len(item) == 6  # (message, callback, done, model, chat_id, append_system_prompt)
-
-
 # ---- Router prompt split tests ----
 
 @pytest.fixture

@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class _ChatState:
-    backend: str = ""             # "claude-cli" / "codex-cli" / "codex-acp"
+    backend: str = ""             # "claude-cli" / "codex-cli"
     session_id: str | None = None
     model: str = ""
     workspace: str = ""

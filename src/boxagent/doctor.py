@@ -92,7 +92,6 @@ _DEPENDENCY_CHECKS = [
     ("npx",             "npx",             None,                False, None,                          None),
     ("claude",          "Claude CLI",      _install_claude_cli, False, "@anthropic-ai/claude-code",   None),
     ("codex",           "Codex CLI",       None,                False, "@openai/codex",               None),
-    ("codex-acp",       "Codex ACP",       None,                False, "@zed-industries/codex-acp",   None),
     ("xc-copilot-api",  "xc-copilot-api",  None,                False, "xc-copilot-api",              None),
 ]
 

@@ -2,7 +2,7 @@
 
 BoxAgent (BA) is a **Personal Agent Network**: one user, multiple machines, multiple AI agents, collaborating with each other and reachable from your phone or browser.
 
-A single user. Many machines (laptop, desktop, dev box) joined into one network. Many AI agents (Claude CLI, Codex, ACP) on each machine, with admins delegating tasks to specialists. One coherent control plane via Telegram, Web, iOS, or MCP. No multi-tenant, no SaaS, no agent logic of its own — BoxAgent only orchestrates and bridges; the agents themselves are Claude / Codex / etc.
+A single user. Many machines (laptop, desktop, dev box) joined into one network. Many AI agents (Claude CLI, Codex) on each machine, with admins delegating tasks to specialists. One coherent control plane via Telegram, Web, iOS, or MCP. No multi-tenant, no SaaS, no agent logic of its own — BoxAgent only orchestrates and bridges; the agents themselves are Claude / Codex / etc.
 
 Single-machine, single-agent is just the smallest deployment shape; the full product is distributed and multi-agent by design.
 
@@ -30,7 +30,7 @@ Single-machine, single-agent is just the smallest deployment shape; the full pro
                           └────────┬─────────┘
                                    ↓
                           ┌──────────────────┐
-                          │   Backend CLI    │   Claude / Codex / ACP
+                          │   Backend CLI    │   Claude / Codex
                           │   (subprocess)   │
                           └──────────────────┘
 
@@ -87,7 +87,7 @@ uv run boxagent doctor --fix
 uv run boxagent
 ```
 
-`doctor --fix` checks and installs: uv, Node.js, Claude CLI, Codex CLI, Codex ACP.
+`doctor --fix` checks and installs: uv, Node.js, Claude CLI, Codex CLI.
 
 For backend auth / API keys, see `docs/auth-api-keys.md`.
 
@@ -124,9 +124,9 @@ global:
 
 bots:
   my-bot:
-    ai_backend: claude-cli       # claude-cli | codex-cli | codex-acp
+    ai_backend: claude-cli       # claude-cli | codex-cli
     model: opus                  # backend-specific model name, passed through as-is
-    agent: ""                    # used by claude-cli; currently ignored by codex-acp
+    agent: ""                    # used by claude-cli; ignored by codex-cli
     workspace: ~/projects
     extra_skill_dirs:
       - ~/code/my-skills
@@ -265,7 +265,6 @@ These tools are injected automatically when a chat-backed turn is running. Isola
 |--------------|---------|--------------------|------------------|-------|
 | `claude-cli` | Spawns `claude` per turn with `--resume` | Persists across turns and gateway restarts | Restored from `sessions.yaml` | `agent` is passed through as `--agent` |
 | `codex-cli` | Spawns `codex exec` per turn with `--json` | Persists via `thread_id` across turns and restarts | Restored from `sessions.yaml`; resume via `codex exec resume <thread_id>` | Uses JSONL output parsing; `--dangerously-bypass-approvals-and-sandbox` for non-interactive use |
-| `codex-acp` | Keeps an ACP connection to `codex-acp` and sends `session/prompt` turns | Native continuity while the same ACP connection stays alive | Restores the saved ACP session across gateway restart via `load_session(session_id, cwd)` when possible; `/cancel`, `/new`, or `/compact` still reset into a fresh ACP session | `agent` is currently ignored; skills sync to `{workspace}/.agents/skills/` |
 
 ## Cluster (multi-machine)
 
@@ -331,7 +330,7 @@ daily-report:
   cron: "0 9 * * *"
   prompt: "Check disk usage and summarize"
   mode: isolate
-  ai_backend: codex-acp
+  ai_backend: codex-cli
   model: gpt-5.4
   timeout_seconds: 1800
   bot: my-bot
@@ -368,7 +367,7 @@ node_overrides:
 | `prompt` | yes | — | Prompt to send to the selected backend |
 | `mode` | no | `isolate` | `isolate` = spawn new process; `append` = send to bot's existing session |
 | `bot` | append only | `""` | Bot selector. In `append` mode it must be the configured bot name. In `isolate` mode it is treated as a Telegram bot id/name from `telegram_bots.yaml`; it is no longer resolved by configured bot name. This affects bot/channel resolution only; isolate workspace still defaults to `<ba-dir>/workspace`. |
-| `ai_backend` | isolate yes | `""` | Backend for isolate schedules: `claude-cli` / `codex-cli` / `codex-acp`. Ignored by `append` mode |
+| `ai_backend` | isolate yes | `""` | Backend for isolate schedules: `claude-cli` / `codex-cli`. Ignored by `append` mode |
 | `model` | isolate yes | `""` | Model for isolate schedules. Ignored by `append` mode |
 | `timeout_seconds` | no | `1800` | Isolate timeout in seconds. On timeout, BoxAgent stops the child process, records a failed run log, and allows later cron ticks to continue |
 | `enabled_on_nodes` | no | `""` | Only run on matching nodes (matches `node_id` from `local.yaml`); accepts string or list |
@@ -481,7 +480,6 @@ src/boxagent/
 │   ├── base_cli.py           # Shared subprocess-per-turn base class
 │   ├── claude_process.py     # Claude CLI backend
 │   ├── codex_process.py      # Codex CLI backend
-│   ├── acp_process.py        # ACP session bridge for codex-acp
 │   └── callback.py           # AgentCallback protocol
 │
 ├── transports/             # External interaction (channels)

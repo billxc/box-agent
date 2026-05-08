@@ -439,11 +439,11 @@ def _parse_bot(
     workspace = str(ws_path)
 
     ai_backend = raw.get("ai_backend", "claude-cli")
-    if ai_backend == "codex-mcp":
+    if ai_backend in ("codex-mcp", "codex-acp"):
         raise ConfigError(
-            f"Bot '{name}': ai_backend 'codex-mcp' has been deprecated and removed; use 'codex-acp' instead"
+            f"Bot '{name}': ai_backend '{ai_backend}' has been removed; use 'claude-cli' or 'codex-cli'"
         )
-    if ai_backend not in ("claude-cli", "codex-cli", "codex-acp"):
+    if ai_backend not in ("claude-cli", "codex-cli"):
         raise ConfigError(f"Bot '{name}': unknown ai_backend '{ai_backend}'")
 
     extra_skill_dirs: list[str] = []

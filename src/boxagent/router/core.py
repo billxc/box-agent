@@ -372,7 +372,7 @@ class Router:
             chat_id, f"Workspace switched: {current} → {new_path}"
         )
 
-    _VALID_BACKENDS = {"claude-cli", "codex-cli", "codex-acp"}
+    _VALID_BACKENDS = {"claude-cli", "codex-cli"}
 
     async def _cmd_backend(self, msg: IncomingMessage):
         """Show or switch the AI backend."""
@@ -413,15 +413,7 @@ class Router:
 
         await old_proc.stop()
 
-        if new_backend == "codex-acp":
-            from boxagent.agent.acp_process import ACPProcess
-
-            new_proc = ACPProcess(
-                workspace=workspace,
-                model=model,
-                agent=agent,
-            )
-        elif new_backend == "codex-cli":
+        if new_backend == "codex-cli":
             from boxagent.agent.codex_process import CodexProcess
 
             new_proc = CodexProcess(

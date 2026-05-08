@@ -101,7 +101,7 @@ def _register_schedule_tools(mcp: FastMCP) -> None:
             prompt: Prompt to send when the schedule fires
             mode: Execution mode - "isolate" (standalone) or "append" (send to bot)
             bot: Bot name (required when mode=append)
-            ai_backend: Backend for isolate mode (claude-cli, codex-cli, codex-acp)
+            ai_backend: Backend for isolate mode (claude-cli, codex-cli)
             model: Model for isolate mode (e.g. sonnet, opus). Empty = default model
         """
         if not _config_dir:
