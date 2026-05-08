@@ -62,7 +62,7 @@ def _resolve_telegram_token(bot_name: str) -> str:
     if cfg and cfg.telegram_token:
         return cfg.telegram_token
     workgroup = _gateway.config.workgroups.get(bot_name)
-    if wg:
+    if workgroup:
         # Workgroup admin bots don't have direct telegram_token;
         # try the telegram_bots mapping.
         return _gateway.config.telegram_bots.get(bot_name, "")
