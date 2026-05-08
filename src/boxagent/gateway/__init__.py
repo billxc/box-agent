@@ -19,6 +19,7 @@ from boxagent.cluster.rpc import ClusterRpcMixin
 from .http_api import HttpApiMixin
 from boxagent.cluster.peer import PeerMixin
 from boxagent.cluster.routes import ClusterRoutesMixin
+from boxagent.cluster.topology import TopologyMixin
 from .workgroup_api import WorkgroupApiMixin
 from boxagent.transports.web.server import WebServerMixin
 
@@ -37,6 +38,7 @@ class Gateway(
     PeerMixin,
     ClusterRoutesMixin,
     ClusterRpcMixin,
+    TopologyMixin,
     _GatewayCore,
 ):
     """Top-level Gateway. State + lifecycle live in ``_GatewayCore``;
