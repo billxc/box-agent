@@ -10,6 +10,8 @@ from pathlib import Path
 import yaml
 
 from boxagent.config import BotConfig, SpecialistConfig, WorkgroupConfig
+from boxagent.agent.backend_factory import create_backend
+from boxagent.agent.workspace import ensure_git_repo, sync_skills
 from boxagent.utils import resolve_boxagent_dir
 from boxagent.workgroup.channel_adapter import (
     NullWorkgroupChannelAdapter,
@@ -104,9 +106,6 @@ class WorkgroupManager:
     _heartbeats: dict[str, HeartbeatManager] = field(default_factory=dict, repr=False)
 
     # Injected by Gateway
-    _create_backend: object = None  # Callable[[BotConfig, str|None], object]
-    _ensure_git_repo: object = None  # Callable[[Path], bool]
-    _sync_skills: object = None      # Callable[[str, list, str], list]
     _peer_provider: object = None    # Callable[[str], list[dict]] — exclude=self_name
 
     # HTTP route adapter — built lazily on first access so the manager and
@@ -130,7 +129,7 @@ class WorkgroupManager:
         save_specialist(self.local_dir, workgroup_name, specialist)
 
     def _make_backend(self, bot_cfg: BotConfig, session_id=None):
-        return self._create_backend(bot_cfg, session_id)
+        return create_backend(bot_cfg, session_id)
 
     def _apply_template_skills(
         self,
@@ -138,7 +137,7 @@ class WorkgroupManager:
         template_info: TemplateInfo,
         ai_backend: str,
     ) -> None:
-        apply_template_skills(workspace, template_info, ai_backend, self._sync_skills)
+        apply_template_skills(workspace, template_info, ai_backend)
 
     def _symlink_template_skills(
         self,
@@ -165,11 +164,11 @@ class WorkgroupManager:
         )
 
         # Prepare workspace BEFORE starting backend
-        if bot_config.workspace and self._ensure_git_repo:
-            self._ensure_git_repo(Path(bot_config.workspace))
+        if bot_config.workspace:
+            ensure_git_repo(Path(bot_config.workspace))
         # User-provided extra_skill_dirs (not subject to template filters).
-        if bot_config.extra_skill_dirs and self._sync_skills:
-            self._sync_skills(bot_config.workspace, bot_config.extra_skill_dirs, bot_config.ai_backend)
+        if bot_config.extra_skill_dirs:
+            sync_skills(bot_config.workspace, bot_config.extra_skill_dirs, bot_config.ai_backend)
         # Template-provided skills (inline + filtered external).
         if template_info is not None:
             self._apply_template_skills(
@@ -265,10 +264,10 @@ class WorkgroupManager:
             logger.info("Workgroup '%s': restored saved specialist '%s'", workgroup_name, specialist_name)
 
         # Prepare admin workspace BEFORE starting backend
-        if admin_ws and self._ensure_git_repo:
-            self._ensure_git_repo(Path(admin_ws))
-        if workgroup_config.extra_skill_dirs and self._sync_skills:
-            self._sync_skills(admin_ws, workgroup_config.extra_skill_dirs, workgroup_config.ai_backend)
+        if admin_ws:
+            ensure_git_repo(Path(admin_ws))
+        if workgroup_config.extra_skill_dirs:
+            sync_skills(admin_ws, workgroup_config.extra_skill_dirs, workgroup_config.ai_backend)
         seed_admin_workspace(admin_ws, workgroup_name)
 
         admin_backend = self._make_backend(admin_bot_cfg)

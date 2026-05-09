@@ -17,6 +17,31 @@ from boxagent.workgroup.heartbeat import HeartbeatManager
 
 
 # ---------------------------------------------------------------------------
+# Module-wide setup: stub the workspace setup helpers so create_specialist
+# tests don't actually spawn backends or write .git skeletons. Per-test
+# overrides set the return value via the ``mock_backend`` fixture.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mock_backend():
+    """A MagicMock that ``create_backend`` will return for the test."""
+    cli = MagicMock()
+    cli.start = MagicMock()
+    return cli
+
+
+@pytest.fixture(autouse=True)
+def _patch_workspace_setup(mock_backend):
+    """Auto-patch backend factory + git skeleton helper inside the workgroup
+    manager module for every test. Tests that need to inspect the backend
+    receive it via the ``mock_backend`` fixture."""
+    with patch("boxagent.workgroup.manager.create_backend", return_value=mock_backend), \
+         patch("boxagent.workgroup.manager.ensure_git_repo"):
+        yield
+
+
+# ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
@@ -192,10 +217,6 @@ class TestCreateSpecialist:
     async def test_creates_specialist(self, tmp_path):
         mgr, workgroup_config = _make_manager(tmp_path)
 
-        mock_cli = MagicMock()
-        mock_cli.start = MagicMock()
-        mgr._create_backend = MagicMock(return_value=mock_cli)
-        mgr._ensure_git_repo = MagicMock()
 
         result = await mgr.create_specialist("test-wg", "new-dev")
         assert result["ok"] is True
@@ -219,10 +240,6 @@ class TestCreateSpecialist:
     async def test_default_workspace(self, tmp_path):
         mgr, workgroup_config = _make_manager(tmp_path)
 
-        mock_cli = MagicMock()
-        mock_cli.start = MagicMock()
-        mgr._create_backend = MagicMock(return_value=mock_cli)
-        mgr._ensure_git_repo = MagicMock()
 
         await mgr.create_specialist("test-wg", "new-dev")
         specialist = workgroup_config.specialists["new-dev"]
@@ -233,10 +250,6 @@ class TestCreateSpecialist:
         mgr, workgroup_config = _make_manager(tmp_path)
         (tmp_path / "local").mkdir(exist_ok=True)
 
-        mock_cli = MagicMock()
-        mock_cli.start = MagicMock()
-        mgr._create_backend = MagicMock(return_value=mock_cli)
-        mgr._ensure_git_repo = MagicMock()
 
         await mgr.create_specialist("test-wg", "new-dev")
 
@@ -467,17 +480,10 @@ def _seed_template(workgroup_dir: Path, name: str, claude_md_body: str = "TEMPLA
 
 
 class TestTemplateIntegration:
-    def _wire_mocks(self, mgr):
-        mock_cli = MagicMock()
-        mock_cli.start = MagicMock()
-        mgr._create_backend = MagicMock(return_value=mock_cli)
-        mgr._ensure_git_repo = MagicMock()
-
     async def test_create_with_template_writes_snapshot_and_appends_prompt(self, tmp_path, monkeypatch):
         # Anchor boxagent_dir to tmp_path so relative path resolution stays inside the test sandbox.
         monkeypatch.setenv("BOX_AGENT_DIR", str(tmp_path))
         mgr, workgroup_config = _make_manager(tmp_path)
-        self._wire_mocks(mgr)
         _seed_template(Path(workgroup_config.workgroup_dir), "planner", "## Planner role\nDecompose tasks.")
 
         result = await mgr.create_specialist(
@@ -500,7 +506,6 @@ class TestTemplateIntegration:
     async def test_create_with_unknown_template_fails(self, tmp_path, monkeypatch):
         monkeypatch.setenv("BOX_AGENT_DIR", str(tmp_path))
         mgr, workgroup_config = _make_manager(tmp_path)
-        self._wire_mocks(mgr)
         result = await mgr.create_specialist(
             "test-wg", "p1", template="does-not-exist",
         )
@@ -512,7 +517,6 @@ class TestTemplateIntegration:
         monkeypatch.setenv("BOX_AGENT_DIR", str(tmp_path))
         (tmp_path / "local").mkdir(exist_ok=True)
         mgr, workgroup_config = _make_manager(tmp_path)
-        self._wire_mocks(mgr)
         _seed_template(Path(workgroup_config.workgroup_dir), "planner")
 
         await mgr.create_specialist(

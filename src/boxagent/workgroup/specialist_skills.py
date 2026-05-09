@@ -1,16 +1,15 @@
 """Workgroup template-skill symlink helpers.
 
 Extracted from WorkgroupManager so the orchestrator stays focused on
-lifecycle. Both helpers operate on a specialist's workspace path and a
-TemplateInfo / sync_skills callable injected from the manager.
+lifecycle.
 """
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Callable
 
+from boxagent.agent.workspace import sync_skills
 from boxagent.workgroup.template_loader import TemplateInfo, filter_skill_subdirs
 
 logger = logging.getLogger(__name__)
@@ -20,7 +19,6 @@ def apply_template_skills(
     workspace: str,
     template_info: TemplateInfo,
     ai_backend: str,
-    sync_skills: Callable[[str, list[str], str], list] | None,
 ) -> None:
     """Symlink template-provided skills into specialist workspace.
 
@@ -28,8 +26,6 @@ def apply_template_skills(
       1. template/skills/    — not subject to allow/block filter
       2. template/extra_skill_dirs.txt entries — filtered by allow/block
     """
-    if not sync_skills:
-        return
     # 1. Inline template skills (symlink each subdir directly).
     if template_info.skills_dir and template_info.skills_dir.is_dir():
         sync_skills(workspace, [str(template_info.skills_dir)], ai_backend)

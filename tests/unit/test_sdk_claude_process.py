@@ -69,7 +69,7 @@ class TestAgentSDKClaude:
 
 class TestFactoryWiring:
     def test_create_backend_dispatches_to_sdk_claude(self):
-        from boxagent.agent.agent_manager import _create_backend
+        from boxagent.agent.backend_factory import create_backend
         from boxagent.agent.sdk_claude_process import AgentSDKClaude
         from boxagent.config import BotConfig
 
@@ -77,7 +77,7 @@ class TestFactoryWiring:
             name="t", ai_backend="agent-sdk-claude",
             workspace="/tmp", model="sonnet",
         )
-        backend = _create_backend(cfg, session_id="s-9")
+        backend = create_backend(cfg, session_id="s-9")
         assert isinstance(backend, AgentSDKClaude)
         assert backend.session_id == "s-9"
         assert backend.workspace == "/tmp"

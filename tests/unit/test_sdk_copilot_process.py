@@ -55,7 +55,7 @@ class TestAgentSDKCopilot:
 
 class TestFactoryWiring:
     def test_create_backend_dispatches_to_sdk_copilot(self):
-        from boxagent.agent.agent_manager import _create_backend
+        from boxagent.agent.backend_factory import create_backend
         from boxagent.agent.sdk_copilot_process import AgentSDKCopilot
         from boxagent.config import BotConfig
 
@@ -63,7 +63,7 @@ class TestFactoryWiring:
             name="t", ai_backend="agent-sdk-copilot",
             workspace="/tmp", model="gpt-5",
         )
-        backend = _create_backend(cfg, session_id="s-9")
+        backend = create_backend(cfg, session_id="s-9")
         assert isinstance(backend, AgentSDKCopilot)
         assert backend.session_id == "s-9"
         assert backend.workspace == "/tmp"

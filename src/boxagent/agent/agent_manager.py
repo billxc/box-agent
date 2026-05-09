@@ -1,12 +1,12 @@
-"""Bot orchestration — backend factory, workspace setup, lifecycle.
-
-Free helpers (`_create_backend`, `_ensure_git_repo`, `sync_skills`,
-`_supports_persistent_session`) are also injected into WorkgroupManager and
-re-exported via ``boxagent.gateway`` for back-compat with tests / commands.
+"""Bot orchestration — per-bot lifecycle.
 
 ``AgentManager`` (composition) owns the per-bot lifecycle. Gateway holds
 one as ``self._bots`` and drives it via ``start_bot`` / ``start_raw_bot``
 / ``restart_bot`` / ``on_backend_switched``.
+
+Backend-factory and workspace helpers live in sibling modules
+(``backend_factory.py`` / ``workspace.py``) — both AgentManager and
+WorkgroupManager import them directly.
 """
 
 import asyncio
@@ -15,8 +15,10 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from boxagent.agent.backend_factory import create_backend
 from boxagent.agent.claude_process import ClaudeProcess
 from boxagent.agent.protocol import AgentBackend
+from boxagent.agent.workspace import ensure_git_repo, sync_skills
 from boxagent.config import AppConfig, BotConfig
 from boxagent.sessions import SessionPool, Storage
 from boxagent.sessions.raw_pool import RawSessionPool
@@ -30,126 +32,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# ── Free helpers (also re-exported via boxagent.gateway for back-compat) ──
-
 def _supports_persistent_session(ai_backend: str) -> bool:
     """Whether a backend can resume a saved session after restart."""
     return ai_backend in (
         "claude-cli", "codex-cli", "agent-sdk-claude", "agent-sdk-copilot",
     )
-
-
-def _create_backend(bot_cfg: BotConfig, session_id: str | None) -> AgentBackend:
-    """Instantiate the AI backend based on config.
-
-    Looks up ``ClaudeProcess`` via ``boxagent.gateway`` so tests can patch
-    ``boxagent.gateway.ClaudeProcess`` to inject mocks.
-    """
-    from boxagent import gateway as _gw_pkg
-    if bot_cfg.ai_backend == "codex-cli":
-        from boxagent.agent.codex_process import CodexProcess
-
-        return CodexProcess(
-            workspace=bot_cfg.workspace,
-            session_id=session_id,
-            model=bot_cfg.model,
-            agent=bot_cfg.agent,
-            bot_name=bot_cfg.name,
-            yolo=bot_cfg.yolo,
-        )
-    if bot_cfg.ai_backend == "agent-sdk-claude":
-        from boxagent.agent.sdk_claude_process import AgentSDKClaude
-
-        return AgentSDKClaude(
-            workspace=bot_cfg.workspace,
-            session_id=session_id,
-            model=bot_cfg.model,
-            agent=bot_cfg.agent,
-            bot_name=bot_cfg.name,
-            yolo=bot_cfg.yolo,
-        )
-    if bot_cfg.ai_backend == "agent-sdk-copilot":
-        from boxagent.agent.sdk_copilot_process import AgentSDKCopilot
-
-        return AgentSDKCopilot(
-            workspace=bot_cfg.workspace,
-            session_id=session_id,
-            model=bot_cfg.model,
-            agent=bot_cfg.agent,
-            bot_name=bot_cfg.name,
-            yolo=bot_cfg.yolo,
-        )
-    return _gw_pkg.ClaudeProcess(
-        workspace=bot_cfg.workspace,
-        session_id=session_id,
-        model=bot_cfg.model,
-        agent=bot_cfg.agent,
-        bot_name=bot_cfg.name,
-        yolo=bot_cfg.yolo,
-    )
-
-
-def _ensure_git_repo(workspace: Path) -> bool:
-    """Ensure workspace is a git repo (minimal skeleton).
-
-    Claude Code uses git root to locate ``.claude/skills/``.  If the
-    workspace lives inside a parent git repo the skills directory won't
-    be found.  Creating a minimal ``.git`` makes the workspace its own
-    git root so skill discovery works correctly.
-
-    Return *True* if a new ``.git`` was created.
-    """
-    workspace = workspace.resolve()
-    workspace.mkdir(parents=True, exist_ok=True)
-    git_dir = workspace / ".git"
-    if git_dir.exists():
-        return False
-    git_dir.mkdir(exist_ok=True)
-    (git_dir / "HEAD").write_text("ref: refs/heads/main\n")
-    (git_dir / "objects").mkdir(exist_ok=True)
-    (git_dir / "refs").mkdir(exist_ok=True)
-    (git_dir / "refs" / "heads").mkdir(exist_ok=True)
-    logger.info("Created minimal .git in %s (Claude Code needs git root to discover skills)", workspace)
-    return True
-
-
-def sync_skills(
-    workspace: str,
-    extra_skill_dirs: list[str],
-    ai_backend: str = "claude-cli",
-) -> list[str]:
-    """Symlink skill subdirs into the backend-specific skills directory.
-
-    - Claude-style backends: {workspace}/.claude/skills/
-    - Codex CLI backend: {workspace}/.agents/skills/
-    - Claude-style backends (claude-cli, agent-sdk-claude): {workspace}/.claude/skills/
-    """
-    skills_root = ".agents" if ai_backend == "codex-cli" else ".claude"
-    skills_dir = Path(workspace) / skills_root / "skills"
-    skills_dir.mkdir(parents=True, exist_ok=True)
-
-    for entry in skills_dir.iterdir():
-        if entry.is_symlink() and not entry.exists():
-            logger.info("Removing broken skill symlink: %s", entry)
-            entry.unlink()
-
-    linked = []
-    for src_dir in extra_skill_dirs:
-        src_path = Path(src_dir).expanduser().resolve()
-        if not src_path.is_dir():
-            logger.warning("Skill dir not found: %s", src_path)
-            continue
-        for child in sorted(src_path.iterdir()):
-            if not child.is_dir():
-                continue
-            link = skills_dir / child.name
-            if link.is_symlink():
-                link.unlink()
-            elif link.exists():
-                continue  # don't overwrite real dirs
-            link.symlink_to(child)
-            linked.append(child.name)
-    return linked
 
 
 # ── Composition: AgentManager ──
@@ -266,12 +153,12 @@ class AgentManager:
             elif isinstance(saved, str):
                 session_id = saved
 
-        backend = _create_backend(bot_cfg, session_id)
+        backend = create_backend(bot_cfg, session_id)
         backend.start()
         self.backends[name] = backend
 
         def _factory():
-            return _create_backend(bot_cfg, None)
+            return create_backend(bot_cfg, None)
 
         pool = SessionPool(
             size=3,
@@ -284,7 +171,7 @@ class AgentManager:
         self.pools[name] = pool
 
         ws_path = Path(bot_cfg.workspace)
-        git_created = _ensure_git_repo(ws_path)
+        git_created = ensure_git_repo(ws_path)
 
         linked: list[str] = []
         if bot_cfg.extra_skill_dirs:
@@ -402,7 +289,7 @@ class AgentManager:
             yolo=True,
             passthrough=True,
         )
-        return _create_backend(cfg, session_id)
+        return create_backend(cfg, session_id)
 
     async def start_raw_bot(self) -> None:
         from boxagent import gateway as _gw_pkg
@@ -476,7 +363,7 @@ class AgentManager:
             except Exception:
                 pass
 
-        new_backend = _create_backend(bot_cfg, session_id)
+        new_backend = create_backend(bot_cfg, session_id)
         new_backend.start()
         self.backends[name] = new_backend
 

@@ -29,7 +29,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from boxagent.agent.agent_manager import AgentManager, _create_backend, _ensure_git_repo, sync_skills
+from boxagent.agent.agent_manager import AgentManager
 from boxagent.cluster.cluster_http_routes import ClusterHttpRoutes
 from boxagent.cluster.cluster_rpc import ClusterRpc
 from boxagent.cluster.peer_service import PeerService
@@ -142,9 +142,6 @@ class _GatewayCore:
                 start_time=self._start_time,
                 storage=self._storage,
                 web_channels=self._web_channels,
-                _create_backend=_create_backend,
-                _ensure_git_repo=_ensure_git_repo,
-                _sync_skills=sync_skills,
                 _peer_provider=self._topology.build_peer_descriptors,
             )
             # Phase 2: topology + peer + web server now see workgroup_mgr.

@@ -9,6 +9,7 @@ existing test_workgroup_integration.py never reaches (it mocks Router itself).
 import asyncio
 import contextlib
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -87,8 +88,15 @@ class FakeCLIProcess:
 # ---------------------------------------------------------------------------
 
 
-def _make_manager(tmp_path: Path) -> tuple[WorkgroupManager, dict[str, FakeCLIProcess]]:
-    """Build a WorkgroupManager with one workgroup + one specialist, web substrate."""
+@contextlib.contextmanager
+def _make_manager(tmp_path: Path):
+    """Build a WorkgroupManager with one workgroup + one specialist, web substrate.
+
+    Yields ``(manager, fakes)``. Patches ``create_backend`` and
+    ``ensure_git_repo`` inside the workgroup manager module for the lifetime
+    of the ``with`` block so ``WorkgroupManager.start_workgroup`` /
+    ``create_specialist`` use ``FakeCLIProcess`` instead of spawning real CLIs.
+    """
 
     specialist_config = SpecialistConfig(
         name="sp1",
@@ -103,12 +111,9 @@ def _make_manager(tmp_path: Path) -> tuple[WorkgroupManager, dict[str, FakeCLIPr
         ai_backend="claude-cli",
         specialists={"sp1": specialist_config},
     )
-    # Workspace dirs
     Path(workgroup_config.admin_workspace).mkdir(parents=True, exist_ok=True)
     Path(specialist_config.workspace).mkdir(parents=True, exist_ok=True)
 
-    # Pool.start() creates `size` processes per bot, so we track ALL fakes
-    # under each bot name and provide a helper to query across them.
     fakes: dict[str, list[FakeCLIProcess]] = {}
 
     def _factory(bot_cfg, session_id=None):
@@ -121,22 +126,20 @@ def _make_manager(tmp_path: Path) -> tuple[WorkgroupManager, dict[str, FakeCLIPr
         fakes.setdefault(bot_cfg.name, []).append(fp)
         return fp
 
-    manager = WorkgroupManager(
-        config={"wg": workgroup_config},
-        config_dir=str(tmp_path / "config"),
-        node_id="test-node",
-        local_dir=tmp_path / "local",
-        start_time=0.0,
-        storage=None,
-    )
-    manager._create_backend = _factory
-    manager._ensure_git_repo = lambda p: True   # no-op
-    manager._sync_skills = lambda *a, **kw: []  # no-op
+    with patch("boxagent.workgroup.manager.create_backend", side_effect=_factory), \
+         patch("boxagent.workgroup.manager.ensure_git_repo"):
+        manager = WorkgroupManager(
+            config={"wg": workgroup_config},
+            config_dir=str(tmp_path / "config"),
+            node_id="test-node",
+            local_dir=tmp_path / "local",
+            start_time=0.0,
+            storage=None,
+        )
+        # Pre-create the WebChannel exactly as Gateway does.
+        manager.web_channels["wg"] = WebChannel(bot_name="wg")
 
-    # Pre-create the WebChannel exactly as Gateway does.
-    manager.web_channels["wg"] = WebChannel(bot_name="wg")
-
-    return manager, fakes
+        yield manager, fakes
 
 
 # ---------------------------------------------------------------------------
@@ -147,80 +150,80 @@ def _make_manager(tmp_path: Path) -> tuple[WorkgroupManager, dict[str, FakeCLIPr
 @pytest.mark.asyncio
 async def test_admin_dispatch_to_specialist_e2e(tmp_path):
     """Admin → specialist over web substrate."""
-    manager, fakes = _make_manager(tmp_path)
+    with _make_manager(tmp_path) as (manager, fakes):
 
-    # Subscribe to the specialist's virtual chat_id BEFORE dispatch so we can
-    # assert the streaming events the admin's web UI would see.
-    web = manager.web_channels["wg"]
-    sp_queue = web.subscribe("wg:sp1")
-    admin_queue = web.subscribe("admin-chat")
+        # Subscribe to the specialist's virtual chat_id BEFORE dispatch so we can
+        # assert the streaming events the admin's web UI would see.
+        web = manager.web_channels["wg"]
+        sp_queue = web.subscribe("wg:sp1")
+        admin_queue = web.subscribe("admin-chat")
 
-    await manager.start_workgroup("wg", manager.config["wg"])
+        await manager.start_workgroup("wg", manager.config["wg"])
 
-    assert "wg" in fakes, "admin backend not created"
-    assert "sp1" in fakes, "specialist backend not created"
-    assert all(fp._started for fp in fakes["wg"]), "admin backends not started"
-    assert all(fp._started for fp in fakes["sp1"]), "specialist backends not started"
+        assert "wg" in fakes, "admin backend not created"
+        assert "sp1" in fakes, "specialist backend not created"
+        assert all(fp._started for fp in fakes["wg"]), "admin backends not started"
+        assert all(fp._started for fp in fakes["sp1"]), "specialist backends not started"
 
-    # Sanity: the adapter is the Web one (not Null) and Routers got the WebChannel.
-    from boxagent.workgroup.channel_adapter import WebWorkgroupAdapter
-    assert isinstance(manager.adapters["wg"], WebWorkgroupAdapter)
-    assert manager.routers["sp1"].channel is web
+        # Sanity: the adapter is the Web one (not Null) and Routers got the WebChannel.
+        from boxagent.workgroup.channel_adapter import WebWorkgroupAdapter
+        assert isinstance(manager.adapters["wg"], WebWorkgroupAdapter)
+        assert manager.routers["sp1"].channel is web
 
-    # The actual call the admin's `send_to_agent` MCP tool makes.
-    result = await manager.send_to_specialist(
-        target="sp1",
-        text="please check the build",
-        from_bot="wg",
-        reply_chat_id="admin-chat",
-    )
-    assert result == {"ok": True, "task_id": "sp1-1", "specialist": "sp1"}
+        # The actual call the admin's `send_to_agent` MCP tool makes.
+        result = await manager.send_to_specialist(
+            target="sp1",
+            text="please check the build",
+            from_bot="wg",
+            reply_chat_id="admin-chat",
+        )
+        assert result == {"ok": True, "task_id": "sp1-1", "specialist": "sp1"}
 
-    # Wait for the background _run task to complete.
-    await asyncio.wait_for(manager.tasks._tasks["sp1-1"], timeout=5.0)
+        # Wait for the background _run task to complete.
+        await asyncio.wait_for(manager.tasks._tasks["sp1-1"], timeout=5.0)
 
-    # 1) Specialist backend received the wrapped prompt.
-    sp_prompts = [p for fp in fakes["sp1"] for p in fp.received_prompts]
-    assert len(sp_prompts) == 1, f"specialist not invoked exactly once: {sp_prompts}"
-    assert "please check the build" in sp_prompts[0]
-    assert "<specialist_response>" in sp_prompts[0]  # SYSTEM wrapper present
+        # 1) Specialist backend received the wrapped prompt.
+        sp_prompts = [p for fp in fakes["sp1"] for p in fp.received_prompts]
+        assert len(sp_prompts) == 1, f"specialist not invoked exactly once: {sp_prompts}"
+        assert "please check the build" in sp_prompts[0]
+        assert "<specialist_response>" in sp_prompts[0]  # SYSTEM wrapper present
 
-    # 2) Specialist's stream events landed on its `wg:sp1` chat for admin web UI.
-    sp_events: list[dict] = []
-    while not sp_queue.empty():
-        sp_events.append(sp_queue.get_nowait())
-    event_types = [e.get("type") for e in sp_events]
-    # The admin's task post (post_task) → "message" with role=user
-    assert "message" in event_types, f"missing post_task user message; got {event_types}"
-    user_msgs = [e for e in sp_events if e.get("type") == "message" and e.get("role") == "user"]
-    assert user_msgs and "please check the build" in user_msgs[0]["text"]
-    # Specialist's actual streaming output.
-    assert "stream_start" in event_types, f"specialist did not stream; got {event_types}"
-    assert "stream_end" in event_types, f"specialist stream not closed; got {event_types}"
+        # 2) Specialist's stream events landed on its `wg:sp1` chat for admin web UI.
+        sp_events: list[dict] = []
+        while not sp_queue.empty():
+            sp_events.append(sp_queue.get_nowait())
+        event_types = [e.get("type") for e in sp_events]
+        # The admin's task post (post_task) → "message" with role=user
+        assert "message" in event_types, f"missing post_task user message; got {event_types}"
+        user_msgs = [e for e in sp_events if e.get("type") == "message" and e.get("role") == "user"]
+        assert user_msgs and "please check the build" in user_msgs[0]["text"]
+        # Specialist's actual streaming output.
+        assert "stream_start" in event_types, f"specialist did not stream; got {event_types}"
+        assert "stream_end" in event_types, f"specialist stream not closed; got {event_types}"
 
-    # 3) Task result recorded.
-    info = manager.tasks._results["sp1-1"]
-    assert info["status"] == "done", info
-    assert info["result"] == "done by sp1"
+        # 3) Task result recorded.
+        info = manager.tasks._results["sp1-1"]
+        assert info["status"] == "done", info
+        assert info["result"] == "done by sp1"
 
-    # 4) Admin received the [TaskResult …] callback message.
-    # send_to_specialist routes it via admin_router.handle_message → real
-    # _dispatch → pool.acquire → backend.send. Aggregate prompts across all
-    # admin pool members.
-    await asyncio.sleep(0)
-    admin_prompts = [p for fp in fakes["wg"] for p in fp.received_prompts]
-    assert any("[TaskResult from sp1]" in p for p in admin_prompts), (
-        f"admin never received task callback; admin_prompts={admin_prompts!r}"
-    )
+        # 4) Admin received the [TaskResult …] callback message.
+        # send_to_specialist routes it via admin_router.handle_message → real
+        # _dispatch → pool.acquire → backend.send. Aggregate prompts across all
+        # admin pool members.
+        await asyncio.sleep(0)
+        admin_prompts = [p for fp in fakes["wg"] for p in fp.received_prompts]
+        assert any("[TaskResult from sp1]" in p for p in admin_prompts), (
+            f"admin never received task callback; admin_prompts={admin_prompts!r}"
+        )
 
-    # 5) Admin's chat got the short notification (notify_admin via WebChannel.send_text).
-    notifications = []
-    while not admin_queue.empty():
-        notifications.append(admin_queue.get_nowait())
-    assert any(
-        n.get("type") == "message" and "[sp1]" in n.get("text", "")
-        for n in notifications
-    ), f"admin chat did not receive notify_admin; got {notifications}"
+        # 5) Admin's chat got the short notification (notify_admin via WebChannel.send_text).
+        notifications = []
+        while not admin_queue.empty():
+            notifications.append(admin_queue.get_nowait())
+        assert any(
+            n.get("type") == "message" and "[sp1]" in n.get("text", "")
+            for n in notifications
+        ), f"admin chat did not receive notify_admin; got {notifications}"
 
 
 # ---------------------------------------------------------------------------
@@ -233,19 +236,19 @@ async def test_admin_env_carries_workgroup_role(tmp_path):
     """Regression: env.is_workgroup_admin must be True for admin's turns,
     otherwise claude_process never injects the /mcp/admin endpoint and the
     admin AI literally has no `send_to_agent` tool — silent failure."""
-    manager, fakes = _make_manager(tmp_path)
-    await manager.start_workgroup("wg", manager.config["wg"])
+    with _make_manager(tmp_path) as (manager, fakes):
+        await manager.start_workgroup("wg", manager.config["wg"])
 
-    # Drive a turn through the admin router with a normal user message.
-    admin_router = manager.routers["wg"]
-    await admin_router.dispatch_sync("hello", "admin-chat", from_bot="user")
+        # Drive a turn through the admin router with a normal user message.
+        admin_router = manager.routers["wg"]
+        await admin_router.dispatch_sync("hello", "admin-chat", from_bot="user")
 
-    envs = [e for fp in fakes["wg"] for e in fp.received_envs]
-    assert envs, "admin backend.send was never called"
-    env = envs[0]
-    assert env is not None, "router did not pass an AgentEnv"
-    assert env.workgroup_role == "admin", f"role lost: {env.workgroup_role!r}"
-    assert env.is_workgroup_admin is True
+        envs = [e for fp in fakes["wg"] for e in fp.received_envs]
+        assert envs, "admin backend.send was never called"
+        env = envs[0]
+        assert env is not None, "router did not pass an AgentEnv"
+        assert env.workgroup_role == "admin", f"role lost: {env.workgroup_role!r}"
+        assert env.is_workgroup_admin is True
 
 
 # ---------------------------------------------------------------------------

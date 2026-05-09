@@ -230,3 +230,20 @@
 src/ 净 -37 行（核心收益在 core.py：-127/+45 = 净 -82）。Gateway.stop() 现在按职责清晰分层：listening ports → host election → scheduler → bots (resources) → workgroup。
 
 **未做（#7）**：WorkgroupManager 接受 `_create_backend / _ensure_git_repo / _sync_skills` 三个 callable —— 改成直接 import 会破 5 处 test_workgroup_integration.py 的 patch 注入点。注入模式本身没坏，只是看起来啰嗦，留给后续。
+
+## 2026-05-09 — 抽出 backend_factory + workspace 模块
+
+`_create_backend` / `_ensure_git_repo` / `sync_skills` 原来挤在 `agent_manager.py`，prefix `_` 是历史遗留（mixin 时代和 BotsMixin 同住）。但它们既不绑定 AgentManager 实例，也被 WorkgroupManager 当 callable 通过 Gateway 转手注入 —— Gateway 完全不该知道这种实现细节。
+
+**拆分**:
+- `boxagent/agent/backend_factory.py` — `create_backend(bot_cfg, sid)`，按 `ai_backend` 分发实例化。`ClaudeProcess` 仍走 `boxagent.gateway.ClaudeProcess` 间接查找以保留 `patch("boxagent.gateway.ClaudeProcess")` 的测试钩子。
+- `boxagent/agent/workspace.py` — `ensure_git_repo(workspace)` + `sync_skills(workspace, dirs, backend)`。Backend-aware 但不绑特定类，仍归 `boxagent/agent/`（不是 `utils/` 因为知道 `.claude` vs `.agents` 的 BoxAgent 协议）。
+
+**连带**:
+1. `agent_manager.py` 直接 import 这俩，方法体里 `_create_backend(...)` → `create_backend(...)`、`_ensure_git_repo` → `ensure_git_repo`。
+2. `WorkgroupManager` 删 3 个 callable 字段（`_create_backend`/`_ensure_git_repo`/`_sync_skills`），改成 module 顶 `from boxagent.agent.backend_factory import create_backend`、`from boxagent.agent.workspace import ensure_git_repo, sync_skills`。`if X and self._foo:` 这种 None-guard 全删（函数永远存在）。
+3. `Gateway` 构造 WorkgroupManager 时砍 3 个 callable 参数 —— 只剩 `_peer_provider`（这是真正需要注入的 topology bound method）。
+4. `specialist_skills.apply_template_skills()` 砍 `sync_skills` 参数，自己 import。
+5. **测试 mock 风格升级**：原本 `mgr._create_backend = MagicMock(...)` 把实例属性当 patch 钩子，重构后失效。改成 `with patch("boxagent.workgroup.manager.create_backend", return_value=...)` —— 标准 module-level patch。`test_workgroup_integration.py` 用 autouse fixture 一次性盖住所有 test；`test_workgroup_web_e2e.py` 把 `_make_manager` 改成 `@contextlib.contextmanager` 版本，调用方 `with _make_manager(tmp_path) as (manager, fakes):` 自动覆盖 patch 生命周期。
+
+**测试**: 826 passed
