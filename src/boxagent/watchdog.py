@@ -3,10 +3,13 @@
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Awaitable, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from boxagent.agent.protocol import AgentBackend
 from boxagent.transports.base import Channel
+
+if TYPE_CHECKING:
+    from boxagent.sessions import SessionPool
 
 logger = logging.getLogger(__name__)
 
@@ -16,11 +19,11 @@ RESTART_DELAY = 5.0  # seconds before restart to avoid rapid loops
 @dataclass
 class Watchdog:
     backend: AgentBackend
-    channel: Channel
+    channel: Channel | None
     chat_id: str
     bot_name: str
     on_restart: Callable[[], Awaitable[None]]
-    pool: object = None  # SessionPool — if set, monitor pool health too
+    pool: "SessionPool | None" = None  # if set, monitor pool health too
     check_interval: float = 30.0
     restart_delay: float = RESTART_DELAY
 

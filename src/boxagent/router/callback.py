@@ -6,6 +6,10 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from boxagent.transports.base import Channel, StreamHandle
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +54,11 @@ class TextCollector:
 @dataclass
 class ChannelCallback:
     """Routes agent streaming output to a channel."""
-    channel: object
+    channel: "Channel"
     chat_id: str
     webhook_name: str = ""  # bot name for webhook-based workgroup replies
-    _handle: object = None
-    _typing_task: object = None
+    _handle: "StreamHandle | None" = None
+    _typing_task: asyncio.Task | None = None
     _closed: bool = False
     collected_text: str = ""
     _stream_lock: asyncio.Lock = field(default_factory=asyncio.Lock)

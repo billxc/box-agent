@@ -220,7 +220,7 @@ class BotRef:
     """Reference to a bot's CLIProcess and channel for scheduler use."""
 
     backend: AgentBackend  # backend process
-    channel: Channel  # primary channel (Telegram for scheduler use)
+    channel: Channel | None  # primary channel (Telegram for scheduler use; None for raw)
     chat_id: str
     ai_backend: str = "claude-cli"
     telegram_token: str = ""

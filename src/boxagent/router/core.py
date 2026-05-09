@@ -27,7 +27,7 @@ from boxagent.router.commands import (
 
 if TYPE_CHECKING:
     from boxagent.agent_env import AgentEnv
-    from boxagent.sessions import SessionPool, Storage
+    from boxagent.sessions import BaseSessionPool, Storage
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class Router:
     channel: Channel | None
     allowed_users: list[int]
     storage: "Storage | None" = None
-    pool: "SessionPool | None" = None  # if set, used for per-chat dispatch
+    pool: "BaseSessionPool | None" = None  # if set, used for per-chat dispatch
     bot_name: str = ""
     display_name: str = ""
     config_dir: str = ""

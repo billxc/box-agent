@@ -22,6 +22,7 @@ from boxagent.agent.workspace import ensure_git_repo, sync_skills
 from boxagent.config import AppConfig, BotConfig
 from boxagent.sessions import SessionPool, Storage
 from boxagent.sessions.raw_pool import RawSessionPool
+from boxagent.transports.base import Channel
 from boxagent.transports.web import WebChannel
 from boxagent.watchdog import Watchdog
 
@@ -69,7 +70,7 @@ class AgentManager:
         self.backends: dict[str, AgentBackend] = {}
         self.pools: dict = {}
         self.routers: dict[str, "Router"] = {}
-        self.channels: dict[str, object] = {}
+        self.channels: dict[str, Channel] = {}
         self.web_channels: dict[str, WebChannel] = {}
         self.watchdogs: dict[str, Watchdog] = {}
         self.watchdog_tasks: list[asyncio.Task] = []
@@ -277,7 +278,7 @@ class AgentManager:
         logger.info("Bot '%s' started (session=%s)", name, session_id)
 
     def _raw_backend_factory(self, *, backend: str, workspace: str, model: str,
-                             session_id: str | None, bot_name: str) -> object:
+                             session_id: str | None, bot_name: str) -> AgentBackend:
         cfg = BotConfig(
             name=bot_name,
             ai_backend=backend or "claude-cli",
