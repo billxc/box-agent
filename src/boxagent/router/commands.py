@@ -14,8 +14,13 @@ import signal
 import sys
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from boxagent.transports.base import IncomingMessage
+from boxagent.transports.base import Channel, IncomingMessage
+
+if TYPE_CHECKING:
+    from boxagent.agent.protocol import AgentBackend
+    from boxagent.sessions import SessionPool, Storage
 
 logger = logging.getLogger(__name__)
 
@@ -45,15 +50,15 @@ TOOL_DISPLAY_MODES = ["silent", "summary", "detailed"]
 async def cmd_status(
     msg: IncomingMessage,
     *,
-    channel: object,
+    channel: "Channel",
     bot_name: str,
-    backend: object,
+    backend: "AgentBackend",
     start_time: float,
     display_name: str = "",
     ai_backend: str = "",
     workspace: str = "",
     node_id: str = "",
-    pool: object = None,
+    pool: "SessionPool | None" = None,
     chat_id: str = "",
 ) -> None:
     uptime = int(time.time() - start_time)
@@ -98,7 +103,7 @@ async def cmd_status(
 async def cmd_start(
     msg: IncomingMessage,
     *,
-    channel: object,
+    channel: "Channel",
     bot_name: str,
 ) -> None:
     name = bot_name or "BoxAgent"
@@ -113,7 +118,7 @@ async def cmd_start(
 async def cmd_version(
     msg: IncomingMessage,
     *,
-    channel: object,
+    channel: "Channel",
 ) -> None:
     from boxagent._version import version_string
     await channel.send_text(msg.chat_id, f"`{version_string()}`")
@@ -122,7 +127,7 @@ async def cmd_version(
 async def cmd_help(
     msg: IncomingMessage,
     *,
-    channel: object,
+    channel: "Channel",
 ) -> None:
     await channel.send_text(
         msg.chat_id,
@@ -153,7 +158,7 @@ async def cmd_help(
 async def cmd_verbose(
     msg: IncomingMessage,
     *,
-    channel: object,
+    channel: "Channel",
 ) -> None:
     current = getattr(channel, "tool_calls_display", "summary")
     try:
@@ -161,7 +166,7 @@ async def cmd_verbose(
     except ValueError:
         idx = 0
     new_mode = TOOL_DISPLAY_MODES[(idx + 1) % len(TOOL_DISPLAY_MODES)]
-    channel.tool_calls_display = new_mode
+    setattr(channel, "tool_calls_display", new_mode)
     await channel.send_text(
         msg.chat_id, f"Tool call display: {new_mode}",
     )
@@ -170,7 +175,7 @@ async def cmd_verbose(
 async def cmd_sync_skills(
     msg: IncomingMessage,
     *,
-    channel: object,
+    channel: "Channel",
     workspace: str,
     extra_skill_dirs: list[str],
     ai_backend: str,
@@ -189,7 +194,7 @@ async def cmd_sync_skills(
 async def cmd_exec(
     msg: IncomingMessage,
     *,
-    channel: object,
+    channel: "Channel",
     workspace: str,
 ) -> None:
     """Execute a shell command and return output."""
@@ -227,6 +232,8 @@ async def cmd_exec(
     # On Windows, run via PowerShell directly (create_subprocess_shell
     # always uses cmd.exe regardless of COMSPEC).
     cwd = workspace if workspace and Path(workspace).is_dir() else None
+    shell_args: list[str] | None
+    shell_env: dict[str, str] | None
     if sys.platform == "win32":
         pwsh = shutil.which("pwsh") or shutil.which("pwsh.exe")
         if not pwsh:
@@ -304,9 +311,10 @@ async def cmd_exec(
             f.write(output)
             tmp_path = f.name
 
-        if hasattr(channel, "_bot"):
+        bot = getattr(channel, "_bot", None)
+        if bot is not None:
             from aiogram.types import FSInputFile
-            await channel._bot.send_document(
+            await bot.send_document(
                 chat_id=int(msg.chat_id),
                 document=FSInputFile(tmp_path),
                 caption=header,
@@ -322,7 +330,7 @@ async def cmd_exec(
 async def cmd_schedule(
     msg: IncomingMessage,
     *,
-    channel: object,
+    channel: "Channel",
     config_dir: str,
     local_dir: Path | None,
     node_id: str = "",
@@ -428,8 +436,8 @@ def _parse_and_add_schedule(arg: str, config_dir: str, add_fn) -> str:
 async def cmd_sessions(
     msg: IncomingMessage,
     *,
-    channel: object,
-    storage: object = None,
+    channel: "Channel",
+    storage: "Storage | None" = None,
     workspace: str = "",
 ) -> None:
     """List unified sessions (Claude CLI + BoxAgent history + Codex)."""
@@ -443,7 +451,7 @@ async def cmd_sessions(
 async def cmd_trust_workspace(
     msg: IncomingMessage,
     *,
-    channel: object,
+    channel: "Channel",
     workspace: str,
 ) -> None:
     """Add the current workspace to Claude's trusted projects in ~/.claude.json."""
