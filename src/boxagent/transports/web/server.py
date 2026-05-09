@@ -83,9 +83,8 @@ class WebServerMixin:
         self._register_web_routes(web_app)
 
         # Hook for non-web routes that share this port (cluster RPC etc.)
-        register_extras = getattr(self, "_register_extra_web_routes", None)
-        if register_extras is not None:
-            register_extras(web_app)
+        if self._cluster_routes is not None:
+            self._cluster_routes.register(web_app)
 
         # Static files last so the catch-all doesn't shadow API routes
         web_static = Path(__file__).parent.parent.parent / "web" / "static"
