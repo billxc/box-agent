@@ -1,9 +1,7 @@
 """Storage helpers — sessions.yaml management."""
 
-import json
 import logging
 import time
-from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -14,15 +12,8 @@ logger = logging.getLogger(__name__)
 class Storage:
     """Manages ~/.boxagent-local/ directory: sessions, PIDs."""
 
-    def __init__(
-        self,
-        local_dir: Path | str,
-        codex_sessions_dir: Path | str | None = None,
-    ):
+    def __init__(self, local_dir: Path | str):
         self._local_dir = Path(local_dir)
-        if codex_sessions_dir is None:
-            codex_sessions_dir = Path.home() / ".codex" / "sessions"
-        self._codex_sessions_dir = Path(codex_sessions_dir).expanduser()
         # main_sessions cache + lock — concurrent heartbeat/peer/webui calls
         # would otherwise race on the yaml file and lose the pinned chat_id.
         import threading
@@ -323,137 +314,4 @@ class Storage:
                     normalized_entry[key] = val
             normalized.append(normalized_entry)
         return normalized
-
-    # --- Codex local session history ---
-
-    def list_codex_session_history(
-        self,
-        workspace: str,
-        limit: int | None = 10,
-    ) -> list[dict[str, object]]:
-        """List Codex rollout files for the current workspace."""
-        sessions_dir = self._codex_sessions_dir
-        if not sessions_dir.exists():
-            return []
-
-        workspace_path = self._normalize_workspace_path(workspace)
-        try:
-            paths = sorted(
-                sessions_dir.rglob("rollout-*.jsonl"),
-                key=lambda path: path.stat().st_mtime,
-                reverse=True,
-            )
-        except OSError:
-            return []
-
-        entries: list[dict[str, object]] = []
-        seen_session_ids: set[str] = set()
-        for path in paths:
-            entry = self._read_codex_session_listing_entry(path)
-            if not entry:
-                continue
-
-            entry_cwd = entry.get("cwd")
-            if workspace_path is not None:
-                if not isinstance(entry_cwd, str):
-                    continue
-                if self._normalize_workspace_path(entry_cwd) != workspace_path:
-                    continue
-
-            session_id = str(entry["session_id"])
-            if session_id in seen_session_ids:
-                continue
-            seen_session_ids.add(session_id)
-            entries.append(entry)
-            if limit is not None and len(entries) >= limit:
-                break
-
-        return entries
-
-    def _read_codex_session_listing_entry(
-        self, path: Path
-    ) -> dict[str, object] | None:
-        session_id = ""
-        cwd = ""
-        preview = ""
-        saved_at = int(path.stat().st_mtime)
-
-        try:
-            with open(path, encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    try:
-                        item = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-
-                    if not isinstance(item, dict):
-                        continue
-
-                    item_type = item.get("type")
-                    if item_type == "session_meta":
-                        payload = item.get("payload")
-                        if not isinstance(payload, dict):
-                            continue
-                        meta_id = payload.get("id")
-                        if isinstance(meta_id, str) and meta_id:
-                            session_id = meta_id
-                        meta_cwd = payload.get("cwd")
-                        if isinstance(meta_cwd, str) and meta_cwd:
-                            cwd = meta_cwd
-                        parsed_saved_at = self._parse_codex_timestamp(
-                            payload.get("timestamp") or item.get("timestamp")
-                        )
-                        if parsed_saved_at is not None:
-                            saved_at = parsed_saved_at
-                    elif item_type == "event_msg":
-                        payload = item.get("payload")
-                        if not isinstance(payload, dict):
-                            continue
-                        if payload.get("type") != "user_message":
-                            continue
-                        message = payload.get("message")
-                        if isinstance(message, str) and message.strip():
-                            preview = self._shorten_codex_message(message, 90)
-
-                    if session_id and preview:
-                        break
-        except OSError:
-            return None
-
-        if not session_id:
-            return None
-
-        entry: dict[str, object] = {
-            "session_id": session_id,
-            "path": str(path),
-            "saved_at": saved_at,
-            "backend": "codex-cli",
-        }
-        if cwd:
-            entry["cwd"] = cwd
-        if preview:
-            entry["preview"] = preview
-        return entry
-
-    def _normalize_workspace_path(self, workspace: str) -> str | None:
-        if not workspace:
-            return None
-        try:
-            return str(Path(workspace).expanduser().resolve())
-        except OSError:
-            return str(Path(workspace).expanduser())
-
-    def _parse_codex_timestamp(self, value: object) -> int | None:
-        if not isinstance(value, str) or not value:
-            return None
-        try:
-            return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp())
-        except ValueError:
-            return None
-
-    def _shorten_codex_message(self, text: str, limit: int) -> str:
-        compact = " ".join(text.split())
-        if len(compact) <= limit:
-            return compact
-        return compact[: max(limit - 3, 1)].rstrip() + "..."
 

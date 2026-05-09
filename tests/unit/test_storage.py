@@ -12,10 +12,7 @@ from boxagent.sessions import Storage
 
 @pytest.fixture
 def storage(tmp_path):
-    return Storage(
-        local_dir=tmp_path / "boxagent-local",
-        codex_sessions_dir=tmp_path / "codex-sessions",
-    )
+    return Storage(local_dir=tmp_path / "boxagent-local")
 
 
 def _write_jsonl(path: Path, records: list[dict]) -> None:
@@ -94,67 +91,10 @@ class TestSessionTracking:
 
 
 class TestCodexSessionTracking:
-    def test_lists_codex_sessions_for_workspace(self, storage, tmp_path):
-        work_a = tmp_path / "workspace-a"
-        work_b = tmp_path / "workspace-b"
-        work_a.mkdir()
-        work_b.mkdir()
-
-        sessions_dir = tmp_path / "codex-sessions" / "2026" / "03" / "22"
-        matching = sessions_dir / "rollout-matching.jsonl"
-        other = sessions_dir / "rollout-other.jsonl"
-
-        _write_jsonl(
-            matching,
-            [
-                {
-                    "type": "session_meta",
-                    "timestamp": "2026-03-22T13:54:18.381Z",
-                    "payload": {
-                        "id": "sess-match",
-                        "timestamp": "2026-03-22T13:54:17.836Z",
-                        "cwd": str(work_a),
-                    },
-                },
-                {
-                    "type": "event_msg",
-                    "payload": {
-                        "type": "user_message",
-                        "message": "fix /cancel creating a new conversation",
-                    },
-                },
-            ],
-        )
-        _write_jsonl(
-            other,
-            [
-                {
-                    "type": "session_meta",
-                    "payload": {
-                        "id": "sess-other",
-                        "timestamp": "2026-03-22T11:00:00.000Z",
-                        "cwd": str(work_b),
-                    },
-                },
-                {
-                    "type": "event_msg",
-                    "payload": {
-                        "type": "user_message",
-                        "message": "this should be filtered out",
-                    },
-                },
-            ],
-        )
-        os.utime(matching, (200, 200))
-        os.utime(other, (100, 100))
-
-        entries = storage.list_codex_session_history(str(work_a))
-
-        assert len(entries) == 1
-        assert entries[0]["session_id"] == "sess-match"
-        assert entries[0]["cwd"] == str(work_a)
-        assert entries[0]["preview"] == "fix /cancel creating a new conversation"
-        assert entries[0]["path"] == str(matching)
+    """Codex session listing moved out of Storage in commit 3 of the
+    history refactor — it's now in :class:`boxagent.history.CodexAgentHistory`.
+    Equivalent coverage lives in tests/unit/test_history.py
+    (TestCodexParsing) and tests/unit/test_codex_history_path.py."""
 
 
 class TestAutoCreateDirs:

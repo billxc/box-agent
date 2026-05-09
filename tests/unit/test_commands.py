@@ -37,7 +37,6 @@ def mock_storage():
     st.clear_session = MagicMock()
     st.save_session = MagicMock()
     st.list_session_history = MagicMock(return_value=[])
-    st.list_codex_session_history = MagicMock(return_value=[])
     return st
 
 

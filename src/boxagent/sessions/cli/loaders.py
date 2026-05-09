@@ -15,6 +15,7 @@ from pathlib import Path
 
 
 CLAUDE_DIR = Path.home() / ".claude"
+CODEX_DIR = Path.home() / ".codex" / "sessions"
 
 
 def _parse_iso_to_ts(iso_str: str) -> int:
@@ -212,44 +213,55 @@ def _load_all_unified_sessions(
                     "bot": str(e.get("bot", "")),
                 }
 
-    # Overlay Codex sessions (if storage available)
-    if storage is not None:
-        try:
-            codex_entries = storage.list_codex_session_history(workspace or "", limit=None)
-        except Exception:
-            codex_entries = []
-        for e in codex_entries:
-            sid = str(e.get("session_id", ""))
-            if not sid:
-                continue
-            if sid in unified:
-                entry = unified[sid]
-                if not entry["backend"] and e.get("backend"):
-                    entry["backend"] = str(e["backend"])
-                if not entry["preview"] and e.get("preview"):
-                    entry["preview"] = str(e["preview"])
-                cwd = str(e.get("cwd", "")) if e.get("cwd") else ""
-                if cwd and not entry["projectPath"]:
-                    entry["projectPath"] = cwd
-                    entry["project"] = Path(cwd).name
-                if e.get("path") and not entry.get("_codex_path"):
-                    entry["_codex_path"] = str(e["path"])
-            else:
-                saved_at = e.get("saved_at")
-                cwd = str(e.get("cwd", "")) if e.get("cwd") else ""
-                unified[sid] = {
-                    "sessionId": sid,
-                    "project": Path(cwd).name if cwd else "",
-                    "projectPath": cwd,
-                    "summary": "",
-                    "firstPrompt": "",
-                    "preview": str(e.get("preview", "")),
-                    "messageCount": 0,
-                    "modified_ts": int(saved_at) if isinstance(saved_at, int | float) else 0,
-                    "backend": str(e.get("backend", "")),
-                    "model": "",
-                    "bot": "",
-                    "_codex_path": str(e.get("path", "")),
-                }
+    # Overlay Codex sessions (sync API on CodexAgentHistory; loaders
+    # is called from inside an already-running event loop in the
+    # sessions_list MCP tool path, so we can't asyncio.run here).
+    try:
+        from boxagent.history.codex import CodexAgentHistory
+        codex_history = CodexAgentHistory(codex_dir=CODEX_DIR)
+        codex_sessions = codex_history.list_sessions_sync(workspace or "")
+    except Exception:
+        codex_sessions = []
+        codex_history = None
+    for s in codex_sessions:
+        sid = s.session_id
+        if not sid:
+            continue
+        # Resolve the file path lazily (only used by grep filter); this
+        # walks the rollout dir, but it's cached during this single call.
+        path = ""
+        if codex_history is not None:
+            try:
+                p = codex_history.get_session_path_sync(sid)
+                if p is not None:
+                    path = str(p)
+            except Exception:
+                pass
+        if sid in unified:
+            entry = unified[sid]
+            if not entry["backend"]:
+                entry["backend"] = "codex-cli"
+            if not entry["preview"] and s.first_user:
+                entry["preview"] = s.first_user
+            if s.cwd and not entry["projectPath"]:
+                entry["projectPath"] = s.cwd
+                entry["project"] = Path(s.cwd).name
+            if path and not entry.get("_codex_path"):
+                entry["_codex_path"] = path
+        else:
+            unified[sid] = {
+                "sessionId": sid,
+                "project": Path(s.cwd).name if s.cwd else "",
+                "projectPath": s.cwd,
+                "summary": "",
+                "firstPrompt": "",
+                "preview": s.first_user,
+                "messageCount": 0,
+                "modified_ts": int(s.last_ts) if s.last_ts else 0,
+                "backend": "codex-cli",
+                "model": "",
+                "bot": "",
+                "_codex_path": path,
+            }
 
     return sorted(unified.values(), key=lambda e: e.get("modified_ts") or 0, reverse=True)

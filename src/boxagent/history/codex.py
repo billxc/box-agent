@@ -54,6 +54,31 @@ class CodexAgentHistory:
     ) -> list[Message]:
         return await asyncio.to_thread(self._read_messages_sync, session_id, project_id)
 
+    # ── Codex-specific extensions (NOT part of AgentHistory protocol) ──
+
+    async def get_session_path(self, session_id: str) -> Path | None:
+        """Return the JSONL rollout file path for a session, or None.
+
+        Used by the ``sessions_list`` tool's ``grep:`` filter, which
+        wants to greppable file paths. Other backends don't expose a
+        single-file abstraction so this is codex-only.
+        """
+        return await asyncio.to_thread(self._find_rollout_for, session_id)
+
+    # ── Sync escape hatches ──
+    # The CodexAgentHistory implementation is entirely synchronous
+    # under the hood (file I/O on the local rollout dir). Sync callers
+    # — like the legacy ``sessions/cli/loaders.py`` driven by the
+    # ``sessions_list`` tool — can use these directly to avoid running
+    # ``asyncio.run`` from within an already-running event loop.
+    # New code should prefer the async API above.
+
+    def list_sessions_sync(self, project_id: str) -> list[SessionInfo]:
+        return self._list_sessions_sync(project_id)
+
+    def get_session_path_sync(self, session_id: str) -> Path | None:
+        return self._find_rollout_for(session_id)
+
     # ── Sync internals ───────────────────────────────────────────
 
     def _list_projects_sync(self) -> list[ProjectInfo]:

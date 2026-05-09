@@ -463,6 +463,13 @@ class TestTruncate:
 
 
 class TestFormatSessionsList:
+    @pytest.fixture(autouse=True)
+    def _isolate_codex(self, tmp_path_factory, monkeypatch):
+        """Point CODEX_DIR at an empty tmp dir so real ~/.codex sessions
+        don't bleed into these claude-focused tests."""
+        empty = tmp_path_factory.mktemp("empty-codex")
+        monkeypatch.setattr("boxagent.sessions.cli.loaders.CODEX_DIR", empty)
+
     def test_no_sessions(self, tmp_path, monkeypatch):
         monkeypatch.setattr("boxagent.sessions.cli.loaders.CLAUDE_DIR", tmp_path)
         result = format_sessions_list()
@@ -618,6 +625,11 @@ class TestFormatSessionsList:
 
 
 class TestSessionsList:
+    @pytest.fixture(autouse=True)
+    def _isolate_codex(self, tmp_path_factory, monkeypatch):
+        empty = tmp_path_factory.mktemp("empty-codex")
+        monkeypatch.setattr("boxagent.sessions.cli.loaders.CODEX_DIR", empty)
+
     def test_no_sessions(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr("boxagent.sessions.cli.loaders.CLAUDE_DIR", tmp_path)
         args = Namespace(query=[], output_json=False, workspace="")
