@@ -252,11 +252,11 @@ class BaseCLIProcess:
 
         logger.debug("%s args: %s", self._backend_label, args)
 
-        env = None
+        proc_env: dict[str, str] | None = None
         extra = self._extra_env(chat_id)
         if extra:
             import os
-            env = {**os.environ, **extra}
+            proc_env = {**os.environ, **extra}
 
         stdin_text = self._stdin_input(message)
         stdin_mode = asyncio.subprocess.PIPE if stdin_text is not None else asyncio.subprocess.DEVNULL
@@ -267,7 +267,7 @@ class BaseCLIProcess:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=self.workspace,
-            env=env,
+            env=proc_env,
             limit=10 * 1024 * 1024,
             start_new_session=(sys.platform != "win32"),
         )
@@ -276,6 +276,7 @@ class BaseCLIProcess:
             self._process.stdin.write(stdin_text.encode())
             self._process.stdin.close()
 
+        assert self._process.stdout is not None  # PIPE ensured above
         async for line in self._process.stdout:
             try:
                 event = json.loads(line)
@@ -291,7 +292,8 @@ class BaseCLIProcess:
 
         stderr_out = b""
         try:
-            stderr_out = await self._process.stderr.read()
+            if self._process.stderr is not None:
+                stderr_out = await self._process.stderr.read()
         except Exception:
             pass
 

@@ -20,6 +20,7 @@ import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from boxagent.cluster.host_election import HostElection
     from boxagent.config import AppConfig
     from boxagent.workgroup import WorkgroupManager
 
@@ -36,10 +37,10 @@ class TopologyService:
         self.config = config
         self.web_channels = web_channels
         # Phase 2 deps
-        self.host_election: object | None = None
+        self.host_election: "HostElection | None" = None
         self.workgroup_mgr: "WorkgroupManager | None" = None
 
-    def set_host_election(self, host_election: object) -> None:
+    def set_host_election(self, host_election: "HostElection") -> None:
         self.host_election = host_election
 
     def set_workgroup_mgr(self, workgroup_mgr: "WorkgroupManager") -> None:

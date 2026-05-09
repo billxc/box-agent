@@ -11,6 +11,12 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from boxagent.router import Router
+    from boxagent.sessions import SessionPool
+    from boxagent.transports.web import WebChannel
 
 logger = logging.getLogger(__name__)
 
@@ -95,14 +101,14 @@ class HeartbeatManager:
     """Manages periodic heartbeat for a workgroup admin."""
 
     workgroup_name: str
-    admin_pool: object  # SessionPool
-    admin_router: object  # Router
+    admin_pool: "SessionPool"
+    admin_router: "Router"
     workspace: str
     interval_seconds: int
     ai_backend: str = "claude-cli"
     model: str = ""
     yolo: bool = False
-    web_channel: object | None = None  # WebChannel — display target for heartbeat banner
+    web_channel: "WebChannel | None" = None  # display target for heartbeat banner
     display_heartbeat: bool = False
     start_time: float = 0.0
     get_running_tasks: object = None  # Callable[[], list[dict]]

@@ -37,11 +37,12 @@ class Watchdog:
                 self.bot_name,
             )
             try:
-                await self.channel.send_text(
-                    self.chat_id,
-                    f"Bot '{self.bot_name}' process died. "
-                    f"Restarting in {self.restart_delay:.0f}s...",
-                )
+                if self.channel is not None and self.chat_id:
+                    await self.channel.send_text(
+                        self.chat_id,
+                        f"Bot '{self.bot_name}' process died. "
+                        f"Restarting in {self.restart_delay:.0f}s...",
+                    )
             except Exception as e:
                 logger.error("Failed to notify about restart: %s", e)
 
@@ -52,7 +53,7 @@ class Watchdog:
         # Check pool processes
         if self.pool:
             restart_dead = getattr(self.pool, "restart_dead", None)
-            if callable(restart_dead):
+            if restart_dead is not None:
                 count = await restart_dead()
                 if count:
                     logger.info("Bot '%s' pool: replaced %d dead process(es)", self.bot_name, count)

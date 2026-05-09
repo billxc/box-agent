@@ -32,6 +32,7 @@ from pathlib import Path
 from boxagent.agent.agent_manager import AgentManager
 from boxagent.cluster.cluster_http_routes import ClusterHttpRoutes
 from boxagent.cluster.cluster_rpc import ClusterRpc
+from boxagent.cluster.host_election import HostElection
 from boxagent.cluster.peer_service import PeerService
 from boxagent.cluster.topology_service import TopologyService
 from boxagent.gateway.http_api_server import HttpApiServer
@@ -54,7 +55,7 @@ class _GatewayCore:
     _storage: Storage | None = field(default=None, repr=False)
     _scheduler: Scheduler | None = field(default=None, repr=False)
     _scheduler_task: asyncio.Task | None = field(default=None, repr=False)
-    _host_election: object | None = field(default=None, repr=False)
+    _host_election: HostElection | None = field(default=None, repr=False)
     _start_time: float = 0.0
     _workgroup_mgr: WorkgroupManager | None = field(default=None, repr=False)
     _bots: AgentManager | None = field(default=None, repr=False)

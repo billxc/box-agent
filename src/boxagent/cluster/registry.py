@@ -7,6 +7,7 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import AsyncIterator
 
@@ -138,7 +139,7 @@ class GuestRegistry:
     # any guest disconnects. Lets the host push a peers_snapshot to all (or just the
     # the changed) guests so each guest learns about the other workgroups in the
     # cluster. None = no push.
-    on_topology_change: object = None  # async Callable[[machine_id|None], None]
+    on_topology_change: Callable[[str | None], Awaitable[None]] | None = None
     # Loopback config so the host can serve guest→host reverse RPCs by re-issuing
     # the request against its own web server (mirrors the guest-side pattern
     # in guest_client._handle_rpc). Injected by gateway after web app starts.
@@ -339,7 +340,7 @@ class GuestRegistry:
                     self.sessions[machine_id] = sess
                     logger.info("guest '%s' connected with %d bot(s)", machine_id, len(bots))
                     await ws.send_json({"type": "welcome"})
-                    if callable(self.on_topology_change):
+                    if self.on_topology_change is not None:
                         try:
                             await self.on_topology_change(machine_id)
                         except Exception as e:
@@ -380,7 +381,7 @@ class GuestRegistry:
                         for b in bots_raw
                         if isinstance(b, dict) and b.get("name")
                     ]
-                    if callable(self.on_topology_change):
+                    if self.on_topology_change is not None:
                         try:
                             await self.on_topology_change(sess.machine_id)
                         except Exception as e:
@@ -398,7 +399,7 @@ class GuestRegistry:
                     "last_seen": time.time(),
                 }
                 logger.info("guest '%s' disconnected", sess.machine_id)
-                if callable(self.on_topology_change):
+                if self.on_topology_change is not None:
                     try:
                         await self.on_topology_change(None)
                     except Exception as e:

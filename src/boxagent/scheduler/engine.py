@@ -594,10 +594,11 @@ class Scheduler:
             effective_model="",
         )
         prompt = f"{append_system_prompt}\n{user_prompt}"
-        await bot_ref.channel.send_text(
-            bot_ref.chat_id,
-            f"🤖【*Append*】*{task.id}*, prompt:\n\n{task.prompt}",
-        )
+        if bot_ref.channel is not None:
+            await bot_ref.channel.send_text(
+                bot_ref.chat_id,
+                f"🤖【*Append*】*{task.id}*, prompt:\n\n{task.prompt}",
+            )
         callback = _SchedulerCallback(
             channel=bot_ref.channel, chat_id=bot_ref.chat_id, task_id=task.id,
         )
@@ -659,7 +660,7 @@ class Scheduler:
         prompt: str,
         output: str = "",
         error: str = "",
-        result: dict | None = None,
+        result: dict | str | None = None,
     ) -> None:
         """Append a scheduler run record to local/schedule-runs/<task>.jsonl."""
         if not self.local_dir:
