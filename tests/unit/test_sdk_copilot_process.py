@@ -94,3 +94,89 @@ class TestFactoryWiring:
         (tmp_path / "config.yaml").write_text(config)
         cfg = load_config(tmp_path)
         assert cfg.bots["cop"].ai_backend == "agent-sdk-copilot"
+
+
+class TestSharedClient:
+    """The CopilotClient subprocess is heavy (~7s spawn, dozens of MB).
+    All AgentSDKCopilot instances share one via refcount-tracked acquire/release."""
+
+    def setup_method(self):
+        # Reset module globals between tests to keep refcount sane.
+        import boxagent.agent.sdk_copilot_process as mod
+        mod._SHARED_CLIENT = None
+        mod._SHARED_REFCOUNT = 0
+        mod._SHARED_LOCK = None
+
+    @pytest.mark.asyncio
+    async def test_acquire_then_release_drops_refcount(self):
+        from unittest.mock import AsyncMock, patch
+        import boxagent.agent.sdk_copilot_process as mod
+
+        fake_client = AsyncMock()
+        with patch.object(mod, "CopilotClient", return_value=fake_client):
+            client = await mod._acquire_shared_client()
+            assert client is fake_client
+            assert mod._SHARED_REFCOUNT == 1
+            fake_client.start.assert_awaited_once()
+
+            await mod._release_shared_client()
+            assert mod._SHARED_REFCOUNT == 0
+            assert mod._SHARED_CLIENT is None
+            fake_client.stop.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_multiple_acquire_share_one_client(self):
+        from unittest.mock import AsyncMock, patch
+        import boxagent.agent.sdk_copilot_process as mod
+
+        fake_client = AsyncMock()
+        with patch.object(mod, "CopilotClient", return_value=fake_client) as MockClient:
+            c1 = await mod._acquire_shared_client()
+            c2 = await mod._acquire_shared_client()
+            c3 = await mod._acquire_shared_client()
+            assert c1 is c2 is c3 is fake_client
+            # Only constructed ONCE, even after 3 acquires.
+            MockClient.assert_called_once()
+            assert mod._SHARED_REFCOUNT == 3
+            fake_client.start.assert_awaited_once()
+
+            # Two releases — still alive, refcount=1
+            await mod._release_shared_client()
+            await mod._release_shared_client()
+            assert mod._SHARED_REFCOUNT == 1
+            fake_client.stop.assert_not_awaited()
+
+            # Final release — stops.
+            await mod._release_shared_client()
+            assert mod._SHARED_REFCOUNT == 0
+            assert mod._SHARED_CLIENT is None
+            fake_client.stop.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_multi_instance_through_backend_lifecycle(self):
+        """Three AgentSDKCopilot.start() + send() → one shared client.
+
+        We don't actually call send (would hit the real CLI); just verify
+        that ensure_started routes through _acquire_shared_client and
+        stop() releases."""
+        from unittest.mock import AsyncMock, patch
+        import boxagent.agent.sdk_copilot_process as mod
+
+        fake_client = AsyncMock()
+        with patch.object(mod, "CopilotClient", return_value=fake_client) as MockClient:
+            backends = [
+                mod.AgentSDKCopilot(workspace="/tmp", bot_name=f"b{i}")
+                for i in range(3)
+            ]
+            for b in backends:
+                b.start()
+                await b._ensure_started()
+
+            MockClient.assert_called_once()
+            assert mod._SHARED_REFCOUNT == 3
+
+            for b in backends:
+                await b.stop()
+
+            assert mod._SHARED_REFCOUNT == 0
+            assert mod._SHARED_CLIENT is None

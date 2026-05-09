@@ -7,11 +7,17 @@ SessionPool unchanged.
 Lifecycle differs slightly from the Claude SDK:
 
 - The Copilot SDK manages a long-lived ``CopilotClient`` (subprocess to
-  the Copilot CLI). We create one client per backend instance and keep
-  it across turns.
+  the Copilot CLI). Spawning it costs ~7s and a couple dozen MB, so
+  every ``AgentSDKCopilot`` instance shares a single class-level client
+  with refcount-tracked stop. SessionPool of size N still spawns N
+  backend instances, each with its own ``CopilotSession``, but they all
+  multiplex over the one CLI subprocess. Probed: one client serves 3
+  concurrent sessions in ~7s wall time vs. ~19s sequential, so the
+  multiplexing isn't a bottleneck.
 - A ``CopilotSession`` is created lazily on the first ``send`` (or
   resumed if ``session_id`` is already set) and kept alive for
-  subsequent turns until ``reset_session`` destroys it.
+  subsequent turns until ``reset_session`` destroys it. The shared
+  client persists.
 
 Both ``CopilotClient.start`` and ``CopilotSession.send`` are async, so
 the synchronous ``AgentBackend.start()`` is a no-op marker — actual
@@ -23,7 +29,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from copilot import CopilotClient, CopilotSession
 from copilot.generated.session_events import (
@@ -55,6 +61,49 @@ def _deny_all(request: Any, invocation: dict[str, str]) -> PermissionRequestResu
     return PermissionRequestResult(kind="deny-once")
 
 
+# ── Shared client (class-level, refcounted) ───────────────────────────
+
+
+_SHARED_CLIENT: CopilotClient | None = None
+_SHARED_REFCOUNT: int = 0
+_SHARED_LOCK: asyncio.Lock | None = None
+
+
+def _shared_lock() -> asyncio.Lock:
+    """Lazy-init asyncio lock — can't create at import time (no event loop)."""
+    global _SHARED_LOCK
+    if _SHARED_LOCK is None:
+        _SHARED_LOCK = asyncio.Lock()
+    return _SHARED_LOCK
+
+
+async def _acquire_shared_client() -> CopilotClient:
+    """Get the shared CopilotClient, spawning it on first use."""
+    global _SHARED_CLIENT, _SHARED_REFCOUNT
+    async with _shared_lock():
+        if _SHARED_CLIENT is None:
+            _SHARED_CLIENT = CopilotClient()
+            await _SHARED_CLIENT.start()
+            logger.info("Started shared CopilotClient (refcount=1)")
+        _SHARED_REFCOUNT += 1
+        return _SHARED_CLIENT
+
+
+async def _release_shared_client() -> None:
+    """Decrement refcount; stop the client when no instance still holds it."""
+    global _SHARED_CLIENT, _SHARED_REFCOUNT
+    async with _shared_lock():
+        _SHARED_REFCOUNT -= 1
+        if _SHARED_REFCOUNT <= 0 and _SHARED_CLIENT is not None:
+            try:
+                await _SHARED_CLIENT.stop()
+            except Exception as e:
+                logger.warning("Shared CopilotClient.stop failed: %s", e)
+            _SHARED_CLIENT = None
+            _SHARED_REFCOUNT = 0
+            logger.info("Stopped shared CopilotClient (refcount=0)")
+
+
 @dataclass
 class AgentSDKCopilot(AgentBackend):
     """GitHub Copilot backend powered by ``github-copilot-sdk``."""
@@ -71,6 +120,7 @@ class AgentSDKCopilot(AgentBackend):
     last_turn_error: str = field(default="", init=False)
 
     _client: CopilotClient | None = field(default=None, init=False, repr=False)
+    _holds_shared: bool = field(default=False, init=False, repr=False)
     _session: CopilotSession | None = field(default=None, init=False, repr=False)
     _started: bool = field(default=False, init=False, repr=False)
     _idle_event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
@@ -88,9 +138,8 @@ class AgentSDKCopilot(AgentBackend):
     # ── Lifecycle ──
 
     def start(self) -> None:
-        """Mark intent to start. The actual ``client.start()`` runs lazily
-        from ``send`` because it is async (and this hook is sync to match
-        the ``AgentBackend`` protocol used by the CLI backends)."""
+        """Mark intent to start. Real work (subprocess spawn) is lazy —
+        on the first ``send`` we acquire the shared client."""
         self._started = True
 
     async def stop(self) -> None:
@@ -101,12 +150,10 @@ class AgentSDKCopilot(AgentBackend):
             except Exception as e:
                 logger.warning("CopilotSession.disconnect failed: %s", e)
             self._session = None
-        if self._client is not None:
-            try:
-                await self._client.stop()
-            except Exception as e:
-                logger.warning("CopilotClient.stop failed: %s", e)
-            self._client = None
+        if self._holds_shared:
+            await _release_shared_client()
+            self._holds_shared = False
+        self._client = None
         self.state = "dead"
 
     # ── Per-turn ──
@@ -203,8 +250,8 @@ class AgentSDKCopilot(AgentBackend):
     async def _ensure_started(self) -> None:
         if self._client is not None:
             return
-        self._client = CopilotClient()
-        await self._client.start()
+        self._client = await _acquire_shared_client()
+        self._holds_shared = True
 
     async def _ensure_session(
         self,
