@@ -109,6 +109,17 @@ class WorkgroupManager:
     _sync_skills: object = None      # Callable[[str, list, str], list]
     _peer_provider: object = None    # Callable[[str], list[dict]] — exclude=self_name
 
+    # HTTP route adapter — built lazily on first access so the manager and
+    # its HTTP surface ship together. Gateway just reads ``mgr.routes``.
+    _routes: object = field(default=None, init=False, repr=False)
+
+    @property
+    def routes(self):
+        from boxagent.workgroup.workgroup_http_routes import WorkgroupHttpRoutes
+        if self._routes is None:
+            self._routes = WorkgroupHttpRoutes(workgroup_mgr=self)
+        return self._routes
+
     def _specialists_file(self) -> Path:
         return specialists_file(self.local_dir)
 

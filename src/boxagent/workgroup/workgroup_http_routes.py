@@ -1,84 +1,28 @@
-"""Workgroup + scheduler HTTP handlers.
+"""Workgroup HTTP handlers — thin adapters around WorkgroupManager.
 
-Composition class. Held by Gateway as ``self._workgroup_routes``.
-Two-phase DI:
+Composition class. Owned by ``WorkgroupManager`` itself (built in
+``__post_init__`` so the manager and its routes ship together). Gateway
+wiring just reads ``workgroup_mgr.routes``; the wiring stays inside the
+workgroup module.
 
-- Phase 1 (ctor): config + config_dir (for schedules.yaml lookup).
-- Phase 2 (setters): ``set_workgroup_mgr`` / ``set_scheduler`` after
-  WorkgroupManager and Scheduler exist.
-
-Public surface: 8 aiohttp handlers registered by HttpApiServer (the
-internal API port). All are normal ``async def handle_*(request)``
-methods — leading underscores dropped vs the old WorkgroupApiMixin.
+Single-phase DI: needs the ``WorkgroupManager`` instance — bind that and
+all 7 handlers can dispatch.
 """
 
-import asyncio
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from aiohttp import web
 
-from boxagent.scheduler import load_schedules
-
 if TYPE_CHECKING:
-    from boxagent.config import AppConfig
-    from boxagent.scheduler import Scheduler
-    from boxagent.workgroup import WorkgroupManager
+    from boxagent.workgroup.manager import WorkgroupManager
 
 logger = logging.getLogger(__name__)
 
 
 class WorkgroupHttpRoutes:
-    def __init__(self, *, config: "AppConfig", config_dir: Path) -> None:
-        self.config = config
-        self.config_dir = config_dir
-        # Phase 2 deps
-        self.workgroup_mgr: "WorkgroupManager | None" = None
-        self.scheduler: "Scheduler | None" = None
-
-    def set_workgroup_mgr(self, workgroup_mgr: "WorkgroupManager") -> None:
+    def __init__(self, *, workgroup_mgr: "WorkgroupManager") -> None:
         self.workgroup_mgr = workgroup_mgr
-
-    def set_scheduler(self, scheduler: "Scheduler") -> None:
-        self.scheduler = scheduler
-
-    async def handle_schedule_run(self, request: web.Request) -> web.Response:
-        """POST /api/schedule/run — execute a schedule once."""
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
-
-        task_id = body.get("id")
-        if not task_id:
-            return web.json_response({"ok": False, "error": "missing 'id'"}, status=400)
-
-        schedules_file = self.config_dir / "schedules.yaml"
-        all_tasks = load_schedules(schedules_file, node_id=self.config.node_id)
-        if task_id not in all_tasks:
-            return web.json_response({"ok": False, "error": f"schedule '{task_id}' not found"}, status=404)
-
-        task = all_tasks[task_id]
-        run_async = body.get("async", False)
-
-        if run_async:
-            asyncio.ensure_future(self._schedule_run_bg(task_id, task))
-            return web.json_response({"ok": True, "status": "scheduled"})
-
-        try:
-            output = await self.scheduler.execute_once(task)
-            return web.json_response({"ok": True, "output": output})
-        except Exception as e:
-            logger.error("API schedule/run '%s' failed: %s", task_id, e)
-            return web.json_response({"ok": False, "error": str(e)}, status=500)
-
-    async def _schedule_run_bg(self, task_id: str, task) -> None:
-        try:
-            await self.scheduler.execute_once(task)
-            logger.info("Async schedule/run '%s' completed", task_id)
-        except Exception as e:
-            logger.error("Async schedule/run '%s' failed: %s", task_id, e)
 
     async def handle_workgroup_send(self, request: web.Request) -> web.Response:
         """POST /api/workgroup/send — dispatch task to a specialist (async)."""

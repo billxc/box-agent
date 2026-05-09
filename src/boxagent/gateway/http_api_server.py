@@ -1,16 +1,16 @@
 """Internal HTTP API + MCP HTTP server.
 
-Composition class. Held by Gateway as ``self._http_server``. Single-phase
-DI: all deps available at start() time.
+Composition class. Held by Gateway as ``self._http_server``. Built late
+in ``Gateway.start()`` (after WorkgroupManager + Scheduler exist) so all
+deps are ready at construction time — single-phase DI, no setters.
 
 Responsibilities:
-- Internal API aiohttp app (port file: api-port.txt) — workgroup + peer
-  HTTP handlers
+- Internal API aiohttp app (port file: api-port.txt) — workgroup +
+  scheduler + peer HTTP handlers
 - MCP streamable-http server (uvicorn, port file: mcp-port.txt)
 
 NOTE: this is an internal port (not the Web UI port). Cluster RPCs that
-guests forward must hit the Web UI port instead — see
-ClusterHttpRoutes.
+guests forward must hit the Web UI port instead — see ClusterHttpRoutes.
 """
 
 import asyncio
@@ -24,6 +24,7 @@ from aiohttp import web
 if TYPE_CHECKING:
     from boxagent.cluster.peer_service import PeerService
     from boxagent.config import AppConfig
+    from boxagent.scheduler.scheduler_http_routes import SchedulerHttpRoutes
     from boxagent.workgroup.workgroup_http_routes import WorkgroupHttpRoutes
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,8 @@ class HttpApiServer:
         config_dir: Path,
         local_dir: Path,
         peer: "PeerService",
-        workgroup_routes: "WorkgroupHttpRoutes",
+        workgroup_routes: "WorkgroupHttpRoutes | None",
+        scheduler_routes: "SchedulerHttpRoutes",
         mcp_gateway_context: object,
     ) -> None:
         self.config = config
@@ -45,7 +47,7 @@ class HttpApiServer:
         self.local_dir = local_dir
         self.peer = peer
         self.workgroup_routes = workgroup_routes
-        # Opaque gateway ref handed to MCP tools as their root context.
+        self.scheduler_routes = scheduler_routes
         self._mcp_gateway_context = mcp_gateway_context
 
         self._runner: web.AppRunner | None = None
@@ -72,15 +74,16 @@ class HttpApiServer:
     async def start(self) -> None:
         """Start the internal HTTP API server (TCP only)."""
         app = web.Application()
-        wg = self.workgroup_routes
-        app.router.add_post("/api/schedule/run", wg.handle_schedule_run)
-        app.router.add_get("/api/workgroup/specialists", wg.handle_list_specialists)
-        app.router.add_get("/api/workgroup/specialist_status", wg.handle_specialist_status)
-        app.router.add_post("/api/workgroup/send", wg.handle_workgroup_send)
-        app.router.add_post("/api/workgroup/create_specialist", wg.handle_create_specialist)
-        app.router.add_post("/api/workgroup/reset_specialist", wg.handle_reset_specialist)
-        app.router.add_post("/api/workgroup/delete_specialist", wg.handle_delete_specialist)
-        app.router.add_post("/api/workgroup/cancel_task", wg.handle_cancel_task)
+        app.router.add_post("/api/schedule/run", self.scheduler_routes.handle_schedule_run)
+        if self.workgroup_routes is not None:
+            wg = self.workgroup_routes
+            app.router.add_get("/api/workgroup/specialists", wg.handle_list_specialists)
+            app.router.add_get("/api/workgroup/specialist_status", wg.handle_specialist_status)
+            app.router.add_post("/api/workgroup/send", wg.handle_workgroup_send)
+            app.router.add_post("/api/workgroup/create_specialist", wg.handle_create_specialist)
+            app.router.add_post("/api/workgroup/reset_specialist", wg.handle_reset_specialist)
+            app.router.add_post("/api/workgroup/delete_specialist", wg.handle_delete_specialist)
+            app.router.add_post("/api/workgroup/cancel_task", wg.handle_cancel_task)
         app.router.add_post("/api/peer/send", self.peer.handle_peer_send)
         # NOTE: /api/wg/peer/recv lives on the Web UI port (see ClusterHttpRoutes)
         # because guest_client forwards RPC frames to the web port.

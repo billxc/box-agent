@@ -199,3 +199,17 @@
 **总结**: 8 个 mixin → 8 个 manager 全部完成。Gateway 继承链从 9 层（8 mixin + _GatewayCore）变成 1 层（_GatewayCore）。每个 manager 的依赖在构造或 setter 中显式声明，不再有 `self.gateway.X` 反查；横向依赖通过 setter 解循环。Gateway 的 `start()` 现在是一份可读的装配清单，先 build managers 再 wire setter。
 
 **遗留**: yait #87（WorkgroupHttpRoutes / SchedulerHttpRoutes 的 wiring 应该回到自己模块内，Gateway 不该 new + setter workgroup 内部组件）。
+
+## 2026-05-09 — Workgroup/Scheduler routes wiring 内化（yait #87）
+
+**问题**: yait #86 第 6 步留的尾巴 — Gateway.start() 自己 new `WorkgroupHttpRoutes` 并 setter 注入 manager + scheduler；`handle_schedule_run` 又是 scheduler 的事，混在 workgroup routes 里只是因为原 mixin 是杂烩。
+
+**改造**:
+1. **`scheduler/scheduler_http_routes.py`** 新文件，class `SchedulerHttpRoutes`，单阶段 ctor 接 `config + config_dir + scheduler`。`_start_scheduler()` 建 Scheduler 后顺手 `self._scheduler_routes = SchedulerHttpRoutes(...)`。
+2. **`WorkgroupManager.routes`** lazy property — 第一次访问时 `WorkgroupHttpRoutes(workgroup_mgr=self)`。Gateway 不再 new、不再 setter。
+3. **`WorkgroupHttpRoutes`** ctor 缩到只接 `workgroup_mgr`，砍掉 `set_workgroup_mgr` / `set_scheduler`、砍掉 `handle_schedule_run` / `_schedule_run_bg`。
+4. **`HttpApiServer`** 构造从 Phase 1 移到 `_start_scheduler()` 之后（所有 deps 就绪），ctor 接 `workgroup_routes=(workgroup_mgr.routes if workgroup_mgr else None)` + `scheduler_routes`。`start()` 里 `if self.workgroup_routes is not None:` 才注册 7 条 workgroup 路由 —— 顺带修了"无 workgroup 配置时调 /api/workgroup/* 会 AttributeError 而非 404"的潜在 bug。
+
+**Gateway.start() 现在关于 workgroup 的代码**: 只有 `WorkgroupManager(...)` 那一行 + 3 处 setter 给别的 manager（topology / peer / web_server，这些是别的 manager 的内部依赖，不是 workgroup 的 wiring）。
+
+**测试**: 824 passed

@@ -18,6 +18,7 @@ def _http_server_from(gw):
         local_dir=gw.local_dir,
         peer=gw._peer,
         workgroup_routes=gw._workgroup_routes,
+        scheduler_routes=gw._scheduler_routes,
         mcp_gateway_context=gw,
     )
 
@@ -338,6 +339,7 @@ class TestGateway:
         gw = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
         gw._peer = MagicMock()
         gw._workgroup_routes = MagicMock()
+        gw._scheduler_routes = MagicMock()
         http_server = _http_server_from(gw)
 
         mock_socket = MagicMock()
@@ -370,6 +372,7 @@ class TestGateway:
         gw = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
         gw._peer = MagicMock()
         gw._workgroup_routes = MagicMock()
+        gw._scheduler_routes = MagicMock()
         http_server = _http_server_from(gw)
 
         with patch.object(web, "TCPSite") as MockTCP, \
@@ -395,6 +398,7 @@ class TestGateway:
         gw = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
         gw._peer = MagicMock()
         gw._workgroup_routes = MagicMock()
+        gw._scheduler_routes = MagicMock()
         http_server = _http_server_from(gw)
 
         port_file = local_dir / "api-port.txt"

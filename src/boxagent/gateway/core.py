@@ -32,8 +32,8 @@ from boxagent.cluster.cluster_rpc import ClusterRpc
 from boxagent.cluster.peer_service import PeerService
 from boxagent.cluster.topology_service import TopologyService
 from boxagent.gateway.http_api_server import HttpApiServer
+from boxagent.scheduler.scheduler_http_routes import SchedulerHttpRoutes
 from boxagent.transports.web.server import WebHttpServer
-from boxagent.workgroup.workgroup_http_routes import WorkgroupHttpRoutes
 from boxagent.transports.web import WebChannel
 from boxagent.cluster import ClusterTunnel, GuestClient, GuestRegistry
 from boxagent.config import AppConfig, node_matches
@@ -84,7 +84,7 @@ class _GatewayCore:
     _peer: PeerService | None = field(default=None, repr=False)
     _cluster_rpc: ClusterRpc | None = field(default=None, repr=False)
     _cluster_routes: ClusterHttpRoutes | None = field(default=None, repr=False)
-    _workgroup_routes: WorkgroupHttpRoutes | None = field(default=None, repr=False)
+    _scheduler_routes: SchedulerHttpRoutes | None = field(default=None, repr=False)
     _http_server: HttpApiServer | None = field(default=None, repr=False)
     _web_server: WebHttpServer | None = field(default=None, repr=False)
 
@@ -136,17 +136,6 @@ class _GatewayCore:
         self._cluster_routes = ClusterHttpRoutes(
             peer=self._peer, cluster_rpc=self._cluster_rpc,
         )
-        self._workgroup_routes = WorkgroupHttpRoutes(
-            config=self.config, config_dir=self.config_dir,
-        )
-        self._http_server = HttpApiServer(
-            config=self.config,
-            config_dir=self.config_dir,
-            local_dir=self.local_dir,
-            peer=self._peer,
-            workgroup_routes=self._workgroup_routes,
-            mcp_gateway_context=self,
-        )
         self._web_server = WebHttpServer(
             config=self.config,
             local_dir=self.local_dir,
@@ -188,10 +177,10 @@ class _GatewayCore:
                 _sync_skills=sync_skills,
                 _peer_provider=self._topology.build_peer_descriptors,
             )
-            # Phase 2: topology + peer + http routes + web server now see workgroup_mgr.
+            # Phase 2: topology + peer + web server now see workgroup_mgr.
+            # (workgroup_mgr.routes ships with the manager; no separate setter.)
             self._topology.set_workgroup_mgr(self._workgroup_mgr)
             self._peer.set_workgroup_mgr(self._workgroup_mgr)
-            self._workgroup_routes.set_workgroup_mgr(self._workgroup_mgr)
             self._web_server.set_workgroup_mgr(self._workgroup_mgr)
             for workgroup_name, workgroup_config in self.config.workgroups.items():
                 if not node_matches(workgroup_config.enabled_on_nodes, self.config.node_id):
@@ -202,7 +191,17 @@ class _GatewayCore:
         # Start scheduler
         self._start_scheduler()
 
-        # Start HTTP API
+        # HttpApiServer needs workgroup_mgr.routes + scheduler_routes — built
+        # now that both upstream deps exist (no Phase-2 setter needed).
+        self._http_server = HttpApiServer(
+            config=self.config,
+            config_dir=self.config_dir,
+            local_dir=self.local_dir,
+            peer=self._peer,
+            workgroup_routes=(self._workgroup_mgr.routes if self._workgroup_mgr else None),
+            scheduler_routes=self._scheduler_routes,
+            mcp_gateway_context=self,
+        )
         await self._http_server.start()
 
         # Cluster: kick off host election (host_priority list determines who
@@ -255,8 +254,12 @@ class _GatewayCore:
         # so restart_bot / on_backend_switched can sync scheduler.bot_refs.
         if self._bots is not None:
             self._bots.set_scheduler(self._scheduler)
-        if self._workgroup_routes is not None:
-            self._workgroup_routes.set_scheduler(self._scheduler)
+        # Build the scheduler's HTTP route adapter alongside the scheduler.
+        self._scheduler_routes = SchedulerHttpRoutes(
+            config=self.config,
+            config_dir=self.config_dir,
+            scheduler=self._scheduler,
+        )
         logger.info("Scheduler started (file=%s)", schedules_file)
 
     @property
