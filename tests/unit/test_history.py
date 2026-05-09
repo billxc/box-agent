@@ -60,16 +60,13 @@ class TestEmptyDirectories:
     """All impls handle missing/empty dirs gracefully (no crash)."""
 
     @pytest.mark.asyncio
-    async def test_claude_missing_dir(self, tmp_path):
-        h = ClaudeAgentHistory(claude_dir=tmp_path / "does-not-exist")
-        assert await h.list_projects() == []
-
-    @pytest.mark.asyncio
-    async def test_claude_empty_dir(self, tmp_path):
-        empty = tmp_path / "claude"
-        empty.mkdir()
-        h = ClaudeAgentHistory(claude_dir=empty)
-        assert await h.list_projects() == []
+    async def test_claude_global_call_does_not_raise(self):
+        """ClaudeAgentHistory uses the SDK directly — no claude_dir arg.
+        We just verify the call returns a list (may be empty if the user
+        has no Claude sessions on this machine)."""
+        h = ClaudeAgentHistory()
+        projects = await h.list_projects()
+        assert isinstance(projects, list)
 
     @pytest.mark.asyncio
     async def test_codex_missing_dir(self, tmp_path):
