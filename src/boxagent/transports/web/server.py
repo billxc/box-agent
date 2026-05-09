@@ -166,7 +166,7 @@ class WebServerMixin:
         if not self._web_authorized(request):
             return self._web_unauthorized()
         bots = []
-        local_mid = self._local_machine_id()
+        local_mid = self._topology.local_machine_id()
         for name, ch in self._web_channels.items():
             cfg = self.config.bots.get(name)
             workgroup = self.config.workgroups.get(name)
@@ -218,15 +218,15 @@ class WebServerMixin:
         if not self._web_authorized(request):
             return self._web_unauthorized()
         if self.guest_registry is not None:
-            return web.json_response({"machines": self._collect_machines()})
-        local_mid = self._local_machine_id()
-        local_role = self._local_role()
+            return web.json_response({"machines": self._topology.collect_machines()})
+        local_mid = self._topology.local_machine_id()
+        local_role = self._topology.local_role()
         machines: list[dict] = [{
             "machine_id": local_mid,
             "online": True,
             "role": local_role,
             "self": True,
-            "bots": self._local_bot_descriptors(),
+            "bots": self._topology.local_bot_descriptors(),
             "last_seen": time.time(),
         }]
         if self.guest_client is not None:
@@ -372,7 +372,7 @@ class WebServerMixin:
         chat_id = str(data.get("chat_id") or "").strip()
         if not bot or not machine:
             return web.json_response({"ok": False, "error": "missing bot/machine"}, status=400)
-        if machine != self._local_machine_id():
+        if machine != self._topology.local_machine_id():
             resp = await self._dispatch_machine_request(
                 machine, "POST", "/api/sessions/set_main", request, body=data,
             )
@@ -389,7 +389,7 @@ class WebServerMixin:
         from boxagent._version import __version__, _git_commit, version_string
 
         local = {
-            "machine_id": self._local_machine_id(),
+            "machine_id": self._topology.local_machine_id(),
             "version": __version__,
             "commit": _git_commit(),
             "version_string": version_string(),
@@ -421,7 +421,7 @@ class WebServerMixin:
         loop = asyncio.get_event_loop()
         loop.call_later(0.2, lambda: os.kill(os.getpid(), _signal.SIGTERM))
         return web.json_response({
-            "ok": True, "restarting": self._local_machine_id(),
+            "ok": True, "restarting": self._topology.local_machine_id(),
             "note": "SIGTERM scheduled in 0.2s; supervisor must relaunch",
         })
 
@@ -452,13 +452,13 @@ class WebServerMixin:
                 results[machine_id] = rpc.get("body") or {"status": rpc.get("status")}
             except Exception as e:
                 results[machine_id] = {"error": str(e)}
-        if include_self and (target_filter is None or self._local_machine_id() in target_filter):
+        if include_self and (target_filter is None or self._topology.local_machine_id() in target_filter):
             import os
             import signal as _signal
             asyncio.get_event_loop().call_later(
                 1.0, lambda: os.kill(os.getpid(), _signal.SIGTERM),
             )
-            results[self._local_machine_id()] = {
+            results[self._topology.local_machine_id()] = {
                 "scheduled": True, "delay_seconds": 1.0,
             }
         return web.json_response({"ok": True, "results": results})
@@ -471,7 +471,7 @@ class WebServerMixin:
         machine = request.query.get("machine", "")
         if not bot or not chat_id or not machine:
             return web.json_response({"ok": False, "error": "missing bot/chat_id/machine"}, status=400)
-        if machine != self._local_machine_id():
+        if machine != self._topology.local_machine_id():
             resp = await self._dispatch_machine_request(machine, "GET", "/api/history", request)
             if resp is not None:
                 return resp
@@ -557,7 +557,7 @@ class WebServerMixin:
         machine = body.get("machine", "")
         if not bot or not chat_id or not text or not machine:
             return web.json_response({"ok": False, "error": "missing bot/chat_id/text/machine"}, status=400)
-        if machine != self._local_machine_id():
+        if machine != self._topology.local_machine_id():
             resp = await self._dispatch_machine_request(machine, "POST", "/api/send", request, body=body)
             if resp is not None:
                 return resp
@@ -579,7 +579,7 @@ class WebServerMixin:
         machine = request.query.get("machine", "")
         if not bot or not chat_id or not machine:
             return web.json_response({"ok": False, "error": "missing bot/chat_id/machine"}, status=400)
-        if machine != self._local_machine_id():
+        if machine != self._topology.local_machine_id():
             resp = await self._dispatch_machine_stream(machine, "/api/stream", request)
             if resp is not None:
                 return resp
@@ -625,7 +625,7 @@ class WebServerMixin:
         machine = request.query.get("machine", "")
         if not machine:
             return web.json_response({"ok": False, "error": "missing machine"}, status=400)
-        if machine != self._local_machine_id():
+        if machine != self._topology.local_machine_id():
             resp = await self._dispatch_machine_request(machine, "GET", "/api/claude/projects", request)
             if resp is not None:
                 return resp
@@ -644,7 +644,7 @@ class WebServerMixin:
         machine = request.query.get("machine", "")
         if not encoded or not machine:
             return web.json_response({"ok": False, "error": "missing project/machine"}, status=400)
-        if machine != self._local_machine_id():
+        if machine != self._topology.local_machine_id():
             resp = await self._dispatch_machine_request(machine, "GET", "/api/claude/sessions", request)
             if resp is not None:
                 return resp
@@ -664,7 +664,7 @@ class WebServerMixin:
         machine = request.query.get("machine", "")
         if not encoded or not sid or not machine:
             return web.json_response({"ok": False, "error": "missing project/session_id/machine"}, status=400)
-        if machine != self._local_machine_id():
+        if machine != self._topology.local_machine_id():
             resp = await self._dispatch_machine_request(machine, "GET", "/api/claude/transcript", request)
             if resp is not None:
                 return resp
@@ -690,7 +690,7 @@ class WebServerMixin:
         backend_override = body.get("backend", "")
         if not bot or not sid or not machine:
             return web.json_response({"ok": False, "error": "missing bot/session_id/machine"}, status=400)
-        if machine != self._local_machine_id():
+        if machine != self._topology.local_machine_id():
             resp = await self._dispatch_machine_request(machine, "POST", "/api/claude/resume", request, body=body)
             if resp is not None:
                 return resp

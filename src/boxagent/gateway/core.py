@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from boxagent.agent.manager import AgentManager, _create_backend, _ensure_git_repo, sync_skills
+from boxagent.cluster.topology import TopologyService
 from boxagent.transports.web import WebChannel
 from boxagent.cluster import ClusterTunnel, GuestClient, GuestRegistry
 from boxagent.config import AppConfig, node_matches
@@ -60,6 +61,7 @@ class _GatewayCore:
     _start_time: float = 0.0
     _workgroup_mgr: WorkgroupManager | None = field(default=None, repr=False)
     _bots: AgentManager | None = field(default=None, repr=False)
+    _topology: TopologyService | None = field(default=None, repr=False)
 
     # Public read-only views into HostElection-owned components. Read sites
     # use these instead of reaching into ``_host_election.registry`` directly,
@@ -82,7 +84,7 @@ class _GatewayCore:
     async def start(self) -> None:
         self._start_time = time.time()
         self._storage = Storage(local_dir=self.local_dir)
-        # Phase 1 of two-phase DI: hand AgentManager its infrastructure
+        # Phase 1: AgentManager + TopologyService get their infrastructure
         # (storage + shared dicts that other managers also read).
         self._bots = AgentManager(
             config=self.config,
@@ -96,6 +98,10 @@ class _GatewayCore:
             web_channels=self._web_channels,
             watchdogs=self._watchdogs,
             watchdog_tasks=self._watchdog_tasks,
+        )
+        self._topology = TopologyService(
+            config=self.config,
+            web_channels=self._web_channels,
         )
         logger.info("Gateway starting (node=%s)", self.config.node_id or "(any)")
 
@@ -125,8 +131,10 @@ class _GatewayCore:
                 _create_backend=_create_backend,
                 _ensure_git_repo=_ensure_git_repo,
                 _sync_skills=sync_skills,
-                _peer_provider=self._build_peer_descriptors,
+                _peer_provider=self._topology.build_peer_descriptors,
             )
+            # Phase 2: topology now sees workgroup_mgr.
+            self._topology.set_workgroup_mgr(self._workgroup_mgr)
             for workgroup_name, workgroup_config in self.config.workgroups.items():
                 if not node_matches(workgroup_config.enabled_on_nodes, self.config.node_id):
                     logger.info("Workgroup '%s' skipped (enabled_on_nodes=%s, current=%s)", workgroup_name, workgroup_config.enabled_on_nodes, self.config.node_id)
@@ -145,9 +153,12 @@ class _GatewayCore:
             from boxagent.cluster.host_election import HostElection
             self._host_election = HostElection(
                 config=self.config,
-                on_topology_change=self._on_topology_change,
-                bot_provider=self._local_bot_descriptors,
+                on_topology_change=self._topology.on_topology_change,
+                bot_provider=self._topology.local_bot_descriptors,
             )
+            # Phase 2: topology can now resolve guest_registry / guest_client
+            # (and thus serve _collect_machines / build_peer_descriptors host data).
+            self._topology.set_host_election(self._host_election)
             await self._host_election.start()
 
         logger.info(
@@ -300,7 +311,6 @@ class _GatewayCore:
 from boxagent.cluster.peer import PeerMixin
 from boxagent.cluster.routes import ClusterRoutesMixin
 from boxagent.cluster.rpc import ClusterRpcMixin
-from boxagent.cluster.topology import TopologyMixin
 from boxagent.gateway.http_api import HttpApiMixin
 from boxagent.transports.web.server import WebServerMixin
 from boxagent.workgroup.routes import WorkgroupApiMixin
@@ -313,7 +323,6 @@ class Gateway(
     PeerMixin,
     ClusterRoutesMixin,
     ClusterRpcMixin,
-    TopologyMixin,
     _GatewayCore,
 ):
     """Top-level Gateway. State + lifecycle live in ``_GatewayCore``;

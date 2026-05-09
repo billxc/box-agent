@@ -326,11 +326,10 @@ def test_build_peer_descriptors_combines_local_and_remote():
     """Replaces the old peers.yaml read. Source = local workgroup_mgr.routers
     + remote guest_registry.list_bots() + offline history. Self is excluded."""
     from boxagent.cluster.registry import RemoteBot, GuestRegistry
+    from boxagent.cluster.topology import TopologyService
     from boxagent.config import AppConfig, WorkgroupConfig
-    from boxagent.gateway import Gateway
 
-    gw = Gateway.__new__(Gateway)
-    gw.config = AppConfig(
+    cfg = AppConfig(
         workgroups={
             "war-room": WorkgroupConfig(name="war-room", display_name="War Room"),
             "war-room-2": WorkgroupConfig(name="war-room-2", display_name="War Room Backup"),
@@ -339,8 +338,6 @@ def test_build_peer_descriptors_combines_local_and_remote():
 
     class _FakeMgr:
         routers = {"war-room": object(), "war-room-2": object()}
-
-    gw._workgroup_mgr = _FakeMgr()
 
     reg = GuestRegistry()
     # Online guest with one workgroup + one regular bot (regular must be excluded)
@@ -354,9 +351,13 @@ def test_build_peer_descriptors_combines_local_and_remote():
         "bots": [{"name": "old-mbp-wg", "display_name": "Old", "kind": "workgroup"}],
         "last_seen": 0,
     }
-    gw._host_election = SimpleNamespace(registry=reg, client=None, tunnel=None)
+    he = SimpleNamespace(registry=reg, client=None, tunnel=None)
 
-    peers = gw._build_peer_descriptors(exclude="war-room")
+    ts = TopologyService(config=cfg, web_channels={})
+    ts.set_workgroup_mgr(_FakeMgr())
+    ts.set_host_election(he)
+
+    peers = ts.build_peer_descriptors(exclude="war-room")
 
     by_name = {p["name"]: p for p in peers}
     assert "war-room" not in by_name, "self must be excluded"
@@ -374,16 +375,16 @@ def test_build_peer_descriptors_combines_local_and_remote():
 def test_build_peer_descriptors_guest_node_returns_local_only():
     """On a guest node guest_registry is None — return local workgroups
     only, until guest→host peer-list RPC lands (yait #67)."""
+    from boxagent.cluster.topology import TopologyService
     from boxagent.config import AppConfig, WorkgroupConfig
-    from boxagent.gateway import Gateway
 
-    gw = Gateway.__new__(Gateway)
-    gw.config = AppConfig(workgroups={
+    cfg = AppConfig(workgroups={
         "guest-wg": WorkgroupConfig(name="guest-wg", display_name="Guest WG"),
     })
-    gw._workgroup_mgr = type("M", (), {"routers": {"guest-wg": object()}})()
-    gw._host_election = None
+    ts = TopologyService(config=cfg, web_channels={})
+    ts.set_workgroup_mgr(type("M", (), {"routers": {"guest-wg": object()}})())
+    # host_election remains None — guest mode
 
-    peers = gw._build_peer_descriptors(exclude="")
+    peers = ts.build_peer_descriptors(exclude="")
     assert [p["name"] for p in peers] == ["guest-wg"]
     assert peers[0]["machine"] == "local"

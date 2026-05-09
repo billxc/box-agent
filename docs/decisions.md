@@ -180,4 +180,6 @@
 
 **进度**: 第 1 个完成 — `BotsMixin` → `AgentManager`。**没保留 shim**：直接删掉 mixin、Gateway 不再继承 `BotsMixin`、`_GatewayCore.start()` 调 `self._bots.start_bot()`。原本 `test_gateway.py` patch `gw._start_bot` 的 5 处改成两种新写法：(a) class-level `patch("boxagent.agent.manager.AgentManager.start_bot", autospec=True)` —— 用来在 `gw.start()` 期间拦截；(b) 直接调用的 3 个 test 通过 helper `_agent_mgr_from(gw)` 显式构造 `AgentManager`，调用其 `start_bot/restart_bot`。迁就测试是反模式 —— shim 本来就要在最后一个 commit 删，提前一步而已。
 
-**接下来**: TopologyService → PeerService → ClusterRpc → ClusterHttpRoutes → WorkgroupHttpRoutes → HttpApiServer → WebHttpServer，各自独立 commit + 全量绿。
+**接下来**: PeerService → ClusterRpc → ClusterHttpRoutes → WorkgroupHttpRoutes → HttpApiServer → WebHttpServer，各自独立 commit + 全量绿。
+
+**第 2 个完成 — `TopologyMixin` → `TopologyService`**：构造时只接 `config + web_channels`；`set_workgroup_mgr` / `set_host_election` 两个 setter 解循环依赖（workgroup_mgr 在 bots 后建、host_election 在最后建）。Gateway.start() 装配顺序：`_topology = TopologyService(...)` → bots 起完 → 建 workgroup_mgr 时把 `topology.build_peer_descriptors` 当 `_peer_provider` 注入 → `topology.set_workgroup_mgr(...)` → 建 HostElection 时同样把 `topology.on_topology_change` / `topology.local_bot_descriptors` 当 callback → `topology.set_host_election(...)`。callable 都是绑定方法，所以 topology 在 setter 调用前已是稳定对象，HostElection 触发回调时 topology 已经看见 host_election，不会出现"半初始化"窗口。19 个外部调用点（web/server.py 14、cluster/rpc.py 2、tests 2、core 3）批量改成 `self._topology.X` —— 没保留 underscore shim。

@@ -25,7 +25,7 @@ class ClusterRpcMixin:
         Guest role: forward via GuestClient (new guest→host RPC); the
         host then dispatches locally or proxies onward to the right guest.
         """
-        if machine == self._local_machine_id():
+        if machine == self._topology.local_machine_id():
             return None
         if self.guest_registry is not None:
             sess = self.guest_registry.get(machine)
@@ -43,7 +43,7 @@ class ClusterRpcMixin:
         request: web.Request,
     ) -> web.StreamResponse | None:
         """Streaming counterpart to `_dispatch_machine_request` for SSE."""
-        if machine == self._local_machine_id():
+        if machine == self._topology.local_machine_id():
             return None
         if self.guest_registry is not None:
             sess = self.guest_registry.get(machine)
