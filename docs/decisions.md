@@ -267,3 +267,31 @@ src/ 净 -37 行（核心收益在 core.py：-127/+45 = 净 -82）。Gateway.sto
 
 **测试**: 826 passed
 **LOC**: src/ 净 -21 行（core.py 净 -18，AgentManager +5，WebHttpServer -2）
+
+## 2026-05-09 — Pyright 接入 + 全量类型清理（225→0）
+
+加 `[tool.pyright]` 配置进 pyproject.toml，basic mode。**初始 225 个错误全部修完**，分 7 个 commit：
+
+| Pass | 文件 | 余下 |
+|---|---|---|
+| 1 | router/core.py | 220→160 |
+| 2 | workgroup/manager.py | 160→139 |
+| 3 | transports/telegram/channel.py | 139→112 |
+| 4 | transports/web/server.py + router/commands.py | 112→56 |
+| 5 | router/callback / agent_manager / scheduler / watchdog | 56→40 |
+| 6 | base_cli / topology / heartbeat / registry | 40→24 |
+| 7 | doctor / sessions / cluster / SDK adapters | 24→0 |
+
+**核心 pattern**：
+- **`object` placeholder 类型** 是 mixin god-class 时代的化石。改成正确的 `Storage | None` / `Channel | None` / `AgentBackend` / `Callable[..., ...]` 后，cascading attribute-access 错误一片消失。
+- **`callable(x)` narrow 不工作**，pyright 看到的还是 `object`；改成 `if x is not None` 配合显式 Callable 类型立刻 narrow。
+- **`bot = self._bot if self._bot else ...`** 不能持续 narrow；改用 `@property` 一次性 raise-if-None 把整个类内部都"已经 narrow"。
+- **真 bug 浮出来的**：
+  - `web/server.py` 的 `_authorized` / `_unauthorized` 方法名跟调用方对不上（mixin 重构遗漏），所有未授权请求会 AttributeError。
+  - `router/context.py` 的 `ai_backend` / `model` kwargs 完全没用 —— 死参数活了。
+  - `sessions/cli/commands.py:sessions_list` 调 `load_config()` 缺必填参数 + 把 AppConfig 当 dict 用。
+  - Telegram `download_file(file.file_path, ...)` 没检查 file_path 可能是 None。
+
+**额外发现**：Telegram channel 的 `_bot: Bot | None` + 17 处 `self._bot.X` 早就有 hidden race，重构成 `@property bot` 后干净了。
+
+**测试**: 826 passed（无回归）。`uv run pyright src/` 现在 0 errors。
