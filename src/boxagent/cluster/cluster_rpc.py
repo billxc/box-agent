@@ -1,15 +1,32 @@
-"""Cluster RPC dispatch — host↔guest proxying for HTTP and SSE."""
+"""Cluster RPC dispatch — host↔guest proxying for HTTP and SSE.
+
+Composition class. Held by Gateway as ``self._cluster_rpc``. Single-phase
+DI: depends only on ``TopologyService`` (which exposes guest_registry +
+guest_client lazily via host_election).
+
+Public surface:
+- ``dispatch_machine_request`` / ``dispatch_machine_stream`` — caller-side
+  helpers used by WebHttpServer to forward HTTP/SSE to a remote machine.
+- ``handle_guest_ws`` — aiohttp handler registered by ClusterHttpRoutes.
+"""
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
 from aiohttp import web
+
+if TYPE_CHECKING:
+    from boxagent.cluster.topology_service import TopologyService
 
 logger = logging.getLogger(__name__)
 
 
-class ClusterRpcMixin:
-    async def _dispatch_machine_request(
+class ClusterRpc:
+    def __init__(self, *, topology: "TopologyService") -> None:
+        self.topology = topology
+
+    async def dispatch_machine_request(
         self,
         machine: str,
         method: str,
@@ -22,40 +39,45 @@ class ClusterRpcMixin:
         continue with its local handling).
 
         Host role: forward via GuestSession (existing host→guest RPC).
-        Guest role: forward via GuestClient (new guest→host RPC); the
+        Guest role: forward via GuestClient (guest→host RPC); the
         host then dispatches locally or proxies onward to the right guest.
         """
-        if machine == self._topology.local_machine_id():
+        if machine == self.topology.local_machine_id():
             return None
-        if self.guest_registry is not None:
-            sess = self.guest_registry.get(machine)
+        guest_registry = self.topology.guest_registry
+        if guest_registry is not None:
+            sess = guest_registry.get(machine)
             if sess is None:
                 return web.json_response({"ok": False, "error": "unknown machine"}, status=404)
             return await self._proxy_to_remote(sess, method, path, request, body=body)
-        if self.guest_client is not None:
-            return await self._proxy_via_host(method, path, request, body=body)
+        guest_client = self.topology.guest_client
+        if guest_client is not None:
+            return await self._proxy_via_host(guest_client, method, path, request, body=body)
         return web.json_response({"ok": False, "error": "no cluster routing available"}, status=503)
 
-    async def _dispatch_machine_stream(
+    async def dispatch_machine_stream(
         self,
         machine: str,
         path: str,
         request: web.Request,
     ) -> web.StreamResponse | None:
-        """Streaming counterpart to `_dispatch_machine_request` for SSE."""
-        if machine == self._topology.local_machine_id():
+        """Streaming counterpart to `dispatch_machine_request` for SSE."""
+        if machine == self.topology.local_machine_id():
             return None
-        if self.guest_registry is not None:
-            sess = self.guest_registry.get(machine)
+        guest_registry = self.topology.guest_registry
+        if guest_registry is not None:
+            sess = guest_registry.get(machine)
             if sess is None:
                 return web.json_response({"ok": False, "error": "unknown machine"}, status=404)
             return await self._proxy_stream_to_remote(sess, path, request)
-        if self.guest_client is not None:
-            return await self._proxy_via_host_stream(path, request)
+        guest_client = self.topology.guest_client
+        if guest_client is not None:
+            return await self._proxy_via_host_stream(guest_client, path, request)
         return web.json_response({"ok": False, "error": "no cluster routing available"}, status=503)
 
     async def _proxy_via_host(
         self,
+        guest_client,
         method: str,
         path: str,
         request: web.Request,
@@ -63,7 +85,7 @@ class ClusterRpcMixin:
     ) -> web.Response:
         """Guest-side: forward an HTTP request to the host over the existing WS."""
         try:
-            result = await self.guest_client.call(
+            result = await guest_client.call(
                 method, path, query=dict(request.query), body=body,
             )
         except asyncio.TimeoutError:
@@ -74,6 +96,7 @@ class ClusterRpcMixin:
 
     async def _proxy_via_host_stream(
         self,
+        guest_client,
         path: str,
         request: web.Request,
     ) -> web.StreamResponse:
@@ -90,7 +113,7 @@ class ClusterRpcMixin:
         await resp.prepare(request)
         await resp.write(b": connected\n\n")
         try:
-            async for data in self.guest_client.call_stream(
+            async for data in guest_client.call_stream(
                 "GET", path, query=dict(request.query),
             ):
                 await resp.write(f"data: {data}\n\n".encode("utf-8"))
@@ -144,11 +167,11 @@ class ClusterRpcMixin:
             pass
         return resp
 
-    async def _handle_guest_ws(self, request: web.Request) -> web.WebSocketResponse:
+    async def handle_guest_ws(self, request: web.Request) -> web.WebSocketResponse:
         """Permanent route — delegates to the GuestRegistry only when this
         node is the active host; otherwise returns 503 so the dialing peer
         falls back / reconnects elsewhere."""
-        registry = self.guest_registry
+        registry = self.topology.guest_registry
         if registry is None:
             return web.json_response(
                 {"ok": False, "error": "not host"}, status=503,

@@ -246,7 +246,7 @@ class WebServerMixin:
         machine = request.query.get("machine", "")
         if not bot or not machine:
             return web.json_response({"ok": False, "error": "missing bot/machine"}, status=400)
-        resp = await self._dispatch_machine_request(machine, "GET", "/api/sessions", request)
+        resp = await self._cluster_rpc.dispatch_machine_request(machine, "GET", "/api/sessions", request)
         if resp is not None:
             return resp
         if bot not in self._web_channels:
@@ -373,7 +373,7 @@ class WebServerMixin:
         if not bot or not machine:
             return web.json_response({"ok": False, "error": "missing bot/machine"}, status=400)
         if machine != self._topology.local_machine_id():
-            resp = await self._dispatch_machine_request(
+            resp = await self._cluster_rpc.dispatch_machine_request(
                 machine, "POST", "/api/sessions/set_main", request, body=data,
             )
             if resp is not None:
@@ -472,7 +472,7 @@ class WebServerMixin:
         if not bot or not chat_id or not machine:
             return web.json_response({"ok": False, "error": "missing bot/chat_id/machine"}, status=400)
         if machine != self._topology.local_machine_id():
-            resp = await self._dispatch_machine_request(machine, "GET", "/api/history", request)
+            resp = await self._cluster_rpc.dispatch_machine_request(machine, "GET", "/api/history", request)
             if resp is not None:
                 return resp
         if bot not in self._web_channels:
@@ -558,7 +558,7 @@ class WebServerMixin:
         if not bot or not chat_id or not text or not machine:
             return web.json_response({"ok": False, "error": "missing bot/chat_id/text/machine"}, status=400)
         if machine != self._topology.local_machine_id():
-            resp = await self._dispatch_machine_request(machine, "POST", "/api/send", request, body=body)
+            resp = await self._cluster_rpc.dispatch_machine_request(machine, "POST", "/api/send", request, body=body)
             if resp is not None:
                 return resp
         ch = self._web_channels.get(bot)
@@ -580,7 +580,7 @@ class WebServerMixin:
         if not bot or not chat_id or not machine:
             return web.json_response({"ok": False, "error": "missing bot/chat_id/machine"}, status=400)
         if machine != self._topology.local_machine_id():
-            resp = await self._dispatch_machine_stream(machine, "/api/stream", request)
+            resp = await self._cluster_rpc.dispatch_machine_stream(machine, "/api/stream", request)
             if resp is not None:
                 return resp
         ch = self._web_channels.get(bot)
@@ -626,7 +626,7 @@ class WebServerMixin:
         if not machine:
             return web.json_response({"ok": False, "error": "missing machine"}, status=400)
         if machine != self._topology.local_machine_id():
-            resp = await self._dispatch_machine_request(machine, "GET", "/api/claude/projects", request)
+            resp = await self._cluster_rpc.dispatch_machine_request(machine, "GET", "/api/claude/projects", request)
             if resp is not None:
                 return resp
         from boxagent.history import get_history
@@ -645,7 +645,7 @@ class WebServerMixin:
         if not encoded or not machine:
             return web.json_response({"ok": False, "error": "missing project/machine"}, status=400)
         if machine != self._topology.local_machine_id():
-            resp = await self._dispatch_machine_request(machine, "GET", "/api/claude/sessions", request)
+            resp = await self._cluster_rpc.dispatch_machine_request(machine, "GET", "/api/claude/sessions", request)
             if resp is not None:
                 return resp
         from boxagent.history import get_history
@@ -665,7 +665,7 @@ class WebServerMixin:
         if not encoded or not sid or not machine:
             return web.json_response({"ok": False, "error": "missing project/session_id/machine"}, status=400)
         if machine != self._topology.local_machine_id():
-            resp = await self._dispatch_machine_request(machine, "GET", "/api/claude/transcript", request)
+            resp = await self._cluster_rpc.dispatch_machine_request(machine, "GET", "/api/claude/transcript", request)
             if resp is not None:
                 return resp
         from boxagent.history import get_history
@@ -691,7 +691,7 @@ class WebServerMixin:
         if not bot or not sid or not machine:
             return web.json_response({"ok": False, "error": "missing bot/session_id/machine"}, status=400)
         if machine != self._topology.local_machine_id():
-            resp = await self._dispatch_machine_request(machine, "POST", "/api/claude/resume", request, body=body)
+            resp = await self._cluster_rpc.dispatch_machine_request(machine, "POST", "/api/claude/resume", request, body=body)
             if resp is not None:
                 return resp
         if bot not in self._web_channels:

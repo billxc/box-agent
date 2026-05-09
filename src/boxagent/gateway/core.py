@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from boxagent.agent.agent_manager import AgentManager, _create_backend, _ensure_git_repo, sync_skills
+from boxagent.cluster.cluster_rpc import ClusterRpc
 from boxagent.cluster.peer_service import PeerService
 from boxagent.cluster.topology_service import TopologyService
 from boxagent.transports.web import WebChannel
@@ -64,6 +65,7 @@ class _GatewayCore:
     _bots: AgentManager | None = field(default=None, repr=False)
     _topology: TopologyService | None = field(default=None, repr=False)
     _peer: PeerService | None = field(default=None, repr=False)
+    _cluster_rpc: ClusterRpc | None = field(default=None, repr=False)
 
     # Public read-only views into HostElection-owned components. Read sites
     # use these instead of reaching into ``_host_election.registry`` directly,
@@ -109,6 +111,7 @@ class _GatewayCore:
             topology=self._topology,
             main_chat_id_provider=self._get_or_create_main_chat_id,
         )
+        self._cluster_rpc = ClusterRpc(topology=self._topology)
         logger.info("Gateway starting (node=%s)", self.config.node_id or "(any)")
 
         # Start Web UI first so the page is reachable while the rest boots.
@@ -316,7 +319,6 @@ class _GatewayCore:
 # ── Gateway: compose mixins on top of _GatewayCore ──
 
 from boxagent.cluster.routes import ClusterRoutesMixin
-from boxagent.cluster.rpc import ClusterRpcMixin
 from boxagent.gateway.http_api import HttpApiMixin
 from boxagent.transports.web.server import WebServerMixin
 from boxagent.workgroup.routes import WorkgroupApiMixin
@@ -327,7 +329,6 @@ class Gateway(
     HttpApiMixin,
     WorkgroupApiMixin,
     ClusterRoutesMixin,
-    ClusterRpcMixin,
     _GatewayCore,
 ):
     """Top-level Gateway. State + lifecycle live in ``_GatewayCore``;

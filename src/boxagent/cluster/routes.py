@@ -22,4 +22,4 @@ class ClusterRoutesMixin:
         """
         web_app.router.add_post("/api/wg/peer/recv", self._peer.handle_wg_peer_recv)
         web_app.router.add_post("/api/peer/send", self._peer.handle_peer_send)
-        web_app.router.add_get("/api/guest/ws", self._handle_guest_ws)
+        web_app.router.add_get("/api/guest/ws", self._cluster_rpc.handle_guest_ws)
