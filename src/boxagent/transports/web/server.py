@@ -1,17 +1,17 @@
 """Web transport — aiohttp server, auth, and route handlers for the Web UI.
 
-Mounted as a mixin on Gateway. Handlers reference Gateway state via ``self``
-(``self._storage``, ``self._web_channels``, ``self.config``, etc.); the mixin
-itself does not own any new state.
+Composition class. Held by Gateway as ``self._web_server``. Two-phase DI:
+
+- Phase 1 (constructor): config + storage + shared dicts + topology +
+  cluster_rpc + cluster_routes (all Phase-1 siblings).
+- Phase 2 (setter): ``set_workgroup_mgr`` after WorkgroupManager exists
+  (used only by ``/api/claude/resume`` to look up specialist pools).
 
 The host's *web* port (default 9292) also carries cluster RPC routes
-(``/api/peer/send``, ``/api/wg/peer/recv``, ``/api/guest/ws``) — those are
-registered by the Gateway via ``_register_extra_web_routes`` on the same
-aiohttp app, since the rest of the cluster code already targets that port.
+(``/api/peer/send``, ``/api/wg/peer/recv``, ``/api/guest/ws``); those are
+mounted by ``ClusterHttpRoutes.register`` on the same aiohttp app, since
+the rest of the cluster code already targets that port.
 """
-
-from dataclasses import asdict
-
 
 def _project_to_dict(p) -> dict:
     """Serialise a ``boxagent.history.ProjectInfo`` for the Web UI.
@@ -72,19 +72,53 @@ from aiohttp import web
 logger = logging.getLogger(__name__)
 
 
-class WebServerMixin:
+class WebHttpServer:
+    def __init__(
+        self,
+        *,
+        config,
+        local_dir: Path,
+        storage,
+        web_channels: dict,
+        pools: dict,
+        session_meta_cache: dict,
+        topology,
+        cluster_rpc,
+        cluster_routes,
+    ) -> None:
+        self.config = config
+        self.local_dir = local_dir
+        self.storage = storage
+        self.web_channels = web_channels
+        self.pools = pools
+        self.session_meta_cache = session_meta_cache
+        self.topology = topology
+        self.cluster_rpc = cluster_rpc
+        self.cluster_routes = cluster_routes
+        # Phase 2 dep
+        self.workgroup_mgr = None
+        # Internal state
+        self._runner: web.AppRunner | None = None
+
+    def set_workgroup_mgr(self, workgroup_mgr) -> None:
+        self.workgroup_mgr = workgroup_mgr
+
+    @property
+    def web_port_file(self) -> Path:
+        return self.local_dir / "web-port.txt"
+
     # ── Lifecycle ──
 
-    async def _start_web_http(self) -> None:
+    async def start(self) -> None:
         """Build and start the Web UI aiohttp server (own port)."""
         web_app = web.Application()
 
         # Web UI / API routes
-        self._register_web_routes(web_app)
+        self._register_routes(web_app)
 
         # Hook for non-web routes that share this port (cluster RPC etc.)
-        if self._cluster_routes is not None:
-            self._cluster_routes.register(web_app)
+        if self.cluster_routes is not None:
+            self.cluster_routes.register(web_app)
 
         # Static files last so the catch-all doesn't shadow API routes
         web_static = Path(__file__).parent.parent.parent / "web" / "static"
@@ -93,7 +127,7 @@ class WebServerMixin:
 
         runner = web.AppRunner(web_app)
         await runner.setup()
-        self._web_runner = runner
+        self._runner = runner
 
         host = self.config.web_host or "127.0.0.1"
         port = self.config.web_port if self.config.web_port is not None else 9292
@@ -101,17 +135,16 @@ class WebServerMixin:
         await site.start()
         sockets = getattr(getattr(site, "_server", None), "sockets", None) or []
         actual_port = sockets[0].getsockname()[1] if sockets else port
-        self._web_port_file.write_text(f"{actual_port}\n", encoding="utf-8")
+        self.web_port_file.write_text(f"{actual_port}\n", encoding="utf-8")
         logger.info("Web UI listening on %s:%d", host, actual_port)
 
-    async def _stop_web_http(self) -> None:
-        runner = getattr(self, "_web_runner", None)
-        if runner:
-            await runner.cleanup()
-            self._web_runner = None
-        self._web_port_file.unlink(missing_ok=True)
+    async def stop(self) -> None:
+        if self._runner:
+            await self._runner.cleanup()
+            self._runner = None
+        self.web_port_file.unlink(missing_ok=True)
 
-    def _register_web_routes(self, app: web.Application) -> None:
+    def _register_routes(self, app: web.Application) -> None:
         app.router.add_get("/", self._handle_web_index)
         app.router.add_get("/api/bots", self._handle_web_bots)
         app.router.add_get("/api/machines", self._handle_web_machines)
@@ -162,11 +195,11 @@ class WebServerMixin:
         return web.Response(body=index.read_bytes(), content_type="text/html")
 
     async def _handle_web_bots(self, request: web.Request) -> web.Response:
-        if not self._web_authorized(request):
-            return self._web_unauthorized()
+        if not self._authorized(request):
+            return self._unauthorized()
         bots = []
-        local_mid = self._topology.local_machine_id()
-        for name, ch in self._web_channels.items():
+        local_mid = self.topology.local_machine_id()
+        for name, ch in self.web_channels.items():
             cfg = self.config.bots.get(name)
             workgroup = self.config.workgroups.get(name)
             if cfg is not None:
@@ -187,8 +220,8 @@ class WebServerMixin:
                     "kind": "workgroup",
                     "machine": local_mid,
                 })
-        if self.guest_registry is not None:
-            for mid, b in self.guest_registry.list_bots():
+        if self.topology.guest_registry is not None:
+            for mid, b in self.topology.guest_registry.list_bots():
                 bots.append({
                     "name": b.name,
                     "display_name": (b.display_name or b.name) + f"  @{mid}",
@@ -197,8 +230,8 @@ class WebServerMixin:
                     "kind": b.kind,
                     "machine": mid,
                 })
-        elif self.guest_client is not None:
-            for m in self.guest_client.remote_machines:
+        elif self.topology.guest_client is not None:
+            for m in self.topology.guest_client.remote_machines:
                 mid = m.get("machine_id") or ""
                 if not mid or mid == local_mid:
                     continue
@@ -214,22 +247,22 @@ class WebServerMixin:
         return web.json_response({"bots": bots})
 
     async def _handle_web_machines(self, request: web.Request) -> web.Response:
-        if not self._web_authorized(request):
-            return self._web_unauthorized()
-        if self.guest_registry is not None:
-            return web.json_response({"machines": self._topology.collect_machines()})
-        local_mid = self._topology.local_machine_id()
-        local_role = self._topology.local_role()
+        if not self._authorized(request):
+            return self._unauthorized()
+        if self.topology.guest_registry is not None:
+            return web.json_response({"machines": self.topology.collect_machines()})
+        local_mid = self.topology.local_machine_id()
+        local_role = self.topology.local_role()
         machines: list[dict] = [{
             "machine_id": local_mid,
             "online": True,
             "role": local_role,
             "self": True,
-            "bots": self._topology.local_bot_descriptors(),
+            "bots": self.topology.local_bot_descriptors(),
             "last_seen": time.time(),
         }]
-        if self.guest_client is not None:
-            for m in self.guest_client.remote_machines:
+        if self.topology.guest_client is not None:
+            for m in self.topology.guest_client.remote_machines:
                 if m.get("machine_id") == local_mid:
                     continue
                 m = dict(m)
@@ -239,22 +272,22 @@ class WebServerMixin:
 
     async def _handle_web_sessions(self, request: web.Request) -> web.Response:
         from boxagent.utils import infer_platform
-        if not self._web_authorized(request):
-            return self._web_unauthorized()
+        if not self._authorized(request):
+            return self._unauthorized()
         bot = request.query.get("bot", "")
         machine = request.query.get("machine", "")
         if not bot or not machine:
             return web.json_response({"ok": False, "error": "missing bot/machine"}, status=400)
-        resp = await self._cluster_rpc.dispatch_machine_request(machine, "GET", "/api/sessions", request)
+        resp = await self.cluster_rpc.dispatch_machine_request(machine, "GET", "/api/sessions", request)
         if resp is not None:
             return resp
-        if bot not in self._web_channels:
+        if bot not in self.web_channels:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
-        if not self._storage:
+        if not self.storage:
             return web.json_response({"ok": True, "sessions": []})
 
-        sessions = self._storage.list_chat_sessions(bot)
-        main_chat_id = self._storage.get_main_chat_id(bot)
+        sessions = self.storage.list_chat_sessions(bot)
+        main_chat_id = self.storage.get_main_chat_id(bot)
 
         claude_session_info: dict[str, dict] = {}
         bot_cfg = self.config.bots.get(bot)
@@ -283,7 +316,7 @@ class WebServerMixin:
             if not sid:
                 continue
 
-            cached = self._session_meta_cache.get(sid)
+            cached = self.session_meta_cache.get(sid)
 
             # Try claude-native lookup first (covers claude-cli + agent-sdk-claude).
             if _claude_history is not None:
@@ -298,7 +331,7 @@ class WebServerMixin:
                     s["preview"] = preview[:90] + ("..." if len(preview) > 90 else "")
                     s["last_ts"] = info.last_ts
                     s["message_count"] = info.message_count
-                    self._session_meta_cache[sid] = {
+                    self.session_meta_cache[sid] = {
                         "mtime": info.last_ts,
                         "preview": s["preview"],
                         "last_ts": s["last_ts"],
@@ -306,7 +339,7 @@ class WebServerMixin:
                     }
                     continue
 
-            tpath = self._storage.local_dir / "transcripts" / f"{sid}.jsonl"
+            tpath = self.storage.local_dir / "transcripts" / f"{sid}.jsonl"
             if not tpath.is_file():
                 continue
             try:
@@ -347,7 +380,7 @@ class WebServerMixin:
                 s["preview"] = preview[:90] + ("..." if len(preview) > 90 else "")
                 s["last_ts"] = last_ts
                 s["message_count"] = msg_count
-                self._session_meta_cache[sid] = {
+                self.session_meta_cache[sid] = {
                     "mtime": tstat.st_mtime,
                     "preview": s["preview"],
                     "last_ts": s["last_ts"],
@@ -360,8 +393,8 @@ class WebServerMixin:
         return web.json_response({"ok": True, "sessions": sessions})
 
     async def _handle_set_main_session(self, request: web.Request) -> web.Response:
-        if not self._web_authorized(request):
-            return self._web_unauthorized()
+        if not self._authorized(request):
+            return self._unauthorized()
         try:
             data = await request.json()
         except Exception:
@@ -371,63 +404,63 @@ class WebServerMixin:
         chat_id = str(data.get("chat_id") or "").strip()
         if not bot or not machine:
             return web.json_response({"ok": False, "error": "missing bot/machine"}, status=400)
-        if machine != self._topology.local_machine_id():
-            resp = await self._cluster_rpc.dispatch_machine_request(
+        if machine != self.topology.local_machine_id():
+            resp = await self.cluster_rpc.dispatch_machine_request(
                 machine, "POST", "/api/sessions/set_main", request, body=data,
             )
             if resp is not None:
                 return resp
-        if self._storage is None:
+        if self.storage is None:
             return web.json_response({"ok": False, "error": "no storage"}, status=500)
-        self._storage.set_main_chat_id(bot, chat_id)
+        self.storage.set_main_chat_id(bot, chat_id)
         return web.json_response({"ok": True, "main_chat_id": chat_id})
 
     async def _handle_version(self, request: web.Request) -> web.Response:
-        if not self._web_authorized(request):
-            return self._web_unauthorized()
+        if not self._authorized(request):
+            return self._unauthorized()
         from boxagent._version import __version__, _git_commit, version_string
 
         local = {
-            "machine_id": self._topology.local_machine_id(),
+            "machine_id": self.topology.local_machine_id(),
             "version": __version__,
             "commit": _git_commit(),
             "version_string": version_string(),
         }
         if request.query.get("cluster") not in ("1", "true", "yes"):
             return web.json_response({"ok": True, **local})
-        if self.guest_registry is not None:
+        if self.topology.guest_registry is not None:
             sats: dict[str, object] = {}
-            for machine_id, sess in list(self.guest_registry.sessions.items()):
+            for machine_id, sess in list(self.topology.guest_registry.sessions.items()):
                 try:
                     result = await sess.call("GET", "/api/version", timeout=5.0)
                     sats[machine_id] = result.get("body") or {"error": "no body"}
                 except Exception as e:
                     sats[machine_id] = {"error": str(e)}
             return web.json_response({"ok": True, "self": local, "sats": sats})
-        if self.guest_client is not None:
+        if self.topology.guest_client is not None:
             try:
-                host_result = await self.guest_client.fetch_host_json("/api/version", {"cluster": "1"})
+                host_result = await self.topology.guest_client.fetch_host_json("/api/version", {"cluster": "1"})
             except Exception as e:
                 host_result = {"error": str(e)}
             return web.json_response({"ok": True, "self": local, "host": host_result})
         return web.json_response({"ok": True, "self": local, "sats": {}})
 
     async def _handle_admin_restart(self, request: web.Request) -> web.Response:
-        if not self._web_authorized(request):
-            return self._web_unauthorized()
+        if not self._authorized(request):
+            return self._unauthorized()
         import os
         import signal as _signal
         loop = asyncio.get_event_loop()
         loop.call_later(0.2, lambda: os.kill(os.getpid(), _signal.SIGTERM))
         return web.json_response({
-            "ok": True, "restarting": self._topology.local_machine_id(),
+            "ok": True, "restarting": self.topology.local_machine_id(),
             "note": "SIGTERM scheduled in 0.2s; supervisor must relaunch",
         })
 
     async def _handle_admin_cluster_restart(self, request: web.Request) -> web.Response:
-        if not self._web_authorized(request):
-            return self._web_unauthorized()
-        if self.guest_registry is None:
+        if not self._authorized(request):
+            return self._unauthorized()
+        if self.topology.guest_registry is None:
             return web.json_response(
                 {"ok": False, "error": "not in host mode"}, status=400,
             )
@@ -443,7 +476,7 @@ class WebServerMixin:
         except Exception:
             pass
         results: dict[str, object] = {}
-        for machine_id, sess in list(self.guest_registry.sessions.items()):
+        for machine_id, sess in list(self.topology.guest_registry.sessions.items()):
             if target_filter is not None and machine_id not in target_filter:
                 continue
             try:
@@ -451,35 +484,35 @@ class WebServerMixin:
                 results[machine_id] = rpc.get("body") or {"status": rpc.get("status")}
             except Exception as e:
                 results[machine_id] = {"error": str(e)}
-        if include_self and (target_filter is None or self._topology.local_machine_id() in target_filter):
+        if include_self and (target_filter is None or self.topology.local_machine_id() in target_filter):
             import os
             import signal as _signal
             asyncio.get_event_loop().call_later(
                 1.0, lambda: os.kill(os.getpid(), _signal.SIGTERM),
             )
-            results[self._topology.local_machine_id()] = {
+            results[self.topology.local_machine_id()] = {
                 "scheduled": True, "delay_seconds": 1.0,
             }
         return web.json_response({"ok": True, "results": results})
 
     async def _handle_web_history(self, request: web.Request) -> web.Response:
-        if not self._web_authorized(request):
-            return self._web_unauthorized()
+        if not self._authorized(request):
+            return self._unauthorized()
         bot = request.query.get("bot", "")
         chat_id = request.query.get("chat_id", "")
         machine = request.query.get("machine", "")
         if not bot or not chat_id or not machine:
             return web.json_response({"ok": False, "error": "missing bot/chat_id/machine"}, status=400)
-        if machine != self._topology.local_machine_id():
-            resp = await self._cluster_rpc.dispatch_machine_request(machine, "GET", "/api/history", request)
+        if machine != self.topology.local_machine_id():
+            resp = await self.cluster_rpc.dispatch_machine_request(machine, "GET", "/api/history", request)
             if resp is not None:
                 return resp
-        if bot not in self._web_channels:
+        if bot not in self.web_channels:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
 
         history: list[dict] = []
-        if self._storage:
-            saved = self._storage.load_session(bot, chat_id)
+        if self.storage:
+            saved = self.storage.load_session(bot, chat_id)
             session_id = ""
             prev_chain: list[str] = []
             saved_backend = ""
@@ -511,7 +544,7 @@ class WebServerMixin:
 
             import json as _json
             for sid in sids:
-                tpath = self._storage.local_dir / "transcripts" / f"{sid}.jsonl"
+                tpath = self.storage.local_dir / "transcripts" / f"{sid}.jsonl"
                 if not tpath.is_file():
                     continue
                 try:
@@ -544,8 +577,8 @@ class WebServerMixin:
         return web.json_response({"ok": True, "total": total, "history": history})
 
     async def _handle_web_send(self, request: web.Request) -> web.Response:
-        if not self._web_authorized(request):
-            return self._web_unauthorized()
+        if not self._authorized(request):
+            return self._unauthorized()
         try:
             body = await request.json()
         except Exception:
@@ -556,11 +589,11 @@ class WebServerMixin:
         machine = body.get("machine", "")
         if not bot or not chat_id or not text or not machine:
             return web.json_response({"ok": False, "error": "missing bot/chat_id/text/machine"}, status=400)
-        if machine != self._topology.local_machine_id():
-            resp = await self._cluster_rpc.dispatch_machine_request(machine, "POST", "/api/send", request, body=body)
+        if machine != self.topology.local_machine_id():
+            resp = await self.cluster_rpc.dispatch_machine_request(machine, "POST", "/api/send", request, body=body)
             if resp is not None:
                 return resp
-        ch = self._web_channels.get(bot)
+        ch = self.web_channels.get(bot)
         if ch is None:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
         try:
@@ -571,18 +604,18 @@ class WebServerMixin:
         return web.json_response({"ok": True})
 
     async def _handle_web_stream(self, request: web.Request) -> web.StreamResponse:
-        if not self._web_authorized(request):
-            return self._web_unauthorized()
+        if not self._authorized(request):
+            return self._unauthorized()
         bot = request.query.get("bot", "")
         chat_id = request.query.get("chat_id", "")
         machine = request.query.get("machine", "")
         if not bot or not chat_id or not machine:
             return web.json_response({"ok": False, "error": "missing bot/chat_id/machine"}, status=400)
-        if machine != self._topology.local_machine_id():
-            resp = await self._cluster_rpc.dispatch_machine_stream(machine, "/api/stream", request)
+        if machine != self.topology.local_machine_id():
+            resp = await self.cluster_rpc.dispatch_machine_stream(machine, "/api/stream", request)
             if resp is not None:
                 return resp
-        ch = self._web_channels.get(bot)
+        ch = self.web_channels.get(bot)
         if ch is None:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
 
@@ -619,13 +652,13 @@ class WebServerMixin:
     # ── Claude native session picker ──
 
     async def _handle_claude_projects(self, request: web.Request) -> web.Response:
-        if not self._web_authorized(request):
-            return self._web_unauthorized()
+        if not self._authorized(request):
+            return self._unauthorized()
         machine = request.query.get("machine", "")
         if not machine:
             return web.json_response({"ok": False, "error": "missing machine"}, status=400)
-        if machine != self._topology.local_machine_id():
-            resp = await self._cluster_rpc.dispatch_machine_request(machine, "GET", "/api/claude/projects", request)
+        if machine != self.topology.local_machine_id():
+            resp = await self.cluster_rpc.dispatch_machine_request(machine, "GET", "/api/claude/projects", request)
             if resp is not None:
                 return resp
         from boxagent.history import get_history
@@ -637,14 +670,14 @@ class WebServerMixin:
         })
 
     async def _handle_claude_sessions(self, request: web.Request) -> web.Response:
-        if not self._web_authorized(request):
-            return self._web_unauthorized()
+        if not self._authorized(request):
+            return self._unauthorized()
         encoded = request.query.get("project", "")
         machine = request.query.get("machine", "")
         if not encoded or not machine:
             return web.json_response({"ok": False, "error": "missing project/machine"}, status=400)
-        if machine != self._topology.local_machine_id():
-            resp = await self._cluster_rpc.dispatch_machine_request(machine, "GET", "/api/claude/sessions", request)
+        if machine != self.topology.local_machine_id():
+            resp = await self.cluster_rpc.dispatch_machine_request(machine, "GET", "/api/claude/sessions", request)
             if resp is not None:
                 return resp
         from boxagent.history import get_history
@@ -656,15 +689,15 @@ class WebServerMixin:
         })
 
     async def _handle_claude_transcript(self, request: web.Request) -> web.Response:
-        if not self._web_authorized(request):
-            return self._web_unauthorized()
+        if not self._authorized(request):
+            return self._unauthorized()
         encoded = request.query.get("project", "")
         sid = request.query.get("session_id", "")
         machine = request.query.get("machine", "")
         if not encoded or not sid or not machine:
             return web.json_response({"ok": False, "error": "missing project/session_id/machine"}, status=400)
-        if machine != self._topology.local_machine_id():
-            resp = await self._cluster_rpc.dispatch_machine_request(machine, "GET", "/api/claude/transcript", request)
+        if machine != self.topology.local_machine_id():
+            resp = await self.cluster_rpc.dispatch_machine_request(machine, "GET", "/api/claude/transcript", request)
             if resp is not None:
                 return resp
         from boxagent.history import get_history
@@ -676,8 +709,8 @@ class WebServerMixin:
         })
 
     async def _handle_claude_resume(self, request: web.Request) -> web.Response:
-        if not self._web_authorized(request):
-            return self._web_unauthorized()
+        if not self._authorized(request):
+            return self._unauthorized()
         try:
             body = await request.json()
         except Exception:
@@ -689,16 +722,16 @@ class WebServerMixin:
         backend_override = body.get("backend", "")
         if not bot or not sid or not machine:
             return web.json_response({"ok": False, "error": "missing bot/session_id/machine"}, status=400)
-        if machine != self._topology.local_machine_id():
-            resp = await self._cluster_rpc.dispatch_machine_request(machine, "POST", "/api/claude/resume", request, body=body)
+        if machine != self.topology.local_machine_id():
+            resp = await self.cluster_rpc.dispatch_machine_request(machine, "POST", "/api/claude/resume", request, body=body)
             if resp is not None:
                 return resp
-        if bot not in self._web_channels:
+        if bot not in self.web_channels:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
 
         is_raw = bot == "raw"
         workspace = ""
-        if self._storage:
+        if self.storage:
             cfg = self.config.bots.get(bot)
             workgroup = self.config.workgroups.get(bot)
             model = (cfg.model if cfg else None) or (workgroup.model if workgroup else "")
@@ -713,7 +746,7 @@ class WebServerMixin:
                 cfg.workspace if cfg else (workgroup.admin_workspace if workgroup else "")
             )
             chat_id = f"{backend.split('-')[0]}-{sid}" if is_raw else f"claude-{sid}"
-            self._storage.save_session(
+            self.storage.save_session(
                 bot, sid,
                 preview="(resumed via web)",
                 backend=backend,
@@ -721,9 +754,9 @@ class WebServerMixin:
                 model=model,
                 workspace=workspace,
             )
-            pool = self._pools.get(bot)
-            if pool is None and self._workgroup_mgr is not None:
-                pool = self._workgroup_mgr.pools.get(bot)
+            pool = self.pools.get(bot)
+            if pool is None and self.workgroup_mgr is not None:
+                pool = self.workgroup_mgr.pools.get(bot)
             if pool is not None:
                 if workspace:
                     pool.set_workspace(chat_id, workspace)
@@ -737,6 +770,6 @@ class WebServerMixin:
             "chat_id": chat_id,
             "session_id": sid,
             "project": encoded,
-            "backend": backend if self._storage else "",
-            "workspace": workspace if self._storage else "",
+            "backend": backend if self.storage else "",
+            "workspace": workspace if self.storage else "",
         })

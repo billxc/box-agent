@@ -79,7 +79,7 @@ class TestGateway:
                    side_effect=noop_raw, autospec=True), \
              patch.object(gw, "_start_scheduler"), \
              patch("boxagent.gateway.http_api_server.HttpApiServer.start", new_callable=AsyncMock), \
-             patch.object(gw, "_start_web_http", new_callable=AsyncMock):
+             patch("boxagent.transports.web.server.WebHttpServer.start", new_callable=AsyncMock):
             await gw.start()
 
         assert started == ["test-bot"]
@@ -122,7 +122,7 @@ class TestGateway:
 
         gw = Gateway(config=mock_config, config_dir=tmp_path)
         with patch("boxagent.gateway.http_api_server.HttpApiServer.start", new_callable=AsyncMock), \
-                     patch.object(gw, "_start_web_http", new_callable=AsyncMock):
+                     patch("boxagent.transports.web.server.WebHttpServer.start", new_callable=AsyncMock):
             await gw.start()
 
         assert gw._scheduler is not None
@@ -146,7 +146,7 @@ class TestGateway:
 
         gw = Gateway(config=mock_config, config_dir=tmp_path)
         with patch("boxagent.gateway.http_api_server.HttpApiServer.start", new_callable=AsyncMock), \
-                     patch.object(gw, "_start_web_http", new_callable=AsyncMock):
+                     patch("boxagent.transports.web.server.WebHttpServer.start", new_callable=AsyncMock):
             await gw.start()
 
         scheduler_task = gw._scheduler_task
@@ -454,7 +454,7 @@ class TestGateway:
                    side_effect=noop_raw, autospec=True), \
              patch.object(gw, "_start_scheduler"), \
              patch("boxagent.gateway.http_api_server.HttpApiServer.start", new_callable=AsyncMock), \
-             patch.object(gw, "_start_web_http", new_callable=AsyncMock):
+             patch("boxagent.transports.web.server.WebHttpServer.start", new_callable=AsyncMock):
             await gw.start()
 
         assert "bot-a" not in started
@@ -488,7 +488,7 @@ class TestGateway:
                    side_effect=noop_raw, autospec=True), \
              patch.object(gw, "_start_scheduler"), \
              patch("boxagent.gateway.http_api_server.HttpApiServer.start", new_callable=AsyncMock), \
-             patch.object(gw, "_start_web_http", new_callable=AsyncMock):
+             patch("boxagent.transports.web.server.WebHttpServer.start", new_callable=AsyncMock):
             await gw.start()
 
         assert "bot-a" in started

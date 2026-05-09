@@ -1,9 +1,23 @@
-"""Gateway core — dataclass state, lifecycle, and shared helpers.
+"""Gateway core — composition root.
 
-Mixin layout: see ``boxagent.gateway.__init__``. This module owns the
-``@dataclass``-decorated ``_GatewayCore`` (fields + lifecycle + cluster
-helpers); HTTP, peer, workgroup, and cluster-RPC handlers live in
-sibling mixin modules.
+Owns the dataclass state and the start/stop wiring; all behavior lives in
+8 composed managers built in ``start()``:
+
+  - ``_bots``             AgentManager        (per-bot lifecycle)
+  - ``_topology``         TopologyService     (cluster identity / peer list)
+  - ``_peer``             PeerService         (cross-admin peer messaging)
+  - ``_cluster_rpc``      ClusterRpc          (host↔guest HTTP/SSE proxying)
+  - ``_cluster_routes``   ClusterHttpRoutes   (cluster routes on web port)
+  - ``_workgroup_routes`` WorkgroupHttpRoutes (workgroup HTTP handlers)
+  - ``_http_server``      HttpApiServer       (internal API + MCP HTTP)
+  - ``_web_server``       WebHttpServer       (Web UI aiohttp server)
+
+Two-phase DI:
+  Phase 1 — managers built with infrastructure (config / shared dicts /
+            sibling refs that already exist).
+  Phase 2 — late-bound siblings injected via setters
+            (workgroup_mgr in ``set_workgroup_mgr``, scheduler in
+            ``set_scheduler``, host_election in ``set_host_election``).
 """
 
 import asyncio
@@ -18,6 +32,7 @@ from boxagent.cluster.cluster_rpc import ClusterRpc
 from boxagent.cluster.peer_service import PeerService
 from boxagent.cluster.topology_service import TopologyService
 from boxagent.gateway.http_api_server import HttpApiServer
+from boxagent.transports.web.server import WebHttpServer
 from boxagent.workgroup.workgroup_http_routes import WorkgroupHttpRoutes
 from boxagent.transports.web import WebChannel
 from boxagent.cluster import ClusterTunnel, GuestClient, GuestRegistry
@@ -71,6 +86,7 @@ class _GatewayCore:
     _cluster_routes: ClusterHttpRoutes | None = field(default=None, repr=False)
     _workgroup_routes: WorkgroupHttpRoutes | None = field(default=None, repr=False)
     _http_server: HttpApiServer | None = field(default=None, repr=False)
+    _web_server: WebHttpServer | None = field(default=None, repr=False)
 
     # Public read-only views into HostElection-owned components. Read sites
     # use these instead of reaching into ``_host_election.registry`` directly,
@@ -131,10 +147,21 @@ class _GatewayCore:
             workgroup_routes=self._workgroup_routes,
             mcp_gateway_context=self,
         )
+        self._web_server = WebHttpServer(
+            config=self.config,
+            local_dir=self.local_dir,
+            storage=self._storage,
+            web_channels=self._web_channels,
+            pools=self._pools,
+            session_meta_cache=self._session_meta_cache,
+            topology=self._topology,
+            cluster_rpc=self._cluster_rpc,
+            cluster_routes=self._cluster_routes,
+        )
         logger.info("Gateway starting (node=%s)", self.config.node_id or "(any)")
 
         # Start Web UI first so the page is reachable while the rest boots.
-        await self._start_web_http()
+        await self._web_server.start()
 
         # Start each bot
         for name, bot_cfg in self.config.bots.items():
@@ -161,10 +188,11 @@ class _GatewayCore:
                 _sync_skills=sync_skills,
                 _peer_provider=self._topology.build_peer_descriptors,
             )
-            # Phase 2: topology + peer + http routes now see workgroup_mgr.
+            # Phase 2: topology + peer + http routes + web server now see workgroup_mgr.
             self._topology.set_workgroup_mgr(self._workgroup_mgr)
             self._peer.set_workgroup_mgr(self._workgroup_mgr)
             self._workgroup_routes.set_workgroup_mgr(self._workgroup_mgr)
+            self._web_server.set_workgroup_mgr(self._workgroup_mgr)
             for workgroup_name, workgroup_config in self.config.workgroups.items():
                 if not node_matches(workgroup_config.enabled_on_nodes, self.config.node_id):
                     logger.info("Workgroup '%s' skipped (enabled_on_nodes=%s, current=%s)", workgroup_name, workgroup_config.enabled_on_nodes, self.config.node_id)
@@ -272,7 +300,8 @@ class _GatewayCore:
 
         # Release listening ports first so a restarting process can re-bind immediately,
         # regardless of how long the rest of the shutdown takes.
-        await self._stop_web_http()
+        if self._web_server is not None:
+            await self._web_server.stop()
         if self._http_server is not None:
             await self._http_server.stop()
             await self._http_server.stop_mcp()
@@ -339,15 +368,13 @@ class _GatewayCore:
         logger.info("Gateway stopped")
 
 
-# ── Gateway: compose mixins on top of _GatewayCore ──
-
-from boxagent.transports.web.server import WebServerMixin
+# ── Gateway: composition root (no mixins) ──
 
 
-class Gateway(
-    WebServerMixin,
-    _GatewayCore,
-):
-    """Top-level Gateway. State + lifecycle live in ``_GatewayCore``;
-    request handlers come from the mixins."""
+class Gateway(_GatewayCore):
+    """Top-level Gateway. All behavior lives in composed managers
+    (``self._bots``, ``self._topology``, ``self._peer``, ``self._cluster_rpc``,
+    ``self._cluster_routes``, ``self._workgroup_routes``, ``self._http_server``,
+    ``self._web_server``); ``_GatewayCore`` only owns the dataclass state and
+    the start/stop wiring."""
     pass
