@@ -38,6 +38,9 @@ class ClusterTunnel:
     port: int = 9292
 
     _host_proc: asyncio.subprocess.Process | None = field(default=None, repr=False)
+    _monitor_task: asyncio.Task | None = field(default=None, repr=False)
+    _stopping: bool = field(default=False, repr=False)
+    _respawn_backoff_seconds: float = field(default=2.0, repr=False)
     _url: str = ""
 
     @property
@@ -69,15 +72,8 @@ class ClusterTunnel:
             await self._run("port", "create", self.name, "-p", str(self.port), "--protocol", "http")
             logger.info("Cluster tunnel '%s' port %d registered", self.name, self.port)
 
-        # Start host process (long-running)
-        self._host_proc = await asyncio.create_subprocess_exec(
-            "devtunnel", "host", self.name,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-            stdin=asyncio.subprocess.DEVNULL,
-        )
-        logger.info("Cluster tunnel '%s' host process started (pid=%d)",
-                    self.name, self._host_proc.pid)
+        # Start host process (long-running, supervised — see _monitor_host).
+        await self._launch_supervised()
 
         # Poll until URL is reachable in the metadata
         url = ""
@@ -100,21 +96,92 @@ class ClusterTunnel:
         logger.info("Cluster tunnel '%s' ready: %s", self.name, url)
         return url
 
-    async def stop(self) -> None:
-        proc = self._host_proc
-        if proc is None:
-            return
-        self._host_proc = None
-        try:
-            proc.terminate()
-        except ProcessLookupError:
-            return
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=5.0)
-        except asyncio.TimeoutError:
+    async def _spawn_host_proc(self) -> asyncio.subprocess.Process:
+        """Spawn a fresh ``devtunnel host`` subprocess. Isolated for tests."""
+        return await asyncio.create_subprocess_exec(
+            "devtunnel", "host", self.name,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            stdin=asyncio.subprocess.DEVNULL,
+        )
+
+    async def _launch_supervised(self) -> None:
+        """Spawn host proc + start monitor task that respawns on death.
+
+        Without supervision the devtunnel host process can die silently
+        (macOS app nap, network drop, devtunnel internal error) and the
+        cluster falls off the map until the next BoxAgent restart.
+        """
+        self._host_proc = await self._spawn_host_proc()
+        logger.info(
+            "Cluster tunnel '%s' host process started (pid=%d)",
+            self.name, self._host_proc.pid,
+        )
+        self._monitor_task = asyncio.create_task(self._monitor_host())
+
+    async def _monitor_host(self) -> None:
+        """Watch the host proc; on unintended exit, log + respawn with backoff.
+
+        Loop exits when ``stop()`` flips ``_stopping`` true.
+        """
+        while not self._stopping:
+            proc = self._host_proc
+            if proc is None:
+                return
             try:
-                proc.kill()
+                rc = await proc.wait()
+            except asyncio.CancelledError:
+                return
+            if self._stopping:
+                return
+            logger.warning(
+                "Cluster tunnel '%s' host process (pid=%d) exited rc=%s; respawning in %.1fs",
+                self.name, proc.pid, rc, self._respawn_backoff_seconds,
+            )
+            try:
+                await asyncio.sleep(self._respawn_backoff_seconds)
+            except asyncio.CancelledError:
+                return
+            if self._stopping:
+                return
+            try:
+                self._host_proc = await self._spawn_host_proc()
+                logger.info(
+                    "Cluster tunnel '%s' host process respawned (pid=%d)",
+                    self.name, self._host_proc.pid,
+                )
+            except Exception as e:
+                logger.error(
+                    "Cluster tunnel '%s' respawn failed: %s — retrying after backoff",
+                    self.name, e,
+                )
+
+    async def stop(self) -> None:
+        self._stopping = True
+        proc = self._host_proc
+        self._host_proc = None
+        if proc is not None:
+            try:
+                proc.terminate()
             except ProcessLookupError:
+                pass
+            else:
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+        # Cancel the monitor only after we've torn down the proc, so the
+        # monitor's `await proc.wait()` returns (clean exit, no respawn).
+        task = self._monitor_task
+        self._monitor_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
                 pass
 
     async def _run(self, *args: str) -> tuple[int, str, str]:
