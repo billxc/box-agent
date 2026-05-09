@@ -6,6 +6,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 
 from boxagent.config import BotConfig, SpecialistConfig, WorkgroupConfig
@@ -44,6 +45,10 @@ from boxagent.workgroup.workspace_templates import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+if TYPE_CHECKING:
+    from boxagent.workgroup.workgroup_http_routes import WorkgroupHttpRoutes
 
 
 # Builtin template root, shipped with the codebase. Empty for v1; users add
@@ -108,10 +113,10 @@ class WorkgroupManager:
 
     # HTTP route adapter — built lazily on first access so the manager and
     # its HTTP surface ship together. Gateway just reads ``mgr.routes``.
-    _routes: object = field(default=None, init=False, repr=False)
+    _routes: "WorkgroupHttpRoutes | None" = field(default=None, init=False, repr=False)
 
     @property
-    def routes(self):
+    def routes(self) -> "WorkgroupHttpRoutes":
         from boxagent.workgroup.workgroup_http_routes import WorkgroupHttpRoutes
         if self._routes is None:
             self._routes = WorkgroupHttpRoutes(workgroup_mgr=self)

@@ -173,6 +173,7 @@ class _GatewayCore:
 
     def _start_scheduler(self) -> None:
         """Create and start the Scheduler after all active bots are online."""
+        assert self._bots is not None  # built in start() before this
         schedules_file = self.config_dir / "schedules.yaml"
         self._scheduler = Scheduler(
             schedules_file=schedules_file,
@@ -185,8 +186,7 @@ class _GatewayCore:
         self._scheduler_task = asyncio.create_task(self._scheduler.run_forever())
         # Phase 2 of two-phase DI: scheduler exists now, inject into AgentManager
         # so restart_bot / on_backend_switched can sync scheduler.bot_refs.
-        if self._bots is not None:
-            self._bots.set_scheduler(self._scheduler)
+        self._bots.set_scheduler(self._scheduler)
         # Build the scheduler's HTTP route adapter alongside the scheduler.
         self._scheduler_routes = SchedulerHttpRoutes(
             config=self.config,

@@ -39,7 +39,7 @@ class HttpApiServer:
         local_dir: Path,
         peer: "PeerService",
         workgroup_routes: "WorkgroupHttpRoutes | None",
-        scheduler_routes: "SchedulerHttpRoutes",
+        scheduler_routes: "SchedulerHttpRoutes | None",
         mcp_gateway_context: object,
     ) -> None:
         self.config = config
@@ -74,7 +74,8 @@ class HttpApiServer:
     async def start(self) -> None:
         """Start the internal HTTP API server (TCP only)."""
         app = web.Application()
-        app.router.add_post("/api/schedule/run", self.scheduler_routes.handle_schedule_run)
+        if self.scheduler_routes is not None:
+            app.router.add_post("/api/schedule/run", self.scheduler_routes.handle_schedule_run)
         if self.workgroup_routes is not None:
             wg = self.workgroup_routes
             app.router.add_get("/api/workgroup/specialists", wg.handle_list_specialists)
