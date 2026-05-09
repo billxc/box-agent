@@ -57,25 +57,22 @@ class AgentManager:
         config_dir: Path,
         storage: Storage,
         start_time: float,
-        backends: dict[str, AgentBackend],
-        pools: dict,
-        routers: dict[str, "Router"],
-        channels: dict[str, object],
-        web_channels: dict[str, WebChannel],
-        watchdogs: dict[str, Watchdog],
-        watchdog_tasks: list[asyncio.Task],
     ) -> None:
         self.config = config
         self.config_dir = config_dir
         self.storage = storage
         self.start_time = start_time
-        self.backends = backends
-        self.pools = pools
-        self.routers = routers
-        self.channels = channels
-        self.web_channels = web_channels
-        self.watchdogs = watchdogs
-        self.watchdog_tasks = watchdog_tasks
+        # State this manager owns. Other managers that need a read view
+        # (TopologyService → web_channels, WebHttpServer → pools/web_channels,
+        # WorkgroupManager → web_channels) receive the dict by reference at
+        # their own construction time.
+        self.backends: dict[str, AgentBackend] = {}
+        self.pools: dict = {}
+        self.routers: dict[str, "Router"] = {}
+        self.channels: dict[str, object] = {}
+        self.web_channels: dict[str, WebChannel] = {}
+        self.watchdogs: dict[str, Watchdog] = {}
+        self.watchdog_tasks: list[asyncio.Task] = []
         # Phase 2 deps
         self.scheduler: "Scheduler | None" = None
 

@@ -24,20 +24,13 @@ def _http_server_from(gw):
 
 
 def _agent_mgr_from(gw):
-    """Build an AgentManager bound to a Gateway's shared dicts."""
+    """Build an AgentManager for tests that bypass gw.start()."""
     from boxagent.agent.agent_manager import AgentManager
     return AgentManager(
         config=gw.config,
         config_dir=gw.config_dir,
         storage=gw._storage,
         start_time=gw._start_time,
-        backends=gw._backends,
-        pools=gw._pools,
-        routers=gw._routers,
-        channels=gw._channels,
-        web_channels=gw._web_channels,
-        watchdogs=gw._watchdogs,
-        watchdog_tasks=gw._watchdog_tasks,
     )
 
 
@@ -218,7 +211,6 @@ class TestGateway:
         old_backend = MagicMock()
         old_backend.session_id = "old-session"
         old_backend.stop = AsyncMock()
-        gw._backends["my-bot"] = old_backend
 
         mock_channel = MagicMock()
         gw._scheduler = Scheduler(
@@ -240,6 +232,7 @@ class TestGateway:
             new_backend = MagicMock()
             MockCLI.return_value = new_backend
             mgr = _agent_mgr_from(gw)
+            mgr.backends["my-bot"] = old_backend  # seed manager state
             mgr.set_scheduler(gw._scheduler)
             await mgr.restart_bot("my-bot", bot_cfg)
 

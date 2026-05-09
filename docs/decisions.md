@@ -247,3 +247,23 @@ src/ 净 -37 行（核心收益在 core.py：-127/+45 = 净 -82）。Gateway.sto
 5. **测试 mock 风格升级**：原本 `mgr._create_backend = MagicMock(...)` 把实例属性当 patch 钩子，重构后失效。改成 `with patch("boxagent.workgroup.manager.create_backend", return_value=...)` —— 标准 module-level patch。`test_workgroup_integration.py` 用 autouse fixture 一次性盖住所有 test；`test_workgroup_web_e2e.py` 把 `_make_manager` 改成 `@contextlib.contextmanager` 版本，调用方 `with _make_manager(tmp_path) as (manager, fakes):` 自动覆盖 patch 生命周期。
 
 **测试**: 826 passed
+
+## 2026-05-09 — _GatewayCore 不再当"共享 state holder"
+
+**问题**: 8 个 dict/list 字段挂在 _GatewayCore 上（_channels / _backends / _pools / _routers / _watchdogs / _watchdog_tasks / _web_channels / _session_meta_cache），用法分析后发现：
+
+- 5 个（_channels / _backends / _routers / _watchdogs / _watchdog_tasks）只有 AgentManager 写和读，**根本没共享**
+- 1 个（_session_meta_cache）只有 WebHttpServer 用
+- 2 个（_pools / _web_channels）才是真共享 —— AgentManager + WorkgroupManager 写、TopologyService + WebHttpServer 读
+
+挂在 _GatewayCore 上是 mixin 时代的化石（`self.X` 必须在共享祖先上）。
+
+**改造**:
+1. AgentManager 自己 allocate 7 个 dict/list；ctor 不再接 7 个 dict 参数，只剩 `config + config_dir + storage + start_time`。
+2. WebHttpServer 自己 allocate `session_meta_cache`，ctor 砍掉这个参数。
+3. _GatewayCore 删 8 个 field（连同 `WebChannel`/`Router`/`SessionPool`/`Watchdog` 4 个 import 也清掉，type 注解都没了）。
+4. Gateway.start() 装配阶段，需要共享的两个 dict 通过 `bots.web_channels` / `bots.pools` ref 显式从 AgentManager 借出，传给 TopologyService / WebHttpServer / WorkgroupManager。所有权语义清晰：AgentManager 是 owner，其他人是 reader。
+5. test_agent_manager.py + test_gateway.py 配合更新；test 里原本 `gw._backends["bot"] = X` 这种"绕过 start() 直接塞 Gateway 状态"的做法不再可行，改成 `mgr.backends["bot"] = X` 操作 manager 私有 state。
+
+**测试**: 826 passed
+**LOC**: src/ 净 -21 行（core.py 净 -18，AgentManager +5，WebHttpServer -2）

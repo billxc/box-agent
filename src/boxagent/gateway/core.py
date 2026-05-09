@@ -37,13 +37,10 @@ from boxagent.cluster.topology_service import TopologyService
 from boxagent.gateway.http_api_server import HttpApiServer
 from boxagent.scheduler.scheduler_http_routes import SchedulerHttpRoutes
 from boxagent.transports.web.server import WebHttpServer
-from boxagent.transports.web import WebChannel
 from boxagent.config import AppConfig, node_matches
 from boxagent.utils import default_config_dir, default_local_dir, default_workspace_dir
-from boxagent.router import Router
-from boxagent.sessions import SessionPool, Storage
+from boxagent.sessions import Storage
 from boxagent.scheduler import Scheduler
-from boxagent.watchdog import Watchdog
 from boxagent.workgroup import WorkgroupManager
 
 logger = logging.getLogger(__name__)
@@ -54,15 +51,7 @@ class _GatewayCore:
     config: AppConfig
     config_dir: Path = field(default_factory=default_config_dir)
     local_dir: Path = field(default_factory=default_local_dir)
-    _channels: dict[str, object] = field(default_factory=dict, repr=False)
-    _web_channels: dict[str, WebChannel] = field(default_factory=dict, repr=False)
-    _backends: dict[str, object] = field(default_factory=dict, repr=False)
-    _pools: dict[str, SessionPool] = field(default_factory=dict, repr=False)
-    _routers: dict[str, Router] = field(default_factory=dict, repr=False)
     _storage: Storage | None = field(default=None, repr=False)
-    _session_meta_cache: dict[str, dict] = field(default_factory=dict, repr=False)
-    _watchdogs: dict[str, Watchdog] = field(default_factory=dict, repr=False)
-    _watchdog_tasks: list[asyncio.Task] = field(default_factory=list, repr=False)
     _scheduler: Scheduler | None = field(default=None, repr=False)
     _scheduler_task: asyncio.Task | None = field(default=None, repr=False)
     _host_election: object | None = field(default=None, repr=False)
@@ -80,23 +69,17 @@ class _GatewayCore:
     async def start(self) -> None:
         self._start_time = time.time()
         self._storage = Storage(local_dir=self.local_dir)
-        # Phase 1: build managers with infrastructure (storage + shared dicts).
+        # Phase 1: build managers. AgentManager owns its bot-state dicts;
+        # everyone else who needs to read them gets the dict by reference.
         self._bots = AgentManager(
             config=self.config,
             config_dir=self.config_dir,
             storage=self._storage,
             start_time=self._start_time,
-            backends=self._backends,
-            pools=self._pools,
-            routers=self._routers,
-            channels=self._channels,
-            web_channels=self._web_channels,
-            watchdogs=self._watchdogs,
-            watchdog_tasks=self._watchdog_tasks,
         )
         self._topology = TopologyService(
             config=self.config,
-            web_channels=self._web_channels,
+            web_channels=self._bots.web_channels,
         )
         self._peer = PeerService(
             topology=self._topology,
@@ -110,9 +93,8 @@ class _GatewayCore:
             config=self.config,
             local_dir=self.local_dir,
             storage=self._storage,
-            web_channels=self._web_channels,
-            pools=self._pools,
-            session_meta_cache=self._session_meta_cache,
+            web_channels=self._bots.web_channels,
+            pools=self._bots.pools,
             topology=self._topology,
             cluster_rpc=self._cluster_rpc,
             cluster_routes=self._cluster_routes,
@@ -141,7 +123,7 @@ class _GatewayCore:
                 local_dir=self._storage.local_dir if self._storage else None,
                 start_time=self._start_time,
                 storage=self._storage,
-                web_channels=self._web_channels,
+                web_channels=self._bots.web_channels,
                 _peer_provider=self._topology.build_peer_descriptors,
             )
             # Phase 2: topology + peer + web server now see workgroup_mgr.

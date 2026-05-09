@@ -17,35 +17,22 @@ def _make_manager() -> AgentManager:
         config_dir=MagicMock(),
         storage=MagicMock(),
         start_time=0.0,
-        backends={},
-        pools={},
-        routers={},
-        channels={},
-        web_channels={},
-        watchdogs={},
-        watchdog_tasks=[],
     )
 
 
 class TestAgentManagerConstruction:
     def test_init_stores_infrastructure(self):
-        backends: dict = {}
         bm = AgentManager(
             config=MagicMock(),
             config_dir=MagicMock(),
             storage=MagicMock(),
             start_time=42.0,
-            backends=backends,
-            pools={},
-            routers={},
-            channels={},
-            web_channels={},
-            watchdogs={},
-            watchdog_tasks=[],
         )
-        # Shared dicts are kept by reference so other managers see the writes.
-        assert bm.backends is backends
         assert bm.start_time == 42.0
+        # Manager allocates its own state dicts.
+        assert bm.backends == {}
+        assert bm.routers == {}
+        assert bm.web_channels == {}
 
     def test_scheduler_is_none_until_phase2_setter(self):
         bm = _make_manager()
@@ -77,21 +64,18 @@ class TestAgentManagerStop:
             config_dir=MagicMock(),
             storage=storage,
             start_time=0.0,
-            backends={"bot": backend},
-            pools={"bot": pool},
-            routers={},
-            channels={"bot": ch},
-            web_channels={"bot": web_ch},
-            watchdogs={},
-            watchdog_tasks=[],
         )
+        bm.backends["bot"] = backend
+        bm.pools["bot"] = pool
+        bm.channels["bot"] = ch
+        bm.web_channels["bot"] = web_ch
+
         await bm.stop()
 
         ch.stop.assert_awaited_once()
         web_ch.stop.assert_awaited_once()
         backend.stop.assert_awaited_once()
         pool.stop.assert_awaited_once()
-        # session saved before backend stop
         storage.save_session.assert_called_once_with("bot", "sid-1")
 
     @pytest.mark.asyncio
@@ -108,14 +92,11 @@ class TestAgentManagerStop:
             config_dir=MagicMock(),
             storage=MagicMock(),
             start_time=0.0,
-            backends={"bot": bad_backend},
-            pools={"bot": good_pool},
-            routers={},
-            channels={"bot": good_ch},
-            web_channels={},
-            watchdogs={},
-            watchdog_tasks=[],
         )
+        bm.backends["bot"] = bad_backend
+        bm.pools["bot"] = good_pool
+        bm.channels["bot"] = good_ch
+
         await bm.stop()
 
         good_ch.stop.assert_awaited_once()
@@ -135,14 +116,13 @@ class TestAgentManagerSchedulerRefs:
             config_dir=MagicMock(),
             storage=MagicMock(),
             start_time=0.0,
-            backends={"real": backend, "raw": MagicMock()},
-            pools={},
-            routers={"real": MagicMock(), "raw": MagicMock()},
-            channels={"real": MagicMock()},
-            web_channels={},
-            watchdogs={},
-            watchdog_tasks=[],
         )
+        bm.backends["real"] = backend
+        bm.backends["raw"] = MagicMock()
+        bm.routers["real"] = MagicMock()
+        bm.routers["raw"] = MagicMock()
+        bm.channels["real"] = MagicMock()
+
         refs = bm.build_scheduler_refs()
         assert set(refs.keys()) == {"real"}
         assert refs["real"].backend is backend

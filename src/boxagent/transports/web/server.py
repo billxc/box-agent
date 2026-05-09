@@ -81,7 +81,6 @@ class WebHttpServer:
         storage,
         web_channels: dict,
         pools: dict,
-        session_meta_cache: dict,
         topology,
         cluster_rpc,
         cluster_routes,
@@ -91,13 +90,14 @@ class WebHttpServer:
         self.storage = storage
         self.web_channels = web_channels
         self.pools = pools
-        self.session_meta_cache = session_meta_cache
         self.topology = topology
         self.cluster_rpc = cluster_rpc
         self.cluster_routes = cluster_routes
         # Phase 2 dep
         self.workgroup_mgr = None
-        # Internal state
+        # Internal state — process-local preview cache (sid → {mtime, ...})
+        # used by /api/sessions to avoid re-reading transcript JSONL every poll.
+        self.session_meta_cache: dict = {}
         self._runner: web.AppRunner | None = None
 
     def set_workgroup_mgr(self, workgroup_mgr) -> None:
