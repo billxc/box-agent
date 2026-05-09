@@ -5,6 +5,7 @@ import platform
 import shutil
 import subprocess
 import sys
+from functools import partial
 from pathlib import Path
 
 from boxagent.utils import default_local_dir
@@ -138,7 +139,7 @@ def check_dependencies(fix: bool = False) -> tuple[list[str], list[str]]:
         # Built-in installer (custom) wins; otherwise fall back to npm install.
         effective_install = install_fn
         if effective_install is None and npm_package:
-            effective_install = lambda pkg=npm_package, n=name: _npm_install(pkg, n, update=False)
+            effective_install = partial(_npm_install, npm_package, name, update=False)
 
         path = _resolve(cmd, extra_paths_fn)
         if path:
@@ -184,7 +185,7 @@ def _validate_config(ba_dir: Path, local_dir: Path) -> tuple[list[str], list[str
         return ok, issues
 
     try:
-        from boxagent.config import load_config, ConfigError
+        from boxagent.config import load_config
         config = load_config(ba_dir, box_agent_dir=ba_dir, local_dir=local_dir)
         ok.append(f"✅ Config valid: {len(config.bots)} bot(s) defined")
 

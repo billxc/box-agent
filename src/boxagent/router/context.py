@@ -19,8 +19,6 @@ def build_session_context(
     bot_name: str = "",
     display_name: str = "",
     node_id: str = "",
-    ai_backend: str = "",
-    model: str = "",
     workspace: str = "",
     config_dir: str = "",
     workgroup_agents: list[str] | None = None,
@@ -43,8 +41,6 @@ def build_session_context(
         bot_name = env.bot_name
         display_name = env.display_name
         node_id = env.node_id
-        ai_backend = env.ai_backend
-        model = env.model
         workspace = env.workspace
         config_dir = env.config_dir
         workgroup_agents = list(env.workgroup_agents) if env.workgroup_agents else None
@@ -77,7 +73,7 @@ def build_session_context(
 
     node_content = _read_boxagent_node_md(config_dir, node_id)
     if node_content and node_content not in seen:
-        lines.append(f"\n# BOXAGENT (node)")
+        lines.append("\n# BOXAGENT (node)")
         lines.append(node_content)
         seen.add(node_content)
 

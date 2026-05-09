@@ -104,7 +104,6 @@ def seed_admin_workspace(
     ws = Path(workspace)
     written: list[str] = []
 
-    workgroup_dir = str(Path(workspace).parent)
     worktrees_dir = str(Path(workspace).parent / "worktrees")
 
     # --- System layer (overwritten every startup) ---

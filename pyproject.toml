@@ -43,10 +43,23 @@ markers = [
 addopts = "-m 'not integration'"
 testpaths = ["tests"]
 
+[tool.ruff]
+src = ["src"]
+target-version = "py311"
+
+[tool.ruff.lint]
+# Default (E + F) — pyflakes catches dead imports / unused locals; pycodestyle
+# catches real syntactic issues. Keep the bar low and uniform; reach for stricter
+# rules (B, UP, SIM) only after we've cleaned out the existing baseline.
+select = ["E", "F", "W"]
+# Long lines / star-imports are tolerated (W291/W293 trailing-ws bites enough).
+ignore = ["E501"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-mock>=3.12",
     "pytest-timeout>=2.2",
+    "ruff>=0.6",
 ]

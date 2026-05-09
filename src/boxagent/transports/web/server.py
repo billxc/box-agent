@@ -13,6 +13,16 @@ mounted by ``ClusterHttpRoutes.register`` on the same aiohttp app, since
 the rest of the cluster code already targets that port.
 """
 
+import asyncio
+import logging
+import time
+from pathlib import Path
+
+from aiohttp import web
+
+logger = logging.getLogger(__name__)
+
+
 def _project_to_dict(p) -> dict:
     """Serialise a ``boxagent.history.ProjectInfo`` for the Web UI.
 
@@ -60,16 +70,6 @@ def _message_to_dict(m) -> dict:
         base["summary"] = m.summary
         base["error"] = m.error
     return base
-
-
-import asyncio
-import logging
-import time
-from pathlib import Path
-
-from aiohttp import web
-
-logger = logging.getLogger(__name__)
 
 
 class WebHttpServer:
@@ -289,7 +289,6 @@ class WebHttpServer:
         sessions = self.storage.list_chat_sessions(bot)
         main_chat_id = self.storage.get_main_chat_id(bot)
 
-        claude_session_info: dict[str, dict] = {}
         bot_cfg = self.config.bots.get(bot)
         wg_cfg = self.config.workgroups.get(bot)
         backend = (bot_cfg.ai_backend if bot_cfg else None) or (wg_cfg.ai_backend if wg_cfg else "claude-cli")

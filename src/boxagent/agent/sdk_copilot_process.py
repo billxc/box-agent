@@ -29,7 +29,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from copilot import CopilotClient, CopilotSession
 from copilot.generated.session_events import (

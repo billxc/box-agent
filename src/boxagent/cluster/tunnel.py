@@ -26,7 +26,6 @@ import json
 import logging
 import shutil
 from dataclasses import dataclass, field
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 

@@ -10,7 +10,6 @@ import uuid
 from dataclasses import dataclass, field
 from typing import AsyncIterator
 
-import aiohttp
 from aiohttp import ClientSession, web
 from aiohttp.web import WebSocketResponse
 

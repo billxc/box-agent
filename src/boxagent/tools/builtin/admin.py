@@ -7,7 +7,6 @@ The handlers wrap ``WorkgroupManager`` methods on Gateway.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from boxagent.tools import ToolContext, boxagent_tool
 

@@ -7,7 +7,6 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import yaml
 
 from boxagent.config import BotConfig, SpecialistConfig, WorkgroupConfig
 from boxagent.agent.backend_factory import create_backend
@@ -35,7 +34,6 @@ from boxagent.sessions import SessionPool
 from boxagent.workgroup.template_loader import (
     TemplateInfo,
     discover_templates,
-    filter_skill_subdirs,
     get_template,
 )
 from boxagent.workgroup.workspace_templates import (
@@ -549,7 +547,6 @@ class WorkgroupManager:
             # Find session_id for this specialist
             for workgroup_config in self.config.values():
                 if target in workgroup_config.specialists:
-                    specialist = workgroup_config.specialists[target]
                     chat_id = f"wg:{target}"
                     sid = pool.get_session_id(chat_id)
                     if sid:
@@ -620,7 +617,6 @@ class WorkgroupManager:
         # chat_id used by send_to_specialist
         for workgroup_config in self.config.values():
             if target in workgroup_config.specialists:
-                specialist = workgroup_config.specialists[target]
                 chat_id = f"wg:{target}"
                 pool.clear_session(chat_id)
                 logger.info("Reset session for specialist '%s' (chat_id=%s)", target, chat_id)

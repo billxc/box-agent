@@ -74,7 +74,7 @@ async def cmd_status(
     tool_display = getattr(channel, "tool_calls_display", "")
 
     lines = [
-        f"**Status**",
+        "**Status**",
         f"Bot: {bot_name}",
     ]
     if display_name and display_name != bot_name:
@@ -87,7 +87,7 @@ async def cmd_status(
     lines.append(f"Session: {session}")
     lines.append(f"Workspace: {workspace or '(not set)'}")
     if yolo:
-        lines.append(f"Yolo: on")
+        lines.append("Yolo: on")
     if tool_display:
         lines.append(f"Tool display: {tool_display}")
     lines.append(f"Uptime: {uptime_str}")
@@ -460,7 +460,7 @@ async def cmd_trust_workspace(
 
     if not claude_json_path.exists():
         await channel.send_text(
-            msg.chat_id, f"~/.claude.json not found.",
+            msg.chat_id, "~/.claude.json not found.",
         )
         return
 

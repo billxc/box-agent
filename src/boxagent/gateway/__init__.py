@@ -16,4 +16,4 @@ from boxagent.agent.claude_process import ClaudeProcess
 from boxagent.router import Router
 from boxagent.watchdog import Watchdog
 
-__all__ = ["Gateway"]
+__all__ = ["Gateway", "ClaudeProcess", "Router", "Watchdog"]

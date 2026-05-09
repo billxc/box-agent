@@ -12,8 +12,6 @@ class TestBuildSessionContext:
             bot_name="test-bot",
             display_name="Test Bot",
             node_id="my-node",
-            ai_backend="claude-cli",
-            model="opus",
             workspace="/tmp/ws",
             config_dir="/tmp/cfg",
         )
