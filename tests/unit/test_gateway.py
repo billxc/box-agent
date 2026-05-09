@@ -7,6 +7,21 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 
+def _http_server_from(gw):
+    """Build an HttpApiServer bound to a Gateway's deps (for tests that
+    bypass gw.start()).
+    """
+    from boxagent.gateway.http_api_server import HttpApiServer
+    return HttpApiServer(
+        config=gw.config,
+        config_dir=gw.config_dir,
+        local_dir=gw.local_dir,
+        peer=gw._peer,
+        workgroup_routes=gw._workgroup_routes,
+        mcp_gateway_context=gw,
+    )
+
+
 def _agent_mgr_from(gw):
     """Build an AgentManager bound to a Gateway's shared dicts."""
     from boxagent.agent.agent_manager import AgentManager
@@ -63,7 +78,7 @@ class TestGateway:
              patch("boxagent.agent.agent_manager.AgentManager.start_raw_bot",
                    side_effect=noop_raw, autospec=True), \
              patch.object(gw, "_start_scheduler"), \
-             patch.object(gw, "_start_http", new_callable=AsyncMock), \
+             patch("boxagent.gateway.http_api_server.HttpApiServer.start", new_callable=AsyncMock), \
              patch.object(gw, "_start_web_http", new_callable=AsyncMock):
             await gw.start()
 
@@ -106,7 +121,7 @@ class TestGateway:
         mock_config.node_id = "test-node"
 
         gw = Gateway(config=mock_config, config_dir=tmp_path)
-        with patch.object(gw, "_start_http", new_callable=AsyncMock), \
+        with patch("boxagent.gateway.http_api_server.HttpApiServer.start", new_callable=AsyncMock), \
                      patch.object(gw, "_start_web_http", new_callable=AsyncMock):
             await gw.start()
 
@@ -130,7 +145,7 @@ class TestGateway:
         mock_config.node_id = "test-node"
 
         gw = Gateway(config=mock_config, config_dir=tmp_path)
-        with patch.object(gw, "_start_http", new_callable=AsyncMock), \
+        with patch("boxagent.gateway.http_api_server.HttpApiServer.start", new_callable=AsyncMock), \
                      patch.object(gw, "_start_web_http", new_callable=AsyncMock):
             await gw.start()
 
@@ -321,9 +336,9 @@ class TestGateway:
         local_dir = tmp_path / "local"
         local_dir.mkdir()
         gw = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
-        gw._scheduler = MagicMock()
         gw._peer = MagicMock()
         gw._workgroup_routes = MagicMock()
+        http_server = _http_server_from(gw)
 
         mock_socket = MagicMock()
         mock_socket.getsockname.return_value = ("127.0.0.1", 50762)
@@ -332,13 +347,13 @@ class TestGateway:
         mock_tcp._server = mock_server
 
         with patch.object(web, "TCPSite", return_value=mock_tcp) as MockTCP, \
-             patch.object(gw, "_start_mcp_http", new_callable=AsyncMock):
-            await gw._start_http()
+             patch.object(http_server, "start_mcp", new_callable=AsyncMock):
+            await http_server.start()
             MockTCP.assert_called_once()
 
         assert (local_dir / "api-port.txt").read_text(encoding="utf-8") == "50762\n"
 
-        await gw._stop_http()
+        await http_server.stop()
 
     async def test_start_http_uses_configured_port(self, tmp_path):
         from boxagent.gateway import Gateway
@@ -353,19 +368,19 @@ class TestGateway:
         local_dir = tmp_path / "local"
         local_dir.mkdir()
         gw = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
-        gw._scheduler = MagicMock()
         gw._peer = MagicMock()
         gw._workgroup_routes = MagicMock()
+        http_server = _http_server_from(gw)
 
         with patch.object(web, "TCPSite") as MockTCP, \
-             patch.object(gw, "_start_mcp_http", new_callable=AsyncMock):
+             patch.object(http_server, "start_mcp", new_callable=AsyncMock):
             mock_tcp = AsyncMock()
             MockTCP.return_value = mock_tcp
-            await gw._start_http()
+            await http_server.start()
             MockTCP.assert_called_once()
             assert MockTCP.call_args[0][2] == 19876
 
-        await gw._stop_http()
+        await http_server.stop()
 
     async def test_stop_http_removes_port_file(self, tmp_path):
         from boxagent.gateway import Gateway
@@ -378,12 +393,15 @@ class TestGateway:
         local_dir = tmp_path / "local"
         local_dir.mkdir()
         gw = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
+        gw._peer = MagicMock()
+        gw._workgroup_routes = MagicMock()
+        http_server = _http_server_from(gw)
 
         port_file = local_dir / "api-port.txt"
         port_file.write_text("50762\n", encoding="utf-8")
         assert port_file.exists()
 
-        await gw._stop_http()
+        await http_server.stop()
         assert not port_file.exists()
 
     async def test_clear_http_artifacts_removes_stale_sock(self, tmp_path):
@@ -435,7 +453,7 @@ class TestGateway:
              patch("boxagent.agent.agent_manager.AgentManager.start_raw_bot",
                    side_effect=noop_raw, autospec=True), \
              patch.object(gw, "_start_scheduler"), \
-             patch.object(gw, "_start_http", new_callable=AsyncMock), \
+             patch("boxagent.gateway.http_api_server.HttpApiServer.start", new_callable=AsyncMock), \
              patch.object(gw, "_start_web_http", new_callable=AsyncMock):
             await gw.start()
 
@@ -469,7 +487,7 @@ class TestGateway:
              patch("boxagent.agent.agent_manager.AgentManager.start_raw_bot",
                    side_effect=noop_raw, autospec=True), \
              patch.object(gw, "_start_scheduler"), \
-             patch.object(gw, "_start_http", new_callable=AsyncMock), \
+             patch("boxagent.gateway.http_api_server.HttpApiServer.start", new_callable=AsyncMock), \
              patch.object(gw, "_start_web_http", new_callable=AsyncMock):
             await gw.start()
 

@@ -17,6 +17,7 @@ from boxagent.cluster.cluster_http_routes import ClusterHttpRoutes
 from boxagent.cluster.cluster_rpc import ClusterRpc
 from boxagent.cluster.peer_service import PeerService
 from boxagent.cluster.topology_service import TopologyService
+from boxagent.gateway.http_api_server import HttpApiServer
 from boxagent.workgroup.workgroup_http_routes import WorkgroupHttpRoutes
 from boxagent.transports.web import WebChannel
 from boxagent.cluster import ClusterTunnel, GuestClient, GuestRegistry
@@ -60,7 +61,6 @@ class _GatewayCore:
     )
     _scheduler: Scheduler | None = field(default=None, repr=False)
     _scheduler_task: asyncio.Task | None = field(default=None, repr=False)
-    _http_runner: web.AppRunner | None = field(default=None, repr=False)
     _host_election: object | None = field(default=None, repr=False)
     _start_time: float = 0.0
     _workgroup_mgr: WorkgroupManager | None = field(default=None, repr=False)
@@ -70,6 +70,7 @@ class _GatewayCore:
     _cluster_rpc: ClusterRpc | None = field(default=None, repr=False)
     _cluster_routes: ClusterHttpRoutes | None = field(default=None, repr=False)
     _workgroup_routes: WorkgroupHttpRoutes | None = field(default=None, repr=False)
+    _http_server: HttpApiServer | None = field(default=None, repr=False)
 
     # Public read-only views into HostElection-owned components. Read sites
     # use these instead of reaching into ``_host_election.registry`` directly,
@@ -122,6 +123,14 @@ class _GatewayCore:
         self._workgroup_routes = WorkgroupHttpRoutes(
             config=self.config, config_dir=self.config_dir,
         )
+        self._http_server = HttpApiServer(
+            config=self.config,
+            config_dir=self.config_dir,
+            local_dir=self.local_dir,
+            peer=self._peer,
+            workgroup_routes=self._workgroup_routes,
+            mcp_gateway_context=self,
+        )
         logger.info("Gateway starting (node=%s)", self.config.node_id or "(any)")
 
         # Start Web UI first so the page is reachable while the rest boots.
@@ -166,7 +175,7 @@ class _GatewayCore:
         self._start_scheduler()
 
         # Start HTTP API
-        await self._start_http()
+        await self._http_server.start()
 
         # Cluster: kick off host election (host_priority list determines who
         # is host vs guest at runtime, with failover when primary disappears).
@@ -264,8 +273,9 @@ class _GatewayCore:
         # Release listening ports first so a restarting process can re-bind immediately,
         # regardless of how long the rest of the shutdown takes.
         await self._stop_web_http()
-        await self._stop_http()
-        await self._stop_mcp_http()
+        if self._http_server is not None:
+            await self._http_server.stop()
+            await self._http_server.stop_mcp()
 
         # Stop host election — it tears down whichever of guest_client /
         # cluster_tunnel / guest_registry it currently owns.
@@ -331,13 +341,11 @@ class _GatewayCore:
 
 # ── Gateway: compose mixins on top of _GatewayCore ──
 
-from boxagent.gateway.http_api import HttpApiMixin
 from boxagent.transports.web.server import WebServerMixin
 
 
 class Gateway(
     WebServerMixin,
-    HttpApiMixin,
     _GatewayCore,
 ):
     """Top-level Gateway. State + lifecycle live in ``_GatewayCore``;
