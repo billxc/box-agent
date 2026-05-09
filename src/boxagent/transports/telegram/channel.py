@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import tempfile
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,7 +31,7 @@ class TelegramChannel(Channel):
     token: str
     allowed_users: list[int]
     tool_calls_display: str = "summary"
-    on_message: object = None
+    on_message: Callable[[IncomingMessage], Awaitable[None]] | None = None
 
     _bot: Bot | None = field(default=None, repr=False)
     _dp: Dispatcher | None = field(default=None, repr=False)
@@ -45,6 +46,14 @@ class TelegramChannel(Channel):
     _tool_started_shown: set[tuple[str, str]] = field(
         default_factory=set, repr=False
     )
+
+    @property
+    def bot(self) -> Bot:
+        """Narrow accessor — raises if start() hasn't run. Every send/edit
+        path goes through here so callers can drop the `if self._bot:` guard."""
+        if self._bot is None:
+            raise RuntimeError("TelegramChannel not started — call start() first")
+        return self._bot
 
     async def start(self) -> None:
         """Start bot polling."""
@@ -78,7 +87,7 @@ class TelegramChannel(Channel):
 
         async def _set_commands_bg():
             try:
-                await self._bot.set_my_commands(commands)
+                await self.bot.set_my_commands(commands)
             except Exception as e:
                 logger.warning("Telegram set_my_commands failed: %s", e)
 
@@ -98,11 +107,11 @@ class TelegramChannel(Channel):
             except asyncio.CancelledError:
                 pass
         if self._bot:
-            await self._bot.session.close()
+            await self.bot.session.close()
         logger.info("Telegram channel stopped")
 
     async def send_text(
-        self, chat_id: str, text: str, parse_mode: str = "MarkdownV2",
+        self, chat_id: str, text: str, parse_mode: str | None = "MarkdownV2",
         **kwargs,
     ) -> str:
         """Send text message, splitting if too long.
@@ -114,13 +123,13 @@ class TelegramChannel(Channel):
         for chunk in chunks:
             send_text = md_to_telegram(chunk) if parse_mode == "MarkdownV2" else chunk
             try:
-                result = await self._bot.send_message(
+                result = await self.bot.send_message(
                     chat_id=chat_id, text=send_text, parse_mode=parse_mode
                 )
             except Exception:
                 if parse_mode is not None:
                     logger.debug("MarkdownV2 send failed, retrying as plain text")
-                    result = await self._bot.send_message(
+                    result = await self.bot.send_message(
                         chat_id=chat_id, text=chunk, parse_mode=None
                     )
                 else:
@@ -151,14 +160,14 @@ class TelegramChannel(Channel):
         )
         send_text = md_to_telegram(text) if parse_mode == "MarkdownV2" else text
         try:
-            result = await self._bot.send_message(
+            result = await self.bot.send_message(
                 chat_id=chat_id, text=send_text, parse_mode=parse_mode,
                 reply_markup=keyboard,
             )
         except Exception:
             if parse_mode is not None:
                 logger.debug("MarkdownV2 send failed, retrying as plain text")
-                result = await self._bot.send_message(
+                result = await self.bot.send_message(
                     chat_id=chat_id, text=text, parse_mode=None,
                     reply_markup=keyboard,
                 )
@@ -168,7 +177,7 @@ class TelegramChannel(Channel):
 
     async def stream_start(self, chat_id: str, **kwargs) -> StreamHandle:
         """Send initial placeholder message for streaming."""
-        result = await self._bot.send_message(
+        result = await self.bot.send_message(
             chat_id=chat_id, text="...", parse_mode=None
         )
         handle = StreamHandle(
@@ -222,7 +231,7 @@ class TelegramChannel(Channel):
         """Send typing indicator."""
         from aiogram.enums import ChatAction
 
-        await self._bot.send_chat_action(
+        await self.bot.send_chat_action(
             chat_id=int(chat_id), action=ChatAction.TYPING
         )
 
@@ -343,18 +352,25 @@ class TelegramChannel(Channel):
                 send_text = md_to_telegram(text) if final else text
                 if final:
                     logger.debug("Final flush mid=%s, mdv2 len=%d", mid, len(send_text))
-                await self._bot.edit_message_text(
-                    chat_id=handle.chat_id,
-                    message_id=int(mid),
-                    text=send_text,
-                    **({"parse_mode": "MarkdownV2"} if final else {}),
-                )
+                if final:
+                    await self.bot.edit_message_text(
+                        chat_id=handle.chat_id,
+                        message_id=int(mid),
+                        text=send_text,
+                        parse_mode="MarkdownV2",
+                    )
+                else:
+                    await self.bot.edit_message_text(
+                        chat_id=handle.chat_id,
+                        message_id=int(mid),
+                        text=send_text,
+                    )
                 self._stream_last_sent[mid] = text
             except Exception as e:
                 if final:
                     # MarkdownV2 failed, retry plain text
                     try:
-                        await self._bot.edit_message_text(
+                        await self.bot.edit_message_text(
                             chat_id=handle.chat_id,
                             message_id=int(mid),
                             text=text,
@@ -378,7 +394,7 @@ class TelegramChannel(Channel):
 
         # Edit old message with the 'keep' portion (MarkdownV2 + fallback)
         try:
-            await self._bot.edit_message_text(
+            await self.bot.edit_message_text(
                 chat_id=handle.chat_id,
                 message_id=int(old_mid),
                 text=md_to_telegram(keep),
@@ -386,7 +402,7 @@ class TelegramChannel(Channel):
             )
         except Exception:
             try:
-                await self._bot.edit_message_text(
+                await self.bot.edit_message_text(
                     chat_id=handle.chat_id,
                     message_id=int(old_mid),
                     text=keep,
@@ -400,7 +416,7 @@ class TelegramChannel(Channel):
         self._cancel_stream_timer(old_mid)
 
         # Send new message and update handle in-place
-        result = await self._bot.send_message(
+        result = await self.bot.send_message(
             chat_id=handle.chat_id, text=carry or "...", parse_mode=None
         )
         new_mid = str(result.message_id)
@@ -420,16 +436,17 @@ class TelegramChannel(Channel):
             # Telegram sends multiple sizes; take the largest
             photo = message.photo[-1]
             try:
-                file = await self._bot.get_file(photo.file_id)
-                dest = Path(tempfile.mkdtemp()) / f"{photo.file_id}.jpg"
-                await self._bot.download_file(file.file_path, dest)
-                attachments.append(Attachment(
-                    type="image",
-                    file_path=str(dest),
-                    file_name=f"{photo.file_id}.jpg",
-                    mime_type="image/jpeg",
-                    size=photo.file_size or 0,
-                ))
+                file = await self.bot.get_file(photo.file_id)
+                if file.file_path is not None:
+                    dest = Path(tempfile.mkdtemp()) / f"{photo.file_id}.jpg"
+                    await self.bot.download_file(file.file_path, dest)
+                    attachments.append(Attachment(
+                        type="image",
+                        file_path=str(dest),
+                        file_name=f"{photo.file_id}.jpg",
+                        mime_type="image/jpeg",
+                        size=photo.file_size or 0,
+                    ))
             except Exception as e:
                 logger.warning("Failed to download photo: %s", e)
 
@@ -437,16 +454,17 @@ class TelegramChannel(Channel):
         if message.document:
             doc = message.document
             try:
-                file = await self._bot.get_file(doc.file_id)
-                dest = Path(tempfile.mkdtemp()) / (doc.file_name or doc.file_id)
-                await self._bot.download_file(file.file_path, dest)
-                attachments.append(Attachment(
-                    type="file",
-                    file_path=str(dest),
-                    file_name=doc.file_name or doc.file_id,
-                    mime_type=doc.mime_type or "application/octet-stream",
-                    size=doc.file_size or 0,
-                ))
+                file = await self.bot.get_file(doc.file_id)
+                if file.file_path is not None:
+                    dest = Path(tempfile.mkdtemp()) / (doc.file_name or doc.file_id)
+                    await self.bot.download_file(file.file_path, dest)
+                    attachments.append(Attachment(
+                        type="file",
+                        file_path=str(dest),
+                        file_name=doc.file_name or doc.file_id,
+                        mime_type=doc.mime_type or "application/octet-stream",
+                        size=doc.file_size or 0,
+                    ))
             except Exception as e:
                 logger.warning("Failed to download document: %s", e)
 
