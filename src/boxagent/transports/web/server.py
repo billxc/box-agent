@@ -163,7 +163,7 @@ class WebHttpServer:
 
     # ── Auth ──
 
-    def _web_authorized(self, request: web.Request) -> bool:
+    def _authorized(self, request: web.Request) -> bool:
         """Allow localhost, trusted-header (tunnel), or matching bearer/query token."""
         token = (self.config.web_token or "").strip()
         peer = request.transport.get_extra_info("peername") if request.transport else None
@@ -182,7 +182,7 @@ class WebHttpServer:
             return True
         return False
 
-    def _web_unauthorized(self) -> web.Response:
+    def _unauthorized(self) -> web.Response:
         return web.json_response({"ok": False, "error": "unauthorized"}, status=401)
 
     # ── Handlers ──
