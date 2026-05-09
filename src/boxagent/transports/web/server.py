@@ -10,6 +10,58 @@ registered by the Gateway via ``_register_extra_web_routes`` on the same
 aiohttp app, since the rest of the cluster code already targets that port.
 """
 
+from dataclasses import asdict
+
+
+def _project_to_dict(p) -> dict:
+    """Serialise a ``boxagent.history.ProjectInfo`` for the Web UI.
+
+    Frontend expects ``encoded`` (legacy field name) — we round-trip the
+    project_id through it so the resume picker can hand it back to
+    ``/api/claude/sessions``.
+    """
+    return {
+        "encoded": p.project_id,
+        "label": p.label,
+        "cwd": p.cwd,
+        "session_count": p.session_count,
+        "last_ts": p.last_ts,
+    }
+
+
+def _session_info_to_dict(s) -> dict:
+    """Serialise a ``boxagent.history.SessionInfo`` for the Web UI."""
+    return {
+        "session_id": s.session_id,
+        "first_user": s.first_user,
+        "message_count": s.message_count,
+        "last_ts": s.last_ts,
+        "summary": s.summary,
+        "custom_title": s.custom_title,
+        "git_branch": s.git_branch,
+        "tag": s.tag,
+        "created_at": s.created_at,
+    }
+
+
+def _message_to_dict(m) -> dict:
+    """Serialise a ``boxagent.history.Message`` to the legacy record shape
+    consumed by the web UI's transcript replay."""
+    base = {"role": m.role, "ts": m.ts}
+    if m.role in ("user", "assistant", "skill_output"):
+        base["text"] = m.text
+    elif m.role == "tool_call":
+        base["tool_id"] = m.tool_id
+        base["name"] = m.name
+        base["args"] = m.args
+    elif m.role == "tool_result":
+        base["tool_id"] = m.tool_id
+        base["ok"] = m.ok
+        base["summary"] = m.summary
+        base["error"] = m.error
+    return base
+
+
 import asyncio
 import logging
 import time
@@ -209,26 +261,18 @@ class WebServerMixin:
         bot_cfg = self.config.bots.get(bot)
         wg_cfg = self.config.workgroups.get(bot)
         backend = (bot_cfg.ai_backend if bot_cfg else None) or (wg_cfg.ai_backend if wg_cfg else "claude-cli")
-        if backend == "claude-cli":
+        if backend in ("claude-cli", "agent-sdk-claude"):
             try:
-                from boxagent.sessions import claude_native
-                base = claude_native.default_claude_projects_dir()
-                if base.is_dir():
-                    for proj in base.iterdir():
-                        if not proj.is_dir():
-                            continue
-                        for f in proj.iterdir():
-                            if f.suffix == ".jsonl":
-                                try:
-                                    stat = f.stat()
-                                    claude_session_info[f.stem] = {
-                                        "size": stat.st_size,
-                                        "mtime": stat.st_mtime,
-                                    }
-                                except OSError:
-                                    pass
+                from boxagent.history import get_history
+                history = get_history(backend)
+                # SDK gives us session metadata directly per-sid via
+                # get_session_info — no need to scan the project tree.
+                # We populate claude_session_info lazily in the loop below.
+                _claude_history = history
             except Exception:
-                pass
+                _claude_history = None
+        else:
+            _claude_history = None
 
         for s in sessions:
             sid = s.get("session_id") or ""
@@ -242,34 +286,26 @@ class WebServerMixin:
 
             cached = self._session_meta_cache.get(sid)
 
-            ci = claude_session_info.get(sid)
-            if ci:
-                if cached and cached.get("mtime") == ci["mtime"]:
+            # Try claude-native lookup first (covers claude-cli + agent-sdk-claude).
+            if _claude_history is not None:
+                if cached:
                     s["preview"] = cached.get("preview", "")
                     s["last_ts"] = cached.get("last_ts", 0)
                     s["message_count"] = cached.get("message_count", 0)
                     continue
-                from boxagent.sessions import claude_native
-                base = claude_native.default_claude_projects_dir()
-                for proj in base.iterdir():
-                    f = proj / f"{sid}.jsonl"
-                    if f.is_file():
-                        sess_list = claude_native.list_sessions(proj.name)
-                        for sl in sess_list:
-                            if sl.get("session_id") == sid:
-                                s["message_count"] = sl.get("message_count", 0)
-                                s["last_ts"] = sl.get("last_ts", 0)
-                                preview = (sl.get("first_user") or "").strip().replace("\n", " ")
-                                s["preview"] = preview[:90] + ("..." if len(preview) > 90 else "")
-                                break
-                        self._session_meta_cache[sid] = {
-                            "mtime": ci["mtime"],
-                            "preview": s["preview"],
-                            "last_ts": s["last_ts"],
-                            "message_count": s["message_count"],
-                        }
-                        break
-                continue
+                info = await _claude_history.get_session_info(sid)
+                if info is not None:
+                    preview = (info.first_user or "").strip().replace("\n", " ")
+                    s["preview"] = preview[:90] + ("..." if len(preview) > 90 else "")
+                    s["last_ts"] = info.last_ts
+                    s["message_count"] = info.message_count
+                    self._session_meta_cache[sid] = {
+                        "mtime": info.last_ts,
+                        "preview": s["preview"],
+                        "last_ts": s["last_ts"],
+                        "message_count": s["message_count"],
+                    }
+                    continue
 
             tpath = self._storage.local_dir / "transcripts" / f"{sid}.jsonl"
             if not tpath.is_file():
@@ -458,21 +494,14 @@ class WebServerMixin:
                 session_id = saved
             sids = ([session_id] if session_id else []) + prev_chain
 
-            if saved_backend == "claude-cli" and sids:
-                from boxagent.sessions import claude_native
-                base = claude_native.default_claude_projects_dir()
-                if base.is_dir():
-                    proj_index: dict[str, str] = {}
-                    for proj in base.iterdir():
-                        if not proj.is_dir():
-                            continue
-                        for f in proj.iterdir():
-                            if f.suffix == ".jsonl":
-                                proj_index[f.stem] = proj.name
-                    for sid in sids:
-                        encoded = proj_index.get(sid)
-                        if encoded:
-                            history.extend(claude_native.read_messages(encoded, sid))
+            if saved_backend in ("claude-cli", "agent-sdk-claude") and sids:
+                from boxagent.history import get_history
+                history_impl = get_history(saved_backend)
+                # SDK can find a session without us knowing the project
+                # — pass empty project_id and let it search.
+                for sid in sids:
+                    msgs = await history_impl.read_messages(sid)
+                    history.extend(_message_to_dict(m) for m in msgs)
                 history.sort(key=lambda r: r.get("ts") or 0)
                 total = len(history)
                 limit = int(request.query.get("limit", 0) or 0)
@@ -600,9 +629,13 @@ class WebServerMixin:
             resp = await self._dispatch_machine_request(machine, "GET", "/api/claude/projects", request)
             if resp is not None:
                 return resp
-        from boxagent.sessions import claude_native
-        projects = await asyncio.to_thread(claude_native.list_projects)
-        return web.json_response({"ok": True, "projects": projects})
+        from boxagent.history import get_history
+        history = get_history("claude-cli")
+        projects = await history.list_projects()
+        return web.json_response({
+            "ok": True,
+            "projects": [_project_to_dict(p) for p in projects],
+        })
 
     async def _handle_claude_sessions(self, request: web.Request) -> web.Response:
         if not self._web_authorized(request):
@@ -615,11 +648,12 @@ class WebServerMixin:
             resp = await self._dispatch_machine_request(machine, "GET", "/api/claude/sessions", request)
             if resp is not None:
                 return resp
-        from boxagent.sessions import claude_native
-        sessions = await asyncio.to_thread(claude_native.list_sessions, encoded)
+        from boxagent.history import get_history
+        history = get_history("claude-cli")
+        sessions = await history.list_sessions(encoded)
         return web.json_response({
             "ok": True,
-            "sessions": sessions,
+            "sessions": [_session_info_to_dict(s) for s in sessions],
         })
 
     async def _handle_claude_transcript(self, request: web.Request) -> web.Response:
@@ -634,11 +668,12 @@ class WebServerMixin:
             resp = await self._dispatch_machine_request(machine, "GET", "/api/claude/transcript", request)
             if resp is not None:
                 return resp
-        from boxagent.sessions import claude_native
-        messages = await asyncio.to_thread(claude_native.read_messages, encoded, sid)
+        from boxagent.history import get_history
+        history = get_history("claude-cli")
+        messages = await history.read_messages(sid, encoded)
         return web.json_response({
             "ok": True,
-            "messages": messages,
+            "messages": [_message_to_dict(m) for m in messages],
         })
 
     async def _handle_claude_resume(self, request: web.Request) -> web.Response:
@@ -672,8 +707,10 @@ class WebServerMixin:
                 backend = backend_override or "claude-cli"
             else:
                 backend = (cfg.ai_backend if cfg else None) or (workgroup.ai_backend if workgroup else "claude-cli")
-            from boxagent.sessions import claude_native
-            workspace = (await asyncio.to_thread(claude_native.project_cwd, encoded) if encoded else "") or (
+            # ``encoded`` (project_id) is now the cwd path — use it
+            # directly. Older callers that don't supply project still
+            # fall back to bot/workgroup defaults below.
+            workspace = encoded or (
                 cfg.workspace if cfg else (workgroup.admin_workspace if workgroup else "")
             )
             chat_id = f"{backend.split('-')[0]}-{sid}" if is_raw else f"claude-{sid}"
