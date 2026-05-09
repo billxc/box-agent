@@ -20,7 +20,7 @@ class HttpApiMixin:
         app.router.add_post("/api/workgroup/reset_specialist", self._handle_reset_specialist)
         app.router.add_post("/api/workgroup/delete_specialist", self._handle_delete_specialist)
         app.router.add_post("/api/workgroup/cancel_task", self._handle_cancel_task)
-        app.router.add_post("/api/peer/send", self._handle_peer_send)
+        app.router.add_post("/api/peer/send", self._peer.handle_peer_send)
         # NOTE: /api/wg/peer/recv lives on `web_app` (the web UI port) instead of
         # `app` (internal API port) because guest_client forwards RPC frames to
         # `127.0.0.1:<local_web_port>` — the web UI port. Registering it here

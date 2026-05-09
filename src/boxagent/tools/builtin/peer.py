@@ -38,7 +38,7 @@ async def send_to_peer(args: dict, ctx: ToolContext) -> str:
 
     if not wait:
         asyncio.create_task(
-            ctx.gateway.send_peer(target, ctx.bot_name, message),
+            ctx.gateway._peer.send_peer(target, ctx.bot_name, message),
             name=f"send_to_peer:{target}",
         )
         return (
@@ -46,7 +46,7 @@ async def send_to_peer(args: dict, ctx: ToolContext) -> str:
             f"(fire-and-forget; pass wait=true for confirmation)."
         )
 
-    result = await ctx.gateway.send_peer(target, ctx.bot_name, message)
+    result = await ctx.gateway._peer.send_peer(target, ctx.bot_name, message)
     if result.get("ok"):
         via = result.get("via", "?")
         return f"Message sent to {target} (via {via})."

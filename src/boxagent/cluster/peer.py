@@ -1,13 +1,46 @@
-"""Peer messaging — local + cluster RPC dispatch."""
+"""Peer messaging — local + cluster RPC dispatch.
+
+Composition class. Held by Gateway as ``self._peer``. Two-phase DI:
+
+- Phase 1 (constructor): topology (for guest_registry/guest_client lookups)
+  and main_chat_id_provider (callable that mints/loads the admin's main
+  chat_id for envelope dispatch).
+- Phase 2 (setter): ``set_workgroup_mgr`` after WorkgroupManager built.
+
+Public surface:
+- ``send_peer`` — cluster-aware peer message dispatch (used by MCP tool
+  and by the /api/peer/send HTTP route).
+- ``handle_peer_send`` / ``handle_wg_peer_recv`` — aiohttp handlers
+  registered by ClusterRoutesMixin (and the API HTTP server).
+"""
 
 import logging
+from typing import TYPE_CHECKING, Callable
 
 from aiohttp import web
+
+if TYPE_CHECKING:
+    from boxagent.cluster.topology import TopologyService
+    from boxagent.workgroup import WorkgroupManager
 
 logger = logging.getLogger(__name__)
 
 
-class PeerMixin:
+class PeerService:
+    def __init__(
+        self,
+        *,
+        topology: "TopologyService",
+        main_chat_id_provider: Callable[[str], str],
+    ) -> None:
+        self.topology = topology
+        self._main_chat_id_provider = main_chat_id_provider
+        # Phase 2 dep
+        self.workgroup_mgr: "WorkgroupManager | None" = None
+
+    def set_workgroup_mgr(self, workgroup_mgr: "WorkgroupManager") -> None:
+        self.workgroup_mgr = workgroup_mgr
+
     async def send_peer(
         self, target: str, sender: str, message: str,
     ) -> dict:
@@ -19,16 +52,17 @@ class PeerMixin:
         Returns ``{ok: bool, via: "local"|"rpc"|"none", machine?: str, error?: str}``.
         """
         if (
-            self._workgroup_mgr is not None
-            and target in self._workgroup_mgr.routers
+            self.workgroup_mgr is not None
+            and target in self.workgroup_mgr.routers
         ):
             await self._dispatch_local_peer(target, sender, message)
             return {"ok": True, "via": "local"}
-        if self.guest_registry is not None:
-            for machine_id, bot in self.guest_registry.list_bots():
+        guest_registry = self.topology.guest_registry
+        if guest_registry is not None:
+            for machine_id, bot in guest_registry.list_bots():
                 if bot.name != target or bot.kind != "workgroup":
                     continue
-                sess = self.guest_registry.get(machine_id)
+                sess = guest_registry.get(machine_id)
                 if sess is None:
                     continue
                 try:
@@ -40,10 +74,8 @@ class PeerMixin:
                     logger.error("Peer RPC to %s failed: %s", machine_id, e)
                     return {"ok": False, "via": "rpc", "error": f"rpc failed: {e}"}
                 # Don't trust GuestSession.call's transport-level success —
-                # the guest-side handler may have returned 404/500 (e.g. wrong
-                # port, unknown workgroup). Surface non-2xx as a real failure
-                # so callers (and the admin AI) don't think the message was
-                # delivered when it wasn't.
+                # the guest-side handler may have returned 404/500. Surface
+                # non-2xx so callers don't think the message was delivered.
                 status = int(rpc_result.get("status") or 0)
                 if 200 <= status < 300:
                     return {"ok": True, "via": "rpc", "machine": machine_id}
@@ -56,9 +88,10 @@ class PeerMixin:
         # Guest mode: not host, can't see registry — forward to host's
         # /api/peer/send and let host resolve. Without this, sats can only
         # peer-message workgroups they host themselves.
-        if self.guest_client is not None:
+        guest_client = self.topology.guest_client
+        if guest_client is not None:
             try:
-                result = await self.guest_client.fetch_host_json(
+                result = await guest_client.fetch_host_json(
                     "/api/peer/send", method="POST",
                     body={"target": target, "from": sender, "message": message},
                 )
@@ -76,8 +109,8 @@ class PeerMixin:
             "error": f"no workgroup '{target}' found locally or in cluster",
         }
 
-    async def _handle_peer_send(self, request: web.Request) -> web.Response:
-        """Handle POST /api/peer/send — thin wrapper around send_peer."""
+    async def handle_peer_send(self, request: web.Request) -> web.Response:
+        """POST /api/peer/send — thin wrapper around send_peer."""
         try:
             payload = await request.json()
         except Exception:
@@ -100,17 +133,8 @@ class PeerMixin:
         return web.json_response(result)
 
     async def _dispatch_local_peer(self, target: str, sender: str, body: str) -> None:
-        """Inject a peer message into the local workgroup admin's router.
-
-        Wraps `body` in the workgroup peer envelope (admin always sees the
-        same shape regardless of transport).
-
-        Routed to the same chat_id heartbeat dispatches into
-        (``heartbeat:<target>``) so the message lands in the admin's main
-        session — not a separate ``peer:<sender>`` chat that would spawn a
-        fresh, context-less session each time.
-        """
-        admin_router = self._workgroup_mgr.routers[target]
+        """Inject a peer message into the local workgroup admin's router."""
+        admin_router = self.workgroup_mgr.routers[target]
         envelope = (
             f"[Peer message from {sender}]\n"
             f"{body}\n\n"
@@ -120,19 +144,17 @@ class PeerMixin:
         from boxagent.transports.base import IncomingMessage
         msg = IncomingMessage(
             channel="internal",
-            chat_id=self._get_or_create_main_chat_id(target),
+            chat_id=self._main_chat_id_provider(target),
             user_id=sender,
             text=envelope,
             trusted=True,
         )
         await admin_router.handle_message(msg)
 
-    async def _handle_wg_peer_recv(self, request: web.Request) -> web.Response:
-        """Handle POST /api/wg/peer/recv — receive a peer message from another node.
+    async def handle_wg_peer_recv(self, request: web.Request) -> web.Response:
+        """POST /api/wg/peer/recv — receive a peer message from another node.
 
         Body: {target_workgroup, sender, body} where body is RAW (no envelope).
-        Caller (host's _handle_peer_send) routes here via cluster RPC; guest_client
-        forwards it over WS to this local gateway.
         """
         try:
             payload = await request.json()
@@ -148,8 +170,8 @@ class PeerMixin:
                 status=400,
             )
         if (
-            self._workgroup_mgr is None
-            or target not in self._workgroup_mgr.routers
+            self.workgroup_mgr is None
+            or target not in self.workgroup_mgr.routers
         ):
             return web.json_response(
                 {"ok": False, "error": f"workgroup '{target}' not on this node"},

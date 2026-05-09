@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from boxagent.agent.manager import AgentManager, _create_backend, _ensure_git_repo, sync_skills
+from boxagent.cluster.peer import PeerService
 from boxagent.cluster.topology import TopologyService
 from boxagent.transports.web import WebChannel
 from boxagent.cluster import ClusterTunnel, GuestClient, GuestRegistry
@@ -62,6 +63,7 @@ class _GatewayCore:
     _workgroup_mgr: WorkgroupManager | None = field(default=None, repr=False)
     _bots: AgentManager | None = field(default=None, repr=False)
     _topology: TopologyService | None = field(default=None, repr=False)
+    _peer: PeerService | None = field(default=None, repr=False)
 
     # Public read-only views into HostElection-owned components. Read sites
     # use these instead of reaching into ``_host_election.registry`` directly,
@@ -103,6 +105,10 @@ class _GatewayCore:
             config=self.config,
             web_channels=self._web_channels,
         )
+        self._peer = PeerService(
+            topology=self._topology,
+            main_chat_id_provider=self._get_or_create_main_chat_id,
+        )
         logger.info("Gateway starting (node=%s)", self.config.node_id or "(any)")
 
         # Start Web UI first so the page is reachable while the rest boots.
@@ -133,8 +139,9 @@ class _GatewayCore:
                 _sync_skills=sync_skills,
                 _peer_provider=self._topology.build_peer_descriptors,
             )
-            # Phase 2: topology now sees workgroup_mgr.
+            # Phase 2: topology + peer now see workgroup_mgr.
             self._topology.set_workgroup_mgr(self._workgroup_mgr)
+            self._peer.set_workgroup_mgr(self._workgroup_mgr)
             for workgroup_name, workgroup_config in self.config.workgroups.items():
                 if not node_matches(workgroup_config.enabled_on_nodes, self.config.node_id):
                     logger.info("Workgroup '%s' skipped (enabled_on_nodes=%s, current=%s)", workgroup_name, workgroup_config.enabled_on_nodes, self.config.node_id)
@@ -308,7 +315,6 @@ class _GatewayCore:
 
 # ── Gateway: compose mixins on top of _GatewayCore ──
 
-from boxagent.cluster.peer import PeerMixin
 from boxagent.cluster.routes import ClusterRoutesMixin
 from boxagent.cluster.rpc import ClusterRpcMixin
 from boxagent.gateway.http_api import HttpApiMixin
@@ -320,7 +326,6 @@ class Gateway(
     WebServerMixin,
     HttpApiMixin,
     WorkgroupApiMixin,
-    PeerMixin,
     ClusterRoutesMixin,
     ClusterRpcMixin,
     _GatewayCore,

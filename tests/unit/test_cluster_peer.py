@@ -1,24 +1,34 @@
 """Unit tests for cross-admin peer messaging via cluster RPC (yait #8)."""
 
 import asyncio
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
-from boxagent.gateway import Gateway
+from boxagent.cluster.peer import PeerService
+from boxagent.cluster.topology import TopologyService
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
-def _make_gateway_with_routers(*router_names: str) -> Gateway:
-    """Build a Gateway shell with a workgroup_mgr that owns named routers."""
-    gw = Gateway.__new__(Gateway)  # bypass __init__
-    gw._workgroup_mgr = SimpleNamespace(
-        routers={name: AsyncMock(handle_message=AsyncMock()) for name in router_names},
+def _make_peer(*router_names: str, host_election=None) -> PeerService:
+    """Build a PeerService with a workgroup_mgr that owns named routers."""
+    cfg = MagicMock()
+    cfg.machine_id = ""
+    cfg.node_id = ""
+    cfg.cluster_tunnel = False
+    topo = TopologyService(config=cfg, web_channels={})
+    if host_election is not None:
+        topo.set_host_election(host_election)
+    ps = PeerService(
+        topology=topo,
+        main_chat_id_provider=lambda b: f"main-{b}-{int(time.time())}",
     )
-    gw._host_election = None
-    return gw
+    if router_names:
+        ps.set_workgroup_mgr(SimpleNamespace(
+            routers={n: AsyncMock(handle_message=AsyncMock()) for n in router_names},
+        ))
+    return ps
 
 
 class _FakeRequest:
@@ -29,23 +39,20 @@ class _FakeRequest:
         return self._body
 
 
-def _post(gw: Gateway, handler_name: str, body: dict):
-    req = _FakeRequest(body)
-    return asyncio.run(getattr(gw, handler_name)(req))
+def _post(handler, body: dict):
+    return asyncio.run(handler(_FakeRequest(body)))
 
 
 # ─── _dispatch_local_peer ────────────────────────────────────────────────────
 
 def test_dispatch_local_peer_envelopes_raw_body():
-    gw = _make_gateway_with_routers("admin-a")
-    asyncio.run(gw._dispatch_local_peer("admin-a", "admin-b", "hello"))
-    handler = gw._workgroup_mgr.routers["admin-a"].handle_message
+    ps = _make_peer("admin-a")
+    asyncio.run(ps._dispatch_local_peer("admin-a", "admin-b", "hello"))
+    handler = ps.workgroup_mgr.routers["admin-a"].handle_message
     handler.assert_awaited_once()
     msg = handler.await_args.args[0]
-    # Peer message routes to the bot's main chat_id (persisted via Storage,
-    # or auto-minted as `main-<bot>-<ts>` when storage is absent — as in
-    # this test). It lands in the admin's main session — same one heartbeat
-    # dispatches into. NOT a `peer:<sender>` chat.
+    # Peer message routes to the bot's main chat_id (provider hook). Lands in
+    # the admin's main session — same one heartbeat dispatches into.
     assert msg.chat_id.startswith("main-admin-a")
     assert msg.user_id == "admin-b"
     assert msg.text.startswith("[Peer message from admin-b]\nhello")
@@ -54,63 +61,62 @@ def test_dispatch_local_peer_envelopes_raw_body():
 
 
 def test_dispatch_local_peer_no_double_envelope_when_body_already_wrapped():
-    """Body comes in raw (per RPC contract). Even if caller mistakenly
-    sends an already-enveloped string, _dispatch_local_peer just wraps once
-    more — that's caller's bug, not ours. We test the contract: the
-    receiver wraps exactly the body it gets."""
-    gw = _make_gateway_with_routers("admin-a")
-    asyncio.run(gw._dispatch_local_peer("admin-a", "admin-b", "raw text"))
-    text = gw._workgroup_mgr.routers["admin-a"].handle_message.await_args.args[0].text
-    # Envelope appears exactly once.
+    ps = _make_peer("admin-a")
+    asyncio.run(ps._dispatch_local_peer("admin-a", "admin-b", "raw text"))
+    text = ps.workgroup_mgr.routers["admin-a"].handle_message.await_args.args[0].text
     assert text.count("[Peer message from admin-b]") == 1
 
 
 # ─── /api/wg/peer/recv ───────────────────────────────────────────────────────
 
 def test_peer_recv_dispatches_to_local_admin():
-    gw = _make_gateway_with_routers("admin-a")
-    resp = _post(gw, "_handle_wg_peer_recv", {
+    ps = _make_peer("admin-a")
+    resp = _post(ps.handle_wg_peer_recv, {
         "target_workgroup": "admin-a", "sender": "admin-b", "body": "hi",
     })
     assert resp.status == 200
-    gw._workgroup_mgr.routers["admin-a"].handle_message.assert_awaited_once()
+    ps.workgroup_mgr.routers["admin-a"].handle_message.assert_awaited_once()
 
 
 def test_peer_recv_404_for_unknown_workgroup():
-    gw = _make_gateway_with_routers("admin-a")
-    resp = _post(gw, "_handle_wg_peer_recv", {
+    ps = _make_peer("admin-a")
+    resp = _post(ps.handle_wg_peer_recv, {
         "target_workgroup": "ghost", "sender": "admin-b", "body": "hi",
     })
     assert resp.status == 404
 
 
 def test_peer_recv_400_on_missing_fields():
-    gw = _make_gateway_with_routers("admin-a")
-    resp = _post(gw, "_handle_wg_peer_recv", {"sender": "x", "body": "y"})
+    ps = _make_peer("admin-a")
+    resp = _post(ps.handle_wg_peer_recv, {"sender": "x", "body": "y"})
     assert resp.status == 400
 
 
 # ─── /api/peer/send ──────────────────────────────────────────────────────────
 
 def test_peer_send_local_admin_dispatches_in_process():
-    gw = _make_gateway_with_routers("admin-a")
-    resp = _post(gw, "_handle_peer_send", {
+    ps = _make_peer("admin-a")
+    resp = _post(ps.handle_peer_send, {
         "target": "admin-a", "from": "admin-b", "message": "hi there",
     })
     assert resp.status == 200
-    gw._workgroup_mgr.routers["admin-a"].handle_message.assert_awaited_once()
+    ps.workgroup_mgr.routers["admin-a"].handle_message.assert_awaited_once()
+
+
+def _he_with_bots(bots: list[tuple[str, object]], sess):
+    he = SimpleNamespace(registry=MagicMock(), client=None, tunnel=None)
+    he.registry.list_bots = MagicMock(return_value=bots)
+    he.registry.get = MagicMock(return_value=sess)
+    return he
 
 
 def test_peer_send_remote_admin_routes_via_cluster_rpc():
-    gw = _make_gateway_with_routers()  # nothing local
     sess = MagicMock()
     sess.call = AsyncMock(return_value={"status": 200, "body": {"ok": True}})
     bot = SimpleNamespace(name="admin-b", kind="workgroup")
-    gw._host_election = SimpleNamespace(registry=MagicMock(), client=None, tunnel=None)
-    gw._host_election.registry.list_bots = MagicMock(return_value=[("sat1", bot)])
-    gw._host_election.registry.get = MagicMock(return_value=sess)
+    ps = _make_peer(host_election=_he_with_bots([("sat1", bot)], sess))
 
-    resp = _post(gw, "_handle_peer_send", {
+    resp = _post(ps.handle_peer_send, {
         "target": "admin-b", "from": "admin-a", "message": "hi",
     })
     assert resp.status == 200
@@ -123,17 +129,12 @@ def test_peer_send_remote_admin_routes_via_cluster_rpc():
 
 
 def test_peer_send_remote_skips_non_workgroup_kinds():
-    """A regular bot named the same as the target should NOT be picked —
-    only workgroup-kind remote bots can receive peer messages."""
-    gw = _make_gateway_with_routers()
     sess = MagicMock()
     sess.call = AsyncMock()
-    bot = SimpleNamespace(name="admin-b", kind="bot")  # wrong kind
-    gw._host_election = SimpleNamespace(registry=MagicMock(), client=None, tunnel=None)
-    gw._host_election.registry.list_bots = MagicMock(return_value=[("sat1", bot)])
-    gw._host_election.registry.get = MagicMock(return_value=sess)
+    bot = SimpleNamespace(name="admin-b", kind="bot")
+    ps = _make_peer(host_election=_he_with_bots([("sat1", bot)], sess))
 
-    resp = _post(gw, "_handle_peer_send", {
+    resp = _post(ps.handle_peer_send, {
         "target": "admin-b", "from": "admin-a", "message": "hi",
     })
     assert resp.status == 404
@@ -141,29 +142,26 @@ def test_peer_send_remote_skips_non_workgroup_kinds():
 
 
 def test_peer_send_404_when_target_nowhere():
-    gw = _make_gateway_with_routers()
-    resp = _post(gw, "_handle_peer_send", {
+    ps = _make_peer()
+    resp = _post(ps.handle_peer_send, {
         "target": "ghost", "from": "admin-a", "message": "hi",
     })
     assert resp.status == 404
 
 
 def test_peer_send_400_on_missing_fields():
-    gw = _make_gateway_with_routers("admin-a")
-    resp = _post(gw, "_handle_peer_send", {"target": "admin-a", "from": ""})
+    ps = _make_peer("admin-a")
+    resp = _post(ps.handle_peer_send, {"target": "admin-a", "from": ""})
     assert resp.status == 400
 
 
 def test_peer_send_502_on_rpc_failure():
-    gw = _make_gateway_with_routers()
     sess = MagicMock()
     sess.call = AsyncMock(side_effect=RuntimeError("ws closed"))
     bot = SimpleNamespace(name="admin-b", kind="workgroup")
-    gw._host_election = SimpleNamespace(registry=MagicMock(), client=None, tunnel=None)
-    gw._host_election.registry.list_bots = MagicMock(return_value=[("sat1", bot)])
-    gw._host_election.registry.get = MagicMock(return_value=sess)
+    ps = _make_peer(host_election=_he_with_bots([("sat1", bot)], sess))
 
-    resp = _post(gw, "_handle_peer_send", {
+    resp = _post(ps.handle_peer_send, {
         "target": "admin-b", "from": "admin-a", "message": "hi",
     })
     assert resp.status == 502
@@ -172,17 +170,14 @@ def test_peer_send_502_on_rpc_failure():
 def test_peer_send_local_takes_priority_over_remote_with_same_name():
     """If a workgroup with the target name exists locally AND in the cluster,
     local wins (no RPC needed, faster + less ambiguous)."""
-    gw = _make_gateway_with_routers("admin-a")
     sess = MagicMock()
     sess.call = AsyncMock()
     bot = SimpleNamespace(name="admin-a", kind="workgroup")
-    gw._host_election = SimpleNamespace(registry=MagicMock(), client=None, tunnel=None)
-    gw._host_election.registry.list_bots = MagicMock(return_value=[("sat1", bot)])
-    gw._host_election.registry.get = MagicMock(return_value=sess)
+    ps = _make_peer("admin-a", host_election=_he_with_bots([("sat1", bot)], sess))
 
-    resp = _post(gw, "_handle_peer_send", {
+    resp = _post(ps.handle_peer_send, {
         "target": "admin-a", "from": "admin-b", "message": "hi",
     })
     assert resp.status == 200
-    sess.call.assert_not_awaited()  # remote not consulted
-    gw._workgroup_mgr.routers["admin-a"].handle_message.assert_awaited_once()
+    sess.call.assert_not_awaited()
+    ps.workgroup_mgr.routers["admin-a"].handle_message.assert_awaited_once()

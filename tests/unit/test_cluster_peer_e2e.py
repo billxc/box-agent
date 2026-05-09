@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from aiohttp import web
@@ -286,11 +287,11 @@ def test_peer_recv_route_registered_on_web_app_not_api_app():
 async def test_send_peer_surfaces_404_from_sat_recv():
     """Second half of the same production bug: even if the route move above
     regresses again, send_peer must NOT pretend the message landed when the
-    guest side returned a non-2xx status. Calls Gateway.send_peer directly
+    guest side returned a non-2xx status. Calls PeerService.send_peer directly
     with a fake guest that returns 404.
     """
-    # Inline a minimal Gateway-like with just the send_peer method.
-    from boxagent.gateway import Gateway
+    from boxagent.cluster.peer import PeerService
+    from boxagent.cluster.topology import TopologyService
 
     class _FakeSession:
         async def call(self, method, path, *, body=None, **kw):
@@ -304,13 +305,16 @@ async def test_send_peer_surfaces_404_from_sat_recv():
         def get(self, mid):
             return _FakeSession() if mid == "guest-x" else None
 
-    # Construct a minimal Gateway just for the helper method; don't start
-    # any HTTP servers.
-    gw = Gateway.__new__(Gateway)
-    gw._workgroup_mgr = None       # target not local
-    gw._host_election = SimpleNamespace(registry=_FakeRegistry(), client=None, tunnel=None)
+    cfg = MagicMock()
+    cfg.machine_id = ""
+    cfg.node_id = ""
+    cfg.cluster_tunnel = False
+    topo = TopologyService(config=cfg, web_channels={})
+    topo.set_host_election(SimpleNamespace(registry=_FakeRegistry(), client=None, tunnel=None))
+    ps = PeerService(topology=topo, main_chat_id_provider=lambda b: f"main-{b}")
+    # workgroup_mgr left as None — target is NOT local
 
-    result = await gw.send_peer("remote-wg", "local-wg", "hello")
+    result = await ps.send_peer("remote-wg", "local-wg", "hello")
     assert result["ok"] is False, f"send_peer must NOT report success on 404; got {result}"
     assert result["via"] == "rpc"
     assert "404" in str(result.get("error", "")), result

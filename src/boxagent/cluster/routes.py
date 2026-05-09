@@ -20,6 +20,6 @@ class ClusterRoutesMixin:
         - ``/api/guest/ws`` is the WebSocket endpoint guests dial to
           attach to a host.
         """
-        web_app.router.add_post("/api/wg/peer/recv", self._handle_wg_peer_recv)
-        web_app.router.add_post("/api/peer/send", self._handle_peer_send)
+        web_app.router.add_post("/api/wg/peer/recv", self._peer.handle_wg_peer_recv)
+        web_app.router.add_post("/api/peer/send", self._peer.handle_peer_send)
         web_app.router.add_get("/api/guest/ws", self._handle_guest_ws)
