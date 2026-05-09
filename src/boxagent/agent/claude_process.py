@@ -190,6 +190,36 @@ class ClaudeProcess(BaseCLIProcess):
                 self._tool_inputs.pop(index, None)
                 self._tool_ids.pop(index, None)
 
+        elif event_type == "user":
+            # Tool-result feedback: Claude streams a `user` message after
+            # each tool runs, carrying tool_result blocks keyed by
+            # tool_use_id. Without this the web UI's tool_call card stays
+            # stuck "in progress" forever (yait #14 / #25).
+            msg = event.get("message", {}) or {}
+            blocks = msg.get("content")
+            if isinstance(blocks, list):
+                for block in blocks:
+                    if not isinstance(block, dict) or block.get("type") != "tool_result":
+                        continue
+                    tool_use_id = block.get("tool_use_id", "") or ""
+                    raw_content = block.get("content")
+                    if isinstance(raw_content, list):
+                        # Newer schema: list of {type:"text", text:...} blocks.
+                        output = "".join(
+                            (b.get("text", "") or "")
+                            for b in raw_content
+                            if isinstance(b, dict) and b.get("type") == "text"
+                        )
+                    else:
+                        output = str(raw_content) if raw_content is not None else ""
+                    is_error = bool(block.get("is_error"))
+                    await callback.on_tool_update(
+                        tool_call_id=tool_use_id,
+                        title="",  # already shown via on_tool_call
+                        status="failed" if is_error else "completed",
+                        output=output,
+                    )
+
         elif event_type == "result":
             if event.get("is_error"):
                 detail = self._format_result_error(event)

@@ -42,6 +42,29 @@ def content_block_stop_event(index: int = 0) -> dict:
     return {"type": "content_block_stop", "index": index}
 
 
+def tool_result_event(
+    tool_use_id: str = "tool_1",
+    content: str = "ok",
+    is_error: bool = False,
+) -> dict:
+    """Claude CLI's `user` event delivering a tool_result back into the stream
+    after the tool runs. Mirrors the real on-disk JSONL shape."""
+    return {
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": content,
+                    "is_error": is_error,
+                }
+            ],
+        },
+    }
+
+
 def result_event(session_id: str = "sess_123", cost: float = 0.01) -> dict:
     return {
         "type": "result",
@@ -126,6 +149,51 @@ class TestStreamJsonParsing:
         call_args = callback.on_tool_call.call_args
         assert call_args[0][0] == "Bash"
         assert call_args[0][1] == {"command": "ls"}
+
+    async def test_tool_result_emits_on_tool_update_completed(self, make_backend, callback):
+        """user.tool_result → callback.on_tool_update(status='completed', output=...).
+
+        Without this the web UI's tool_call card stays stuck "in progress"
+        forever (yait #14 / #25).
+        """
+        callback.on_tool_update = AsyncMock()
+        events = [
+            tool_use_start_event("Bash", tool_id="tool_x"),
+            input_json_delta_event('{"command": "ls"}'),
+            content_block_stop_event(index=1),
+            tool_result_event(tool_use_id="tool_x", content="file1\nfile2\n"),
+            result_event(),
+        ]
+        fake_proc = FakeProcess(make_stream_lines(*events))
+
+        cli = make_backend()
+        with patch("asyncio.create_subprocess_exec", return_value=fake_proc):
+            await cli._execute_turn("test", callback)
+
+        callback.on_tool_update.assert_called_once()
+        kwargs = callback.on_tool_update.call_args.kwargs
+        assert kwargs["tool_call_id"] == "tool_x"
+        assert kwargs["status"] == "completed"
+        assert "file1" in str(kwargs.get("output", ""))
+
+    async def test_tool_result_is_error_emits_failed(self, make_backend, callback):
+        """user.tool_result with is_error=true → on_tool_update(status='failed')."""
+        callback.on_tool_update = AsyncMock()
+        events = [
+            tool_use_start_event("Bash", tool_id="tool_y"),
+            content_block_stop_event(index=1),
+            tool_result_event(tool_use_id="tool_y", content="boom", is_error=True),
+            result_event(),
+        ]
+        fake_proc = FakeProcess(make_stream_lines(*events))
+
+        cli = make_backend()
+        with patch("asyncio.create_subprocess_exec", return_value=fake_proc):
+            await cli._execute_turn("test", callback)
+
+        kwargs = callback.on_tool_update.call_args.kwargs
+        assert kwargs["status"] == "failed"
+        assert "boom" in str(kwargs.get("output", ""))
 
     async def test_result_event_saves_session_id(self, make_backend, callback):
         """result event → session_id saved on ClaudeProcess."""
