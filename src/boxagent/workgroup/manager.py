@@ -366,15 +366,13 @@ class WorkgroupManager:
             storage = self.storage
             wg_name = workgroup_name
 
+            # Heartbeat needs admin's main chat_id so it forks the same session
+            # heartbeat / peer messages dispatch into. Reuse the standard
+            # Storage helper instead of inlining the get-or-mint pattern.
             def _main_chat_id_provider(_storage=storage, _name=wg_name):
                 if _storage is None:
                     return f"main-{_name}-{int(time.time())}"
-                cid = _storage.get_main_chat_id(_name)
-                if cid:
-                    return cid
-                cid = f"main-{_name}-{int(time.time())}"
-                _storage.set_main_chat_id(_name, cid)
-                return cid
+                return _storage.get_or_create_main_chat_id(_name)
 
             heartbeat = HeartbeatManager(
                 workgroup_name=workgroup_name,
