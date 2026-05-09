@@ -14,6 +14,9 @@ build/
 .test_bahome-local
 boxagent.code-workspace
 
+# Naming audit snapshot — runtime artifact, canonical copy lives in yait #16
+docs/naming-audit.md
+
 # Xcode
 xcuserdata/
 *.xcuserstate

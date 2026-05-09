@@ -2,8 +2,9 @@
 """Scan src/boxagent/ for short / abbreviated identifiers (vars, params,
 function/class names) and rank them by occurrence count.
 
-Output: docs/naming-audit.md — table of suspect identifiers + file:line of
-their definitions, intended as the input to a batch rename.
+Output: a markdown table of suspect identifiers + file:line of their
+definitions. Snapshot tracked in yait #16, NOT committed to docs/ — the
+list churns with every refactor.
 
 Heuristics
 - "Suspect" = identifier length ≤ 4 OR contains a known-offender token
@@ -15,8 +16,9 @@ Heuristics
 Usage:
     uv run python scripts/naming_audit.py [--write] [--src DIR]
 
-Without --write: prints the audit to stdout. With --write: writes to
-docs/naming-audit.md.
+Default: prints to stdout. With --write: writes docs/naming-audit.md as a
+LOCAL artifact (gitignored) so naming_ambiguity_check.py can find it.
+To refresh the yait snapshot: pipe stdout into `yait comment 16 --message-file -`.
 """
 from __future__ import annotations
 
