@@ -14,6 +14,7 @@ any backend instance exists.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -145,7 +146,13 @@ class CopilotAgentHistory:
             logger.warning("resume_session(%s) failed: %s", session_id, e)
             return []
         try:
-            events = session.get_messages()
+            events_or_coro = session.get_messages()
+            # Some SDK versions return list directly, newer versions return a
+            # coroutine — accept both.
+            if asyncio.iscoroutine(events_or_coro):
+                events = await events_or_coro
+            else:
+                events = events_or_coro
         except Exception as e:
             logger.warning("get_messages(%s) failed: %s", session_id, e)
             events = []

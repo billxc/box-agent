@@ -180,7 +180,7 @@ class ClaudeAgentHistory:
                     role="tool_call",
                     tool_id=item.get("id", "") or "",
                     name=item.get("name", "") or "",
-                    args=args,
+                    args=args or {},
                     ts=ts,
                 ))
             elif block_type == "tool_result":

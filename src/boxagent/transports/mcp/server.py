@@ -106,7 +106,7 @@ def create_mcp_app(
     routes: list[Route] = []
     for m in mcps:
         sub_app = m.streamable_http_app()
-        routes.extend(sub_app.routes)
+        routes.extend(sub_app.routes)  # type: ignore[arg-type]
 
     @asynccontextmanager
     async def lifespan(app):

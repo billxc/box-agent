@@ -58,7 +58,7 @@ def _deny_all(request: Any, invocation: dict[str, str]) -> PermissionRequestResu
     Used in non-yolo mode until we wire interactive approval through a
     channel. The agent will just see tool-denied results and adapt.
     """
-    return PermissionRequestResult(kind="deny-once")
+    return PermissionRequestResult(kind="deny-once")  # type: ignore[arg-type]
 
 
 # ── Shared client (class-level, refcounted) ───────────────────────────

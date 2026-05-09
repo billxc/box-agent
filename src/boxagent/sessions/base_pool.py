@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from boxagent.agent.protocol import AgentBackend
+    from boxagent.sessions.storage import Storage
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ class BaseSessionPool(ABC):
     def __init__(
         self,
         *,
-        storage: object | None = None,
+        storage: "Storage | None" = None,
         bot_name: str = "",
         default_model: str = "",
         default_workspace: str = "",

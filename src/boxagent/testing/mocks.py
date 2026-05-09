@@ -241,7 +241,7 @@ class MockChannel(Channel):
     ``tool_update_uses_stream``.
     """
 
-    on_message: Callable[[IncomingMessage], Awaitable[None]] = field(
+    on_message: Callable[[IncomingMessage], Awaitable[None]] | None = field(
         default=None, repr=False  # set via .deliver() / Router wiring
     )
 

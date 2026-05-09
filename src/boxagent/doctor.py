@@ -112,15 +112,15 @@ def _resolve(cmd: str, extra_paths_fn) -> str | None:
 def _refresh_path_win32() -> None:
     """Reload PATH from Windows registry so newly installed tools are visible."""
     try:
-        import winreg
+        import winreg  # type: ignore[import-not-found]  # Windows-only stdlib
         parts: list[str] = []
         for root, sub in [
-            (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
-            (winreg.HKEY_CURRENT_USER, r"Environment"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),  # type: ignore[attr-defined]
+            (winreg.HKEY_CURRENT_USER, r"Environment"),  # type: ignore[attr-defined]
         ]:
             try:
-                with winreg.OpenKey(root, sub) as key:
-                    val, _ = winreg.QueryValueEx(key, "Path")
+                with winreg.OpenKey(root, sub) as key:  # type: ignore[attr-defined]
+                    val, _ = winreg.QueryValueEx(key, "Path")  # type: ignore[attr-defined]
                     parts.append(val)
             except OSError:
                 pass

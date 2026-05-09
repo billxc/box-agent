@@ -38,12 +38,13 @@ def build_sessions_parser(subparsers) -> None:
 
 def sessions_list(args) -> None:
     """List all sessions (unified: Claude CLI + BoxAgent history + Codex)."""
+    from boxagent.utils import default_config_dir
     from boxagent.config import load_config
 
     storage = None
     try:
-        cfg = load_config()
-        local_dir = cfg.get("local_dir", "")
+        cfg = load_config(default_config_dir())
+        local_dir = getattr(cfg, "local_dir", "") or ""
         if local_dir:
             from boxagent.sessions.storage import Storage
             storage = Storage(local_dir)

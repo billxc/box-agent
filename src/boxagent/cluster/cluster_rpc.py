@@ -167,7 +167,7 @@ class ClusterRpc:
             pass
         return resp
 
-    async def handle_guest_ws(self, request: web.Request) -> web.WebSocketResponse:
+    async def handle_guest_ws(self, request: web.Request) -> web.StreamResponse:
         """Permanent route — delegates to the GuestRegistry only when this
         node is the active host; otherwise returns 503 so the dialing peer
         falls back / reconnects elsewhere."""

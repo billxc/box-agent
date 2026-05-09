@@ -9,6 +9,7 @@ import asyncio
 import datetime
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -111,11 +112,11 @@ class HeartbeatManager:
     web_channel: "WebChannel | None" = None  # display target for heartbeat banner
     display_heartbeat: bool = False
     start_time: float = 0.0
-    get_running_tasks: object = None  # Callable[[], list[dict]]
+    get_running_tasks: Callable[[], list[dict]] | None = None
     # Provider for the dispatch chat_id (the workgroup's "main" session).
     # Manager wires this to a closure over Storage.get/set_main_chat_id; the
     # provider mints + persists a fresh `heartbeat:<wg>-<ts>` if none set.
-    main_chat_id_provider: object = None  # Callable[[], str]
+    main_chat_id_provider: Callable[[], str] | None = None
     _running: bool = field(default=False, repr=False)
     _is_ticking: bool = field(default=False, repr=False)
     _task: asyncio.Task | None = field(default=None, repr=False)
@@ -205,7 +206,7 @@ class HeartbeatManager:
                 await self._send_display(f"**[Heartbeat decision]**\n{preview}")
 
             chat_id = ""
-            if callable(self.main_chat_id_provider):
+            if self.main_chat_id_provider is not None:
                 try:
                     chat_id = self.main_chat_id_provider() or ""
                 except Exception as e:
@@ -231,7 +232,7 @@ class HeartbeatManager:
         source_session_id = self._find_fork_session_id()
 
         uptime = time.time() - self.start_time if self.start_time else 0
-        running_tasks = self.get_running_tasks() if callable(self.get_running_tasks) else []
+        running_tasks = self.get_running_tasks() if self.get_running_tasks is not None else []
         prompt = _build_heartbeat_prompt(
             self.workgroup_name, content,
             uptime_seconds=uptime,
@@ -282,7 +283,7 @@ class HeartbeatManager:
             return None
 
         chat_id = ""
-        if callable(self.main_chat_id_provider):
+        if self.main_chat_id_provider is not None:
             try:
                 chat_id = self.main_chat_id_provider() or ""
             except Exception as e:

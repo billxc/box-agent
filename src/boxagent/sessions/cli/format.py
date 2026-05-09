@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .filters import (
     _filter_sessions,
@@ -15,6 +16,9 @@ from .filters import (
 )
 from .loaders import _load_all_unified_sessions
 from .tokens import _RE_HEX, parse_session_tokens
+
+if TYPE_CHECKING:
+    from boxagent.sessions.storage import Storage
 
 
 def _format_id_match(matches: list[dict]) -> str:
@@ -54,7 +58,7 @@ def format_sessions_list(
     query: str = "",
     page: int = 1,
     page_size: int = 5,
-    storage: object | None = None,
+    storage: "Storage | None" = None,
     workspace: str = "",
 ) -> str:
     """Return a formatted string listing unified sessions.

@@ -54,7 +54,7 @@ def _convert(tool_def: ToolDef, ctx: ToolContext) -> Tool:
             logger.exception("Tool %s raised", tool_def.name)
             return ToolResult(
                 text_result_for_llm=f"Tool error: {e}",
-                result_type="error",
+                result_type="error",  # type: ignore[arg-type]
                 error=str(e),
             )
         text = result if isinstance(result, str) else str(result)

@@ -291,7 +291,7 @@ class HostElection:
                 local_web_port=self.config.web_port or 9292,
                 local_web_token=self.config.web_token or "",
                 tunnel_name=self.config.cluster_tunnel,
-                bot_provider=self.bot_provider,
+                bot_provider=self.bot_provider or (lambda: []),
             )
             self.client.start()
             logger.info(

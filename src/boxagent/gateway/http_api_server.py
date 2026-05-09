@@ -156,7 +156,7 @@ class HttpApiServer:
                 config_dir=str(self.config_dir),
                 local_dir=str(self.local_dir),
                 node_id=self.config.node_id,
-                gateway=self._mcp_gateway_context,
+                gateway=self._mcp_gateway_context,  # type: ignore[arg-type]
             )
             mcp_port = self._pick_mcp_port()
             uvi_config = uvicorn.Config(

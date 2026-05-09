@@ -12,6 +12,10 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from boxagent.sessions.storage import Storage
 
 
 CLAUDE_DIR = Path.home() / ".claude"
@@ -139,7 +143,7 @@ def _resolve_session_path(sid: str) -> Path | None:
 
 
 def _load_all_unified_sessions(
-    storage: object | None = None,
+    storage: "Storage | None" = None,
     workspace: str = "",
 ) -> list[dict]:
     """Merge Claude CLI sessions, BoxAgent session_history, and Codex sessions.

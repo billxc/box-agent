@@ -134,6 +134,8 @@ class PeerService:
 
     async def _dispatch_local_peer(self, target: str, sender: str, body: str) -> None:
         """Inject a peer message into the local workgroup admin's router."""
+        if self.workgroup_mgr is None:
+            raise RuntimeError(f"PeerService.workgroup_mgr not set; cannot dispatch to {target!r}")
         admin_router = self.workgroup_mgr.routers[target]
         envelope = (
             f"[Peer message from {sender}]\n"

@@ -10,6 +10,7 @@ from boxagent.sessions.base_pool import BaseSessionPool
 
 if TYPE_CHECKING:
     from boxagent.agent.protocol import AgentBackend
+    from boxagent.sessions.storage import Storage
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ class SessionPool(BaseSessionPool):
         size: int = DEFAULT_POOL_SIZE,
         default_model: str = "",
         default_workspace: str = "",
-        storage: object | None = None,
+        storage: "Storage | None" = None,
         bot_name: str = "",
     ) -> None:
         super().__init__(

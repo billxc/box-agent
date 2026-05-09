@@ -174,8 +174,8 @@ def load_config(
     if isinstance(local_global, dict):
         global_cfg = {**global_cfg, **local_global}
 
-    log_level = global_cfg.get("log_level", "info")
-    log_level = os.environ.get("BOXAGENT_GLOBAL_LOG_LEVEL", log_level)
+    log_level = global_cfg.get("log_level", "info") or "info"
+    log_level = os.environ.get("BOXAGENT_GLOBAL_LOG_LEVEL", log_level) or "info"
 
     api_port = int(global_cfg.get("api_port", 0))
     api_port = int(os.environ.get("BOXAGENT_GLOBAL_API_PORT", api_port))

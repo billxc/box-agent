@@ -20,7 +20,7 @@ from boxagent.transports.base import Channel, IncomingMessage
 
 if TYPE_CHECKING:
     from boxagent.agent.protocol import AgentBackend
-    from boxagent.sessions import SessionPool, Storage
+    from boxagent.sessions import BaseSessionPool, SessionPool, Storage
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ async def cmd_status(
     ai_backend: str = "",
     workspace: str = "",
     node_id: str = "",
-    pool: "SessionPool | None" = None,
+    pool: "BaseSessionPool | None" = None,
     chat_id: str = "",
 ) -> None:
     uptime = int(time.time() - start_time)

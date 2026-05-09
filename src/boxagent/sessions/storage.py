@@ -167,7 +167,7 @@ class Storage:
         except Exception as e:
             logger.warning("main_sessions.yaml read failed (%s); treating as empty", e)
             self._main_cache = {}
-        return self._main_cache
+        return self._main_cache or {}
 
     def _save_main_sessions(self, data: dict) -> None:
         # Atomic write: dump to temp file, then rename. POSIX rename is

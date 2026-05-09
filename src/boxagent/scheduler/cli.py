@@ -343,7 +343,7 @@ def trigger_schedule_run(local_dir: str | Path, task_id: str, sync: bool = False
 
     url = f"http://127.0.0.1:{port}/api/schedule/run"
 
-    payload = {"id": task_id}
+    payload: dict = {"id": task_id}
     if not sync:
         payload["async"] = True
 
