@@ -1,6 +1,6 @@
 """Agent runner components."""
 
-from boxagent.agent.manager import (
+from boxagent.agent.agent_manager import (
     AgentManager,
     _create_backend,
     _ensure_git_repo,

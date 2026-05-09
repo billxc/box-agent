@@ -6,7 +6,7 @@ Locks the public contract: config/web_channels in __init__, host_election
 
 from unittest.mock import MagicMock
 
-from boxagent.cluster.topology import TopologyService
+from boxagent.cluster.topology_service import TopologyService
 
 
 def _make() -> TopologyService:

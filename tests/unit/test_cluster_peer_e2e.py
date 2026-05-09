@@ -290,8 +290,8 @@ async def test_send_peer_surfaces_404_from_sat_recv():
     guest side returned a non-2xx status. Calls PeerService.send_peer directly
     with a fake guest that returns 404.
     """
-    from boxagent.cluster.peer import PeerService
-    from boxagent.cluster.topology import TopologyService
+    from boxagent.cluster.peer_service import PeerService
+    from boxagent.cluster.topology_service import TopologyService
 
     class _FakeSession:
         async def call(self, method, path, *, body=None, **kw):
@@ -330,7 +330,7 @@ def test_build_peer_descriptors_combines_local_and_remote():
     """Replaces the old peers.yaml read. Source = local workgroup_mgr.routers
     + remote guest_registry.list_bots() + offline history. Self is excluded."""
     from boxagent.cluster.registry import RemoteBot, GuestRegistry
-    from boxagent.cluster.topology import TopologyService
+    from boxagent.cluster.topology_service import TopologyService
     from boxagent.config import AppConfig, WorkgroupConfig
 
     cfg = AppConfig(
@@ -379,7 +379,7 @@ def test_build_peer_descriptors_combines_local_and_remote():
 def test_build_peer_descriptors_guest_node_returns_local_only():
     """On a guest node guest_registry is None — return local workgroups
     only, until guest→host peer-list RPC lands (yait #67)."""
-    from boxagent.cluster.topology import TopologyService
+    from boxagent.cluster.topology_service import TopologyService
     from boxagent.config import AppConfig, WorkgroupConfig
 
     cfg = AppConfig(workgroups={

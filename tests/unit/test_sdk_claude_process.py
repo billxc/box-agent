@@ -69,7 +69,7 @@ class TestAgentSDKClaude:
 
 class TestFactoryWiring:
     def test_create_backend_dispatches_to_sdk_claude(self):
-        from boxagent.agent.manager import _create_backend
+        from boxagent.agent.agent_manager import _create_backend
         from boxagent.agent.sdk_claude_process import AgentSDKClaude
         from boxagent.config import BotConfig
 
@@ -84,5 +84,5 @@ class TestFactoryWiring:
         assert backend.model == "sonnet"
 
     def test_supports_persistent_session_includes_sdk_claude(self):
-        from boxagent.agent.manager import _supports_persistent_session
+        from boxagent.agent.agent_manager import _supports_persistent_session
         assert _supports_persistent_session("agent-sdk-claude") is True

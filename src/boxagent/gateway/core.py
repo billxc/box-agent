@@ -12,9 +12,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from boxagent.agent.manager import AgentManager, _create_backend, _ensure_git_repo, sync_skills
-from boxagent.cluster.peer import PeerService
-from boxagent.cluster.topology import TopologyService
+from boxagent.agent.agent_manager import AgentManager, _create_backend, _ensure_git_repo, sync_skills
+from boxagent.cluster.peer_service import PeerService
+from boxagent.cluster.topology_service import TopologyService
 from boxagent.transports.web import WebChannel
 from boxagent.cluster import ClusterTunnel, GuestClient, GuestRegistry
 from boxagent.config import AppConfig, node_matches

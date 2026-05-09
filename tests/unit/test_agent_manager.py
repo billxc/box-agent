@@ -6,7 +6,7 @@ deps via setters (Phase 2 of the two-phase DI scheme).
 
 from unittest.mock import MagicMock
 
-from boxagent.agent.manager import AgentManager
+from boxagent.agent.agent_manager import AgentManager
 
 
 def _make_manager() -> AgentManager:

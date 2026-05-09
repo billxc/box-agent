@@ -55,7 +55,7 @@ class TestAgentSDKCopilot:
 
 class TestFactoryWiring:
     def test_create_backend_dispatches_to_sdk_copilot(self):
-        from boxagent.agent.manager import _create_backend
+        from boxagent.agent.agent_manager import _create_backend
         from boxagent.agent.sdk_copilot_process import AgentSDKCopilot
         from boxagent.config import BotConfig
 
@@ -70,7 +70,7 @@ class TestFactoryWiring:
         assert backend.model == "gpt-5"
 
     def test_supports_persistent_session_includes_sdk_copilot(self):
-        from boxagent.agent.manager import _supports_persistent_session
+        from boxagent.agent.agent_manager import _supports_persistent_session
         assert _supports_persistent_session("agent-sdk-copilot") is True
 
     def test_router_recognises_kind(self):

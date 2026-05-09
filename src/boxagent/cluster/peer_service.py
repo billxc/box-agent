@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Callable
 from aiohttp import web
 
 if TYPE_CHECKING:
-    from boxagent.cluster.topology import TopologyService
+    from boxagent.cluster.topology_service import TopologyService
     from boxagent.workgroup import WorkgroupManager
 
 logger = logging.getLogger(__name__)

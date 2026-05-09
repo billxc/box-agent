@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 def _agent_mgr_from(gw):
     """Build an AgentManager bound to a Gateway's shared dicts."""
-    from boxagent.agent.manager import AgentManager
+    from boxagent.agent.agent_manager import AgentManager
     return AgentManager(
         config=gw.config,
         config_dir=gw.config_dir,
@@ -58,9 +58,9 @@ class TestGateway:
         async def noop_raw(self):
             pass
 
-        with patch("boxagent.agent.manager.AgentManager.start_bot",
+        with patch("boxagent.agent.agent_manager.AgentManager.start_bot",
                    side_effect=track, autospec=True), \
-             patch("boxagent.agent.manager.AgentManager.start_raw_bot",
+             patch("boxagent.agent.agent_manager.AgentManager.start_raw_bot",
                    side_effect=noop_raw, autospec=True), \
              patch.object(gw, "_start_scheduler"), \
              patch.object(gw, "_start_http", new_callable=AsyncMock), \
@@ -428,9 +428,9 @@ class TestGateway:
         async def noop_raw(self):
             pass
 
-        with patch("boxagent.agent.manager.AgentManager.start_bot",
+        with patch("boxagent.agent.agent_manager.AgentManager.start_bot",
                    side_effect=track_start_bot, autospec=True), \
-             patch("boxagent.agent.manager.AgentManager.start_raw_bot",
+             patch("boxagent.agent.agent_manager.AgentManager.start_raw_bot",
                    side_effect=noop_raw, autospec=True), \
              patch.object(gw, "_start_scheduler"), \
              patch.object(gw, "_start_http", new_callable=AsyncMock), \
@@ -462,9 +462,9 @@ class TestGateway:
         async def noop_raw(self):
             pass
 
-        with patch("boxagent.agent.manager.AgentManager.start_bot",
+        with patch("boxagent.agent.agent_manager.AgentManager.start_bot",
                    side_effect=track_start_bot, autospec=True), \
-             patch("boxagent.agent.manager.AgentManager.start_raw_bot",
+             patch("boxagent.agent.agent_manager.AgentManager.start_raw_bot",
                    side_effect=noop_raw, autospec=True), \
              patch.object(gw, "_start_scheduler"), \
              patch.object(gw, "_start_http", new_callable=AsyncMock), \
