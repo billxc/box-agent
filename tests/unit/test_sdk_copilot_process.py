@@ -74,8 +74,8 @@ class TestFactoryWiring:
         assert _supports_persistent_session("agent-sdk-copilot") is True
 
     def test_router_recognises_kind(self):
-        from boxagent.router.core import Router
-        assert "agent-sdk-copilot" in Router._VALID_BACKENDS
+        from boxagent.agent.protocol import BACKEND_KINDS
+        assert "agent-sdk-copilot" in BACKEND_KINDS
 
     def test_config_validator_accepts_kind(self, tmp_path):
         from textwrap import dedent

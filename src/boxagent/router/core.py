@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 from dataclasses import dataclass, field
@@ -10,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 from boxagent.transports.base import Channel, IncomingMessage
-from boxagent.agent.protocol import AgentBackend
+from boxagent.agent.protocol import AgentBackend, BACKEND_KINDS
 from boxagent.router.callback import ChannelCallback, TextCollector, log_turn
 from boxagent.router.commands import (
     cmd_exec,
@@ -30,8 +31,6 @@ if TYPE_CHECKING:
     from boxagent.sessions import BaseSessionPool, Storage
 
 logger = logging.getLogger(__name__)
-
-SYSTEM_COMMANDS = {"/status", "/new", "/cancel", "/resume", "/start", "/help", "/verbose", "/sync_skills", "/compact", "/model", "/exec", "/version", "/trust_workspace", "/cd", "/backend", "/sessions", "/schedule"}
 
 
 @dataclass
@@ -78,6 +77,25 @@ class Router:
             )
         return ch
 
+    @contextlib.asynccontextmanager
+    async def _acquire_proc(self, chat_id: str):
+        """Borrow a backend process for one turn.
+
+        With a pool: acquire(chat_id) → yield → release(chat_id, proc).
+        Without one: yield self.backend; no release. Either way callers
+        get the same context-managed shape so the dispatch sites don't
+        re-implement try/finally.
+        """
+        pool = self.pool
+        if pool is None:
+            yield self.backend
+            return
+        proc = await pool.acquire(chat_id)
+        try:
+            yield proc
+        finally:
+            pool.release(chat_id, proc)
+
     async def handle_message(self, msg: IncomingMessage) -> None:
         try:
             uid = int(msg.user_id)
@@ -103,7 +121,7 @@ class Router:
             return  # ignore empty messages
         if text.startswith("/"):
             command = text.split()[0].lower()
-            if command in SYSTEM_COMMANDS:
+            if command in self._command_handlers():
                 await self._handle_command(command, msg)
                 return
 
@@ -118,59 +136,53 @@ class Router:
 
         await self._dispatch(msg)
 
-    async def _handle_command(self, command: str, msg: IncomingMessage):
-        ch = self._resolve_channel(msg)
-        # --- Core commands (touch session state) ---
-        if command == "/new":
-            await self._cmd_new(msg)
-        elif command == "/cancel":
-            await self._cmd_cancel(msg)
-        elif command == "/resume":
-            await self._cmd_resume(msg)
-        elif command == "/compact":
-            await self._cmd_compact(msg)
-        elif command == "/model":
-            await self._cmd_model(msg)
-        # --- Auxiliary commands (delegated) ---
-        elif command == "/status":
-            status_workspace = self.workspace
-            if self.pool:
-                status_workspace = self.pool.get_workspace(msg.chat_id) or self.workspace
-            await cmd_status(
+    def _command_handlers(self):
+        """Return ``command → async callable(msg, channel)`` dispatch map.
+
+        Built per-call (cheap, ~17 entries) so handlers can close over
+        ``self``. ``SYSTEM_COMMANDS`` is derived from the keys, so adding
+        a command means one entry instead of two list edits.
+        """
+        return {
+            # Core commands (touch session state — defined on Router)
+            "/new":     lambda msg, ch: self._cmd_new(msg),
+            "/cancel":  lambda msg, ch: self._cmd_cancel(msg),
+            "/resume":  lambda msg, ch: self._cmd_resume(msg),
+            "/compact": lambda msg, ch: self._cmd_compact(msg),
+            "/model":   lambda msg, ch: self._cmd_model(msg),
+            "/cd":      lambda msg, ch: self._cmd_cd(msg),
+            "/backend": lambda msg, ch: self._cmd_backend(msg),
+            # Auxiliary commands (free functions in router/commands.py)
+            "/status":   lambda msg, ch: cmd_status(
                 msg, channel=ch, bot_name=self.display_name or self.bot_name,
                 backend=self.backend, start_time=self.start_time,
                 display_name=self.display_name, ai_backend=self.ai_backend,
-                workspace=status_workspace, node_id=self.node_id,
-                pool=self.pool, chat_id=msg.chat_id,
-            )
-        elif command == "/start":
-            await cmd_start(msg, channel=ch, bot_name=self.display_name or self.bot_name)
-        elif command == "/help":
-            await cmd_help(msg, channel=ch)
-        elif command == "/verbose":
-            await cmd_verbose(msg, channel=ch)
-        elif command == "/sync_skills":
-            await cmd_sync_skills(
+                workspace=(self.pool.get_workspace(msg.chat_id) if self.pool else "") or self.workspace,
+                node_id=self.node_id, pool=self.pool, chat_id=msg.chat_id,
+            ),
+            "/start":    lambda msg, ch: cmd_start(msg, channel=ch, bot_name=self.display_name or self.bot_name),
+            "/help":     lambda msg, ch: cmd_help(msg, channel=ch),
+            "/verbose":  lambda msg, ch: cmd_verbose(msg, channel=ch),
+            "/sync_skills": lambda msg, ch: cmd_sync_skills(
                 msg, channel=ch, workspace=self.workspace,
                 extra_skill_dirs=self.extra_skill_dirs, ai_backend=self.ai_backend,
-            )
-        elif command == "/exec":
-            await cmd_exec(msg, channel=ch, workspace=self.workspace)
-        elif command == "/version":
-            await cmd_version(msg, channel=ch)
-        elif command == "/trust_workspace":
-            await cmd_trust_workspace(msg, channel=ch, workspace=self.workspace)
-        elif command == "/cd":
-            await self._cmd_cd(msg)
-        elif command == "/backend":
-            await self._cmd_backend(msg)
-        elif command == "/sessions":
-            await cmd_sessions(msg, channel=ch, storage=self.storage, workspace=self.workspace)
-        elif command == "/schedule":
-            await cmd_schedule(
+            ),
+            "/exec":     lambda msg, ch: cmd_exec(msg, channel=ch, workspace=self.workspace),
+            "/version":  lambda msg, ch: cmd_version(msg, channel=ch),
+            "/trust_workspace": lambda msg, ch: cmd_trust_workspace(msg, channel=ch, workspace=self.workspace),
+            "/sessions": lambda msg, ch: cmd_sessions(msg, channel=ch, storage=self.storage, workspace=self.workspace),
+            "/schedule": lambda msg, ch: cmd_schedule(
                 msg, channel=ch, config_dir=self.config_dir,
                 local_dir=self.local_dir, node_id=self.node_id,
-            )
+            ),
+        }
+
+    async def _handle_command(self, command: str, msg: IncomingMessage):
+        handler = self._command_handlers().get(command)
+        if handler is None:
+            return
+        ch = self._resolve_channel(msg)
+        await handler(msg, ch)
 
     # ---- Core session commands ----
 
@@ -386,83 +398,50 @@ class Router:
             chat_id, f"Workspace switched: {current} → {new_path}"
         )
 
-    _VALID_BACKENDS = {"claude-cli", "codex-cli", "agent-sdk-claude", "agent-sdk-copilot"}
+
 
     async def _cmd_backend(self, msg: IncomingMessage):
         """Show or switch the AI backend."""
+        from boxagent.agent.backend_factory import create_backend
+        from boxagent.config import BotConfig
+
         ch = self._resolve_channel(msg)
         parts = msg.text.strip().split(maxsplit=1)
+        valid = sorted(BACKEND_KINDS)
 
         if len(parts) < 2:
             await ch.send_text(
                 msg.chat_id,
-                f"Current backend: {self.ai_backend}\n"
-                f"Available: {', '.join(sorted(self._VALID_BACKENDS))}",
+                f"Current backend: {self.ai_backend}\nAvailable: {', '.join(valid)}",
             )
             return
 
         new_kind = parts[1].strip()
-        if new_kind not in self._VALID_BACKENDS:
+        if new_kind not in BACKEND_KINDS:
             await ch.send_text(
                 msg.chat_id,
-                f"Unknown backend: {new_kind}\n"
-                f"Available: {', '.join(sorted(self._VALID_BACKENDS))}",
+                f"Unknown backend: {new_kind}\nAvailable: {', '.join(valid)}",
             )
             return
 
         if new_kind == self.ai_backend:
-            await ch.send_text(
-                msg.chat_id, f"Already using {new_kind}."
-            )
+            await ch.send_text(msg.chat_id, f"Already using {new_kind}.")
             return
 
         old_kind = self.ai_backend
         old_backend = self.backend
 
         # Carry over common attributes from old backend.
-        workspace = getattr(old_backend, "workspace", self.workspace)
-        model = getattr(old_backend, "model", "")
-        agent = getattr(old_backend, "agent", "")
-        yolo = getattr(old_backend, "yolo", False)
-
+        bot_cfg = BotConfig(
+            name=self.bot_name,
+            ai_backend=new_kind,
+            workspace=getattr(old_backend, "workspace", self.workspace),
+            model=getattr(old_backend, "model", "") or "",
+            agent=getattr(old_backend, "agent", "") or "",
+            yolo=bool(getattr(old_backend, "yolo", False)),
+        )
         await old_backend.stop()
-
-        if new_kind == "codex-cli":
-            from boxagent.agent.codex_process import CodexProcess
-
-            new_backend = CodexProcess(
-                workspace=workspace,
-                model=model,
-                agent=agent,
-                yolo=yolo,
-            )
-        elif new_kind == "agent-sdk-claude":
-            from boxagent.agent.sdk_claude_process import AgentSDKClaude
-
-            new_backend = AgentSDKClaude(
-                workspace=workspace,
-                model=model,
-                agent=agent,
-                yolo=yolo,
-            )
-        elif new_kind == "agent-sdk-copilot":
-            from boxagent.agent.sdk_copilot_process import AgentSDKCopilot
-
-            new_backend = AgentSDKCopilot(
-                workspace=workspace,
-                model=model,
-                agent=agent,
-                yolo=yolo,
-            )
-        else:
-            from boxagent.agent.claude_process import ClaudeProcess
-
-            new_backend = ClaudeProcess(
-                workspace=workspace,
-                model=model,
-                agent=agent,
-                yolo=yolo,
-            )
+        new_backend = create_backend(bot_cfg, session_id=None)
 
         new_backend.start()
         self.backend = new_backend
@@ -504,29 +483,17 @@ class Router:
         if user_hint:
             summary_prompt += f"\n\nAdditional instructions: {user_hint}"
 
-        # Acquire a process to run the summary
-        proc = None
-        pool = self.pool
-        if pool is not None:
-            proc = await pool.acquire(chat_id)
-        else:
-            proc = self.backend
-
         collector = TextCollector()
         await ch.show_typing(chat_id)
         try:
             env = self._build_env(msg)
-            await proc.send(summary_prompt, collector, env=env)
+            async with self._acquire_proc(chat_id) as proc:
+                await proc.send(summary_prompt, collector, env=env)
         except Exception as e:
-            if pool is not None:
-                pool.release(chat_id, proc)
             await ch.send_text(
                 chat_id, f"Failed to generate summary: {e}"
             )
             return
-
-        if pool is not None:
-            pool.release(chat_id, proc)
 
         summary = collector.text.strip()
         if not summary:
@@ -536,8 +503,8 @@ class Router:
             return
 
         # Reset session
-        if pool is not None:
-            pool.clear_session(chat_id)
+        if self.pool is not None:
+            self.pool.clear_session(chat_id)
         else:
             await self._reset_backend_session()
         if self.storage:
@@ -654,40 +621,32 @@ class Router:
             webhook_name=env.callback_webhook_name(),
         )
 
-        # Acquire a process from the pool (or use the single backend)
-        proc = None
-        pool = self.pool
-        if pool is not None:
-            proc = await pool.acquire(chat_id)
-        else:
-            proc = self.backend
-
-        await callback.start_typing()
-        try:
-            await proc.send(prompt, callback, model=model_override, chat_id=chat_id, append_system_prompt=append_system_prompt, env=env)
-            drain_output = getattr(proc, "drain_output", None)
-            if drain_output is not None:
-                await drain_output()
+        # Acquire a process from the pool (or use the single backend) for the
+        # turn. Capture proc state inside the with-block before release clears
+        # it (proc.session_id is reset on release; pool keeps a copy though).
+        async with self._acquire_proc(chat_id) as proc:
+            await callback.start_typing()
+            try:
+                await proc.send(prompt, callback, model=model_override, chat_id=chat_id, append_system_prompt=append_system_prompt, env=env)
+                drain_output = getattr(proc, "drain_output", None)
+                if drain_output is not None:
+                    await drain_output()
+            finally:
+                await callback.close()
             turn_failed = getattr(proc, "last_turn_failed", False) is True
-            if used_compact and not turn_failed:
-                self._compact_summaries.pop(chat_id, None)
-            if used_resume_ctx and not turn_failed:
-                # Mirror compact_summary: only consume on success so a
-                # failed send leaves the recovered context for retry
-                # (yait #18).
-                self._resume_contexts.pop(chat_id, None)
-        finally:
-            await callback.close()
-            if pool is not None:
-                pool.release(chat_id, proc)
+            turn_error_raw = getattr(proc, "last_turn_error", "")
+            turn_error = turn_error_raw if isinstance(turn_error_raw, str) else ""
+            proc_sid = getattr(proc, "session_id", None)
 
-        # Get session_id BEFORE release (release clears proc.session_id)
-        sid = pool.get_session_id(chat_id) if pool is not None else getattr(proc, "session_id", None)
+        if used_compact and not turn_failed:
+            self._compact_summaries.pop(chat_id, None)
+        if used_resume_ctx and not turn_failed:
+            # Mirror compact_summary: only consume on success so a
+            # failed send leaves the recovered context for retry
+            # (yait #18).
+            self._resume_contexts.pop(chat_id, None)
 
-        turn_failed = getattr(proc, "last_turn_failed", False) is True
-        turn_error = getattr(proc, "last_turn_error", "")
-        if not isinstance(turn_error, str):
-            turn_error = ""
+        sid = self.pool.get_session_id(chat_id) if self.pool is not None else proc_sid
 
         if turn_failed:
             logger.warning(

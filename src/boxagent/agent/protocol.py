@@ -29,6 +29,16 @@ if TYPE_CHECKING:
 
 BackendState = Literal["idle", "busy", "dead"]
 
+# Single source of truth for valid `ai_backend` strings. Used by the
+# /backend command's allow-list, the create_backend factory, and
+# _supports_persistent_session.
+BACKEND_KINDS: frozenset[str] = frozenset({
+    "claude-cli",
+    "codex-cli",
+    "agent-sdk-claude",
+    "agent-sdk-copilot",
+})
+
 
 @runtime_checkable
 class AgentBackend(Protocol):

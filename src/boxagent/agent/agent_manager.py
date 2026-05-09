@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 from boxagent.agent.backend_factory import create_backend
 from boxagent.agent.claude_process import ClaudeProcess
-from boxagent.agent.protocol import AgentBackend
+from boxagent.agent.protocol import AgentBackend, BACKEND_KINDS
 from boxagent.agent.workspace import ensure_git_repo, sync_skills
 from boxagent.config import AppConfig, BotConfig
 from boxagent.sessions import SessionPool, Storage
@@ -35,9 +35,7 @@ logger = logging.getLogger(__name__)
 
 def _supports_persistent_session(ai_backend: str) -> bool:
     """Whether a backend can resume a saved session after restart."""
-    return ai_backend in (
-        "claude-cli", "codex-cli", "agent-sdk-claude", "agent-sdk-copilot",
-    )
+    return ai_backend in BACKEND_KINDS
 
 
 # ── Composition: AgentManager ──
