@@ -4,9 +4,9 @@ Free helpers (`_create_backend`, `_ensure_git_repo`, `sync_skills`,
 `_supports_persistent_session`) are also injected into WorkgroupManager and
 re-exported via ``boxagent.gateway`` for back-compat with tests / commands.
 
-``AgentManager`` (composition) owns the per-bot lifecycle. ``BotsMixin``
-remains as a thin shim over ``self._bots`` so existing tests that patch
-``Gateway._start_bot`` etc. keep working.
+``AgentManager`` (composition) owns the per-bot lifecycle. Gateway holds
+one as ``self._bots`` and drives it via ``start_bot`` / ``start_raw_bot``
+/ ``restart_bot`` / ``on_backend_switched``.
 """
 
 import asyncio
@@ -445,50 +445,3 @@ class AgentManager:
         if bot_name in self.watchdogs:
             self.watchdogs[bot_name].backend = new_backend
         logger.info("Bot '%s' backend switched to %s (refs synced)", bot_name, new_kind)
-
-
-# ── Mixin shim: delegate to self._bots so legacy call sites & test patches keep working ──
-
-class BotsMixin:
-    def _ensure_bots(self) -> "AgentManager":
-        # Some tests call _start_bot/_restart_bot directly without driving
-        # start(); lazy-init AgentManager from the same fields start() would use.
-        if self._bots is None:
-            # Storage may also be uninitialized in those tests — mirror start().
-            if self._storage is None:
-                self._storage = Storage(local_dir=self.local_dir)
-            self._bots = AgentManager(
-                config=self.config,
-                config_dir=self.config_dir,
-                storage=self._storage,
-                start_time=self._start_time,
-                backends=self._backends,
-                pools=self._pools,
-                routers=self._routers,
-                channels=self._channels,
-                web_channels=self._web_channels,
-                watchdogs=self._watchdogs,
-                watchdog_tasks=self._watchdog_tasks,
-            )
-            if self._scheduler is not None:
-                self._bots.set_scheduler(self._scheduler)
-        return self._bots
-
-    async def _start_bot(self, name: str, bot_cfg: BotConfig) -> None:
-        await self._ensure_bots().start_bot(name, bot_cfg)
-
-    async def _start_raw_bot(self) -> None:
-        await self._ensure_bots().start_raw_bot()
-
-    async def _restart_bot(self, name: str, bot_cfg: BotConfig) -> None:
-        await self._ensure_bots().restart_bot(name, bot_cfg)
-
-    async def _on_backend_switched(self, bot_name: str, new_backend: AgentBackend, new_kind: str) -> None:
-        await self._ensure_bots().on_backend_switched(bot_name, new_backend, new_kind)
-
-    def _raw_backend_factory(self, *, backend: str, workspace: str, model: str,
-                             session_id: str | None, bot_name: str) -> object:
-        return self._ensure_bots()._raw_backend_factory(
-            backend=backend, workspace=workspace, model=model,
-            session_id=session_id, bot_name=bot_name,
-        )

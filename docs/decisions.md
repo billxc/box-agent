@@ -178,6 +178,6 @@
 2. **Phase 2（setter）**: 兄弟 manager 在装配阶段通过 `set_xxx()` 注入，解循环依赖（Scheduler 在 bot 起完后才创建）。
 3. **Phase 3（start_*）**: Gateway 驱动每个 manager 的生命周期。
 
-**进度**: 第 1 个完成 — `BotsMixin` → `AgentManager`。BotsMixin 保留为 5 行 shim（带 lazy `_ensure_bots()`）以兼容 `test_gateway.py` 里 `patch.object(gw, "_start_bot", ...)` 的写法，最终一个 commit 删干净。
+**进度**: 第 1 个完成 — `BotsMixin` → `AgentManager`。**没保留 shim**：直接删掉 mixin、Gateway 不再继承 `BotsMixin`、`_GatewayCore.start()` 调 `self._bots.start_bot()`。原本 `test_gateway.py` patch `gw._start_bot` 的 5 处改成两种新写法：(a) class-level `patch("boxagent.agent.manager.AgentManager.start_bot", autospec=True)` —— 用来在 `gw.start()` 期间拦截；(b) 直接调用的 3 个 test 通过 helper `_agent_mgr_from(gw)` 显式构造 `AgentManager`，调用其 `start_bot/restart_bot`。迁就测试是反模式 —— shim 本来就要在最后一个 commit 删，提前一步而已。
 
 **接下来**: TopologyService → PeerService → ClusterRpc → ClusterHttpRoutes → WorkgroupHttpRoutes → HttpApiServer → WebHttpServer，各自独立 commit + 全量绿。

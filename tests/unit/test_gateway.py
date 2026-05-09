@@ -7,6 +7,24 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 
+def _agent_mgr_from(gw):
+    """Build an AgentManager bound to a Gateway's shared dicts."""
+    from boxagent.agent.manager import AgentManager
+    return AgentManager(
+        config=gw.config,
+        config_dir=gw.config_dir,
+        storage=gw._storage,
+        start_time=gw._start_time,
+        backends=gw._backends,
+        pools=gw._pools,
+        routers=gw._routers,
+        channels=gw._channels,
+        web_channels=gw._web_channels,
+        watchdogs=gw._watchdogs,
+        watchdog_tasks=gw._watchdog_tasks,
+    )
+
+
 class TestGateway:
     def test_supports_persistent_session(self):
         from boxagent.agent import _supports_persistent_session
@@ -32,14 +50,24 @@ class TestGateway:
 
         gw = Gateway(config=mock_config, config_dir=tmp_path)
 
-        with patch.object(gw, "_start_bot", new_callable=AsyncMock) as m:
-            with patch.object(gw, "_start_scheduler"):
-                with patch.object(gw, "_start_http", new_callable=AsyncMock), \
-                     patch.object(gw, "_start_web_http", new_callable=AsyncMock):
-                    await gw.start()
-            m.assert_called_once_with(
-                "test-bot", mock_config.bots["test-bot"]
-            )
+        started: list[str] = []
+
+        async def track(self, name, cfg):
+            started.append(name)
+
+        async def noop_raw(self):
+            pass
+
+        with patch("boxagent.agent.manager.AgentManager.start_bot",
+                   side_effect=track, autospec=True), \
+             patch("boxagent.agent.manager.AgentManager.start_raw_bot",
+                   side_effect=noop_raw, autospec=True), \
+             patch.object(gw, "_start_scheduler"), \
+             patch.object(gw, "_start_http", new_callable=AsyncMock), \
+             patch.object(gw, "_start_web_http", new_callable=AsyncMock):
+            await gw.start()
+
+        assert started == ["test-bot"]
 
     def test_box_agent_dir_changes_default_dirs(self, tmp_path):
         from boxagent.gateway import Gateway
@@ -154,7 +182,7 @@ class TestGateway:
             mock_wd.run_forever = AsyncMock()
             MockWD.return_value = mock_wd
 
-            await gw._start_bot("my-bot", bot_cfg)
+            await _agent_mgr_from(gw).start_bot("my-bot", bot_cfg)
             # Startup notify is now fire-and-forget; let the task run.
             await asyncio.sleep(0)
 
@@ -200,7 +228,9 @@ class TestGateway:
         with patch("boxagent.gateway.ClaudeProcess") as MockCLI:
             new_backend = MagicMock()
             MockCLI.return_value = new_backend
-            await gw._restart_bot("my-bot", bot_cfg)
+            mgr = _agent_mgr_from(gw)
+            mgr.set_scheduler(gw._scheduler)
+            await mgr.restart_bot("my-bot", bot_cfg)
 
         assert gw._scheduler.bot_refs["my-bot"].backend is new_backend
 
@@ -238,7 +268,7 @@ class TestGateway:
             mock_wd.run_forever = AsyncMock()
             MockWD.return_value = mock_wd
 
-            await gw._start_bot("my-bot", bot_cfg)
+            await _agent_mgr_from(gw).start_bot("my-bot", bot_cfg)
 
         assert MockCodex.call_args_list[0].kwargs["session_id"] == "saved-codex-session"
 
@@ -389,16 +419,21 @@ class TestGateway:
         gw = Gateway(config=mock_config, config_dir=tmp_path)
 
         started = []
-        original_start_bot = gw._start_bot
 
-        async def track_start_bot(name, cfg):
+        async def track_start_bot(self, name, cfg):
             started.append(name)
 
-        with patch.object(gw, "_start_bot", side_effect=track_start_bot):
-            with patch.object(gw, "_start_scheduler"):
-                with patch.object(gw, "_start_http", new_callable=AsyncMock), \
-                     patch.object(gw, "_start_web_http", new_callable=AsyncMock):
-                    await gw.start()
+        async def noop_raw(self):
+            pass
+
+        with patch("boxagent.agent.manager.AgentManager.start_bot",
+                   side_effect=track_start_bot, autospec=True), \
+             patch("boxagent.agent.manager.AgentManager.start_raw_bot",
+                   side_effect=noop_raw, autospec=True), \
+             patch.object(gw, "_start_scheduler"), \
+             patch.object(gw, "_start_http", new_callable=AsyncMock), \
+             patch.object(gw, "_start_web_http", new_callable=AsyncMock):
+            await gw.start()
 
         assert "bot-a" not in started
         assert "bot-b" in started
@@ -419,14 +454,20 @@ class TestGateway:
 
         started = []
 
-        async def track_start_bot(name, cfg):
+        async def track_start_bot(self, name, cfg):
             started.append(name)
 
-        with patch.object(gw, "_start_bot", side_effect=track_start_bot):
-            with patch.object(gw, "_start_scheduler"):
-                with patch.object(gw, "_start_http", new_callable=AsyncMock), \
-                     patch.object(gw, "_start_web_http", new_callable=AsyncMock):
-                    await gw.start()
+        async def noop_raw(self):
+            pass
+
+        with patch("boxagent.agent.manager.AgentManager.start_bot",
+                   side_effect=track_start_bot, autospec=True), \
+             patch("boxagent.agent.manager.AgentManager.start_raw_bot",
+                   side_effect=noop_raw, autospec=True), \
+             patch.object(gw, "_start_scheduler"), \
+             patch.object(gw, "_start_http", new_callable=AsyncMock), \
+             patch.object(gw, "_start_web_http", new_callable=AsyncMock):
+            await gw.start()
 
         assert "bot-a" in started
         assert "bot-b" in started

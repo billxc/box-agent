@@ -107,10 +107,10 @@ class _GatewayCore:
             if not node_matches(bot_cfg.enabled_on_nodes, self.config.node_id):
                 logger.info("Bot '%s' skipped (enabled_on_nodes=%s, current=%s)", name, bot_cfg.enabled_on_nodes, self.config.node_id)
                 continue
-            await self._start_bot(name, bot_cfg)
+            await self._bots.start_bot(name, bot_cfg)
 
         # Register the synthetic ``raw`` bot (web-only passthrough).
-        await self._start_raw_bot()
+        await self._bots.start_raw_bot()
 
         # Start workgroups
         if self.config.workgroups:
@@ -297,7 +297,6 @@ class _GatewayCore:
 
 # ── Gateway: compose mixins on top of _GatewayCore ──
 
-from boxagent.agent import BotsMixin
 from boxagent.cluster.peer import PeerMixin
 from boxagent.cluster.routes import ClusterRoutesMixin
 from boxagent.cluster.rpc import ClusterRpcMixin
@@ -315,7 +314,6 @@ class Gateway(
     ClusterRoutesMixin,
     ClusterRpcMixin,
     TopologyMixin,
-    BotsMixin,
     _GatewayCore,
 ):
     """Top-level Gateway. State + lifecycle live in ``_GatewayCore``;
