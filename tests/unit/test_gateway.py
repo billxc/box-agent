@@ -323,6 +323,7 @@ class TestGateway:
         gw = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
         gw._scheduler = MagicMock()
         gw._peer = MagicMock()
+        gw._workgroup_routes = MagicMock()
 
         mock_socket = MagicMock()
         mock_socket.getsockname.return_value = ("127.0.0.1", 50762)
@@ -354,6 +355,7 @@ class TestGateway:
         gw = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
         gw._scheduler = MagicMock()
         gw._peer = MagicMock()
+        gw._workgroup_routes = MagicMock()
 
         with patch.object(web, "TCPSite") as MockTCP, \
              patch.object(gw, "_start_mcp_http", new_callable=AsyncMock):

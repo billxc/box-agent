@@ -17,6 +17,7 @@ from boxagent.cluster.cluster_http_routes import ClusterHttpRoutes
 from boxagent.cluster.cluster_rpc import ClusterRpc
 from boxagent.cluster.peer_service import PeerService
 from boxagent.cluster.topology_service import TopologyService
+from boxagent.workgroup.workgroup_http_routes import WorkgroupHttpRoutes
 from boxagent.transports.web import WebChannel
 from boxagent.cluster import ClusterTunnel, GuestClient, GuestRegistry
 from boxagent.config import AppConfig, node_matches
@@ -68,6 +69,7 @@ class _GatewayCore:
     _peer: PeerService | None = field(default=None, repr=False)
     _cluster_rpc: ClusterRpc | None = field(default=None, repr=False)
     _cluster_routes: ClusterHttpRoutes | None = field(default=None, repr=False)
+    _workgroup_routes: WorkgroupHttpRoutes | None = field(default=None, repr=False)
 
     # Public read-only views into HostElection-owned components. Read sites
     # use these instead of reaching into ``_host_election.registry`` directly,
@@ -117,6 +119,9 @@ class _GatewayCore:
         self._cluster_routes = ClusterHttpRoutes(
             peer=self._peer, cluster_rpc=self._cluster_rpc,
         )
+        self._workgroup_routes = WorkgroupHttpRoutes(
+            config=self.config, config_dir=self.config_dir,
+        )
         logger.info("Gateway starting (node=%s)", self.config.node_id or "(any)")
 
         # Start Web UI first so the page is reachable while the rest boots.
@@ -147,9 +152,10 @@ class _GatewayCore:
                 _sync_skills=sync_skills,
                 _peer_provider=self._topology.build_peer_descriptors,
             )
-            # Phase 2: topology + peer now see workgroup_mgr.
+            # Phase 2: topology + peer + http routes now see workgroup_mgr.
             self._topology.set_workgroup_mgr(self._workgroup_mgr)
             self._peer.set_workgroup_mgr(self._workgroup_mgr)
+            self._workgroup_routes.set_workgroup_mgr(self._workgroup_mgr)
             for workgroup_name, workgroup_config in self.config.workgroups.items():
                 if not node_matches(workgroup_config.enabled_on_nodes, self.config.node_id):
                     logger.info("Workgroup '%s' skipped (enabled_on_nodes=%s, current=%s)", workgroup_name, workgroup_config.enabled_on_nodes, self.config.node_id)
@@ -212,6 +218,8 @@ class _GatewayCore:
         # so restart_bot / on_backend_switched can sync scheduler.bot_refs.
         if self._bots is not None:
             self._bots.set_scheduler(self._scheduler)
+        if self._workgroup_routes is not None:
+            self._workgroup_routes.set_scheduler(self._scheduler)
         logger.info("Scheduler started (file=%s)", schedules_file)
 
     @property
@@ -325,13 +333,11 @@ class _GatewayCore:
 
 from boxagent.gateway.http_api import HttpApiMixin
 from boxagent.transports.web.server import WebServerMixin
-from boxagent.workgroup.routes import WorkgroupApiMixin
 
 
 class Gateway(
     WebServerMixin,
     HttpApiMixin,
-    WorkgroupApiMixin,
     _GatewayCore,
 ):
     """Top-level Gateway. State + lifecycle live in ``_GatewayCore``;

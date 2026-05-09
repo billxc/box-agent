@@ -1,18 +1,50 @@
-"""Workgroup HTTP handlers + schedule run API."""
+"""Workgroup + scheduler HTTP handlers.
+
+Composition class. Held by Gateway as ``self._workgroup_routes``.
+Two-phase DI:
+
+- Phase 1 (ctor): config + config_dir (for schedules.yaml lookup).
+- Phase 2 (setters): ``set_workgroup_mgr`` / ``set_scheduler`` after
+  WorkgroupManager and Scheduler exist.
+
+Public surface: 8 aiohttp handlers registered by HttpApiServer (the
+internal API port). All are normal ``async def handle_*(request)``
+methods — leading underscores dropped vs the old WorkgroupApiMixin.
+"""
 
 import asyncio
 import logging
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from aiohttp import web
 
 from boxagent.scheduler import load_schedules
 
+if TYPE_CHECKING:
+    from boxagent.config import AppConfig
+    from boxagent.scheduler import Scheduler
+    from boxagent.workgroup import WorkgroupManager
+
 logger = logging.getLogger(__name__)
 
 
-class WorkgroupApiMixin:
-    async def _handle_schedule_run(self, request: web.Request) -> web.Response:
-        """Handle POST /api/schedule/run — execute a schedule once."""
+class WorkgroupHttpRoutes:
+    def __init__(self, *, config: "AppConfig", config_dir: Path) -> None:
+        self.config = config
+        self.config_dir = config_dir
+        # Phase 2 deps
+        self.workgroup_mgr: "WorkgroupManager | None" = None
+        self.scheduler: "Scheduler | None" = None
+
+    def set_workgroup_mgr(self, workgroup_mgr: "WorkgroupManager") -> None:
+        self.workgroup_mgr = workgroup_mgr
+
+    def set_scheduler(self, scheduler: "Scheduler") -> None:
+        self.scheduler = scheduler
+
+    async def handle_schedule_run(self, request: web.Request) -> web.Response:
+        """POST /api/schedule/run — execute a schedule once."""
         try:
             body = await request.json()
         except Exception:
@@ -22,7 +54,6 @@ class WorkgroupApiMixin:
         if not task_id:
             return web.json_response({"ok": False, "error": "missing 'id'"}, status=400)
 
-        # Load fresh from disk
         schedules_file = self.config_dir / "schedules.yaml"
         all_tasks = load_schedules(schedules_file, node_id=self.config.node_id)
         if task_id not in all_tasks:
@@ -32,27 +63,25 @@ class WorkgroupApiMixin:
         run_async = body.get("async", False)
 
         if run_async:
-            # Fire-and-forget: schedule in background, return immediately
             asyncio.ensure_future(self._schedule_run_bg(task_id, task))
             return web.json_response({"ok": True, "status": "scheduled"})
 
         try:
-            output = await self._scheduler.execute_once(task)
+            output = await self.scheduler.execute_once(task)
             return web.json_response({"ok": True, "output": output})
         except Exception as e:
             logger.error("API schedule/run '%s' failed: %s", task_id, e)
             return web.json_response({"ok": False, "error": str(e)}, status=500)
 
     async def _schedule_run_bg(self, task_id: str, task) -> None:
-        """Background wrapper for async schedule execution."""
         try:
-            await self._scheduler.execute_once(task)
+            await self.scheduler.execute_once(task)
             logger.info("Async schedule/run '%s' completed", task_id)
         except Exception as e:
             logger.error("Async schedule/run '%s' failed: %s", task_id, e)
 
-    async def _handle_workgroup_send(self, request: web.Request) -> web.Response:
-        """Handle POST /api/workgroup/send — dispatch task to a specialist (async)."""
+    async def handle_workgroup_send(self, request: web.Request) -> web.Response:
+        """POST /api/workgroup/send — dispatch task to a specialist (async)."""
         try:
             body = await request.json()
         except Exception:
@@ -69,7 +98,7 @@ class WorkgroupApiMixin:
             return web.json_response({"ok": False, "error": "missing 'message'"}, status=400)
 
         try:
-            result = await self._workgroup_mgr.send_to_specialist(
+            result = await self.workgroup_mgr.send_to_specialist(
                 target, message, from_bot=from_bot, reply_chat_id=reply_chat_id,
             )
             return web.json_response(result)
@@ -77,8 +106,7 @@ class WorkgroupApiMixin:
             logger.error("Workgroup send to '%s' failed: %s", target, e)
             return web.json_response({"ok": False, "error": str(e)}, status=500)
 
-    async def _handle_create_specialist(self, request: web.Request) -> web.Response:
-        """Handle POST /api/workgroup/create_specialist."""
+    async def handle_create_specialist(self, request: web.Request) -> web.Response:
         try:
             body = await request.json()
         except Exception:
@@ -95,7 +123,7 @@ class WorkgroupApiMixin:
                 {"ok": False, "error": "missing 'workgroup' or 'name'"}, status=400,
             )
 
-        result = await self._workgroup_mgr.create_specialist(
+        result = await self.workgroup_mgr.create_specialist(
             workgroup_name, specialist_name,
             model=body.get("model", ""),
             workspace=body.get("workspace", ""),
@@ -103,8 +131,7 @@ class WorkgroupApiMixin:
         status = 200 if result.get("ok") else 400
         return web.json_response(result, status=status)
 
-    async def _handle_reset_specialist(self, request: web.Request) -> web.Response:
-        """Handle POST /api/workgroup/reset_specialist."""
+    async def handle_reset_specialist(self, request: web.Request) -> web.Response:
         try:
             body = await request.json()
         except Exception:
@@ -114,26 +141,25 @@ class WorkgroupApiMixin:
         if not target:
             return web.json_response({"ok": False, "error": "missing 'name'"}, status=400)
 
-        result = self._workgroup_mgr.reset_specialist(target)
+        result = self.workgroup_mgr.reset_specialist(target)
         status = 200 if result.get("ok") else 400
         return web.json_response(result, status=status)
 
-    async def _handle_list_specialists(self, request: web.Request) -> web.Response:
-        """Handle GET /api/workgroup/specialists — list all specialists with details."""
+    async def handle_list_specialists(self, request: web.Request) -> web.Response:
+        """GET /api/workgroup/specialists — list all specialists with details."""
         workgroup_name = request.query.get("workgroup", "")
-        result = self._workgroup_mgr.list_specialists(workgroup_name)
+        result = self.workgroup_mgr.list_specialists(workgroup_name)
         return web.json_response(result)
 
-    async def _handle_specialist_status(self, request: web.Request) -> web.Response:
-        """Handle GET /api/workgroup/specialist_status — get specialist status + recent chat."""
+    async def handle_specialist_status(self, request: web.Request) -> web.Response:
+        """GET /api/workgroup/specialist_status — status + recent chat."""
         name = request.query.get("name", "")
         if not name:
             return web.json_response({"ok": False, "error": "missing 'name'"}, status=400)
-        result = self._workgroup_mgr.get_specialist_status(name)
+        result = self.workgroup_mgr.get_specialist_status(name)
         return web.json_response(result)
 
-    async def _handle_delete_specialist(self, request: web.Request) -> web.Response:
-        """Handle POST /api/workgroup/delete_specialist."""
+    async def handle_delete_specialist(self, request: web.Request) -> web.Response:
         try:
             body = await request.json()
         except Exception:
@@ -143,12 +169,12 @@ class WorkgroupApiMixin:
         if not target:
             return web.json_response({"ok": False, "error": "missing 'name'"}, status=400)
 
-        result = await self._workgroup_mgr.delete_specialist(target)
+        result = await self.workgroup_mgr.delete_specialist(target)
         status = 200 if result.get("ok") else 400
         return web.json_response(result, status=status)
 
-    async def _handle_cancel_task(self, request: web.Request) -> web.Response:
-        """Handle POST /api/workgroup/cancel_task — cancel a running specialist task."""
+    async def handle_cancel_task(self, request: web.Request) -> web.Response:
+        """POST /api/workgroup/cancel_task — cancel a running specialist task."""
         try:
             body = await request.json()
         except Exception:
@@ -158,6 +184,6 @@ class WorkgroupApiMixin:
         if not task_id:
             return web.json_response({"ok": False, "error": "missing 'task_id'"}, status=400)
 
-        result = await self._workgroup_mgr.cancel_task(task_id)
+        result = await self.workgroup_mgr.cancel_task(task_id)
         status = 200 if result.get("ok") else 400
         return web.json_response(result, status=status)

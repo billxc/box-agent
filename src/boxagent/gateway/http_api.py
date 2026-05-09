@@ -12,14 +12,14 @@ class HttpApiMixin:
     async def _start_http(self) -> None:
         """Start the internal HTTP API server (TCP only)."""
         app = web.Application()
-        app.router.add_post("/api/schedule/run", self._handle_schedule_run)
-        app.router.add_get("/api/workgroup/specialists", self._handle_list_specialists)
-        app.router.add_get("/api/workgroup/specialist_status", self._handle_specialist_status)
-        app.router.add_post("/api/workgroup/send", self._handle_workgroup_send)
-        app.router.add_post("/api/workgroup/create_specialist", self._handle_create_specialist)
-        app.router.add_post("/api/workgroup/reset_specialist", self._handle_reset_specialist)
-        app.router.add_post("/api/workgroup/delete_specialist", self._handle_delete_specialist)
-        app.router.add_post("/api/workgroup/cancel_task", self._handle_cancel_task)
+        app.router.add_post("/api/schedule/run", self._workgroup_routes.handle_schedule_run)
+        app.router.add_get("/api/workgroup/specialists", self._workgroup_routes.handle_list_specialists)
+        app.router.add_get("/api/workgroup/specialist_status", self._workgroup_routes.handle_specialist_status)
+        app.router.add_post("/api/workgroup/send", self._workgroup_routes.handle_workgroup_send)
+        app.router.add_post("/api/workgroup/create_specialist", self._workgroup_routes.handle_create_specialist)
+        app.router.add_post("/api/workgroup/reset_specialist", self._workgroup_routes.handle_reset_specialist)
+        app.router.add_post("/api/workgroup/delete_specialist", self._workgroup_routes.handle_delete_specialist)
+        app.router.add_post("/api/workgroup/cancel_task", self._workgroup_routes.handle_cancel_task)
         app.router.add_post("/api/peer/send", self._peer.handle_peer_send)
         # NOTE: /api/wg/peer/recv lives on `web_app` (the web UI port) instead of
         # `app` (internal API port) because guest_client forwards RPC frames to
