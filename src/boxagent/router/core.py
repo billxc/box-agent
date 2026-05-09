@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from boxagent.transports.base import Channel, IncomingMessage
 from boxagent.agent.protocol import AgentBackend
@@ -27,6 +27,7 @@ from boxagent.router.commands import (
 
 if TYPE_CHECKING:
     from boxagent.agent_env import AgentEnv
+    from boxagent.sessions import SessionPool, Storage
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +37,10 @@ SYSTEM_COMMANDS = {"/status", "/new", "/cancel", "/resume", "/start", "/help", "
 @dataclass
 class Router:
     backend: AgentBackend
-    channel: Channel
+    channel: Channel | None
     allowed_users: list[int]
-    storage: object = None
-    pool: object = None  # SessionPool — if set, used for per-chat dispatch
+    storage: "Storage | None" = None
+    pool: "SessionPool | None" = None  # if set, used for per-chat dispatch
     bot_name: str = ""
     display_name: str = ""
     config_dir: str = ""
@@ -49,22 +50,33 @@ class Router:
     workspace: str = ""
     extra_skill_dirs: list[str] = field(default_factory=list)
     ai_backend: str = "claude-cli"
-    on_backend_switched: object = None  # async callback(bot_name, new_backend, new_kind)
+    on_backend_switched: Callable[[str, AgentBackend, str], Awaitable[None]] | None = None
     workgroup_agents: list[str] = field(default_factory=list)  # specialist names for context
-    get_running_tasks: object = None  # Callable[[], list[dict]]
-    get_peers: object = None  # Callable[[], list[dict]] — workgroup admin only
+    get_running_tasks: Callable[[], list[dict]] | None = None
+    get_peers: Callable[[], list[dict]] | None = None  # workgroup admin only
     has_peer_channel: bool = False
     telegram_token: str = ""      # from BotConfig at startup
     workgroup_role: str = ""      # "admin" / "specialist" / ""
     passthrough: bool = False     # raw bot: skip context + MCP injection
     _compact_summaries: dict[str, str] = field(default_factory=dict, repr=False)
     _resume_contexts: dict[str, str] = field(default_factory=dict, repr=False)
-    _channels: dict[str, object] = field(default_factory=dict, repr=False)
+    _channels: dict[str, Channel] = field(default_factory=dict, repr=False)
     _pending_messages: dict[str, list] = field(default_factory=dict, repr=False)  # chat_id → buffered IncomingMessages
 
-    def _resolve_channel(self, msg: IncomingMessage) -> object:
-        """Return the channel that should handle this message's replies."""
-        return self._channels.get(msg.channel, self.channel)
+    def _resolve_channel(self, msg: IncomingMessage) -> Channel:
+        """Return the channel that should handle this message's replies.
+
+        Raises ``RuntimeError`` if neither the per-msg channel nor the
+        default Router channel is configured — a real construction bug
+        rather than a runtime fluke (raw bot's web_channel is always
+        registered before it sees its first message).
+        """
+        ch = self._channels.get(msg.channel, self.channel)
+        if ch is None:
+            raise RuntimeError(
+                f"Router '{self.bot_name}' has no channel for {msg.channel!r}"
+            )
+        return ch
 
     async def handle_message(self, msg: IncomingMessage) -> None:
         try:
@@ -272,7 +284,7 @@ class Router:
                 buttons.append((btn_label, f"/resume {session_id}"))
         text = "\n".join(lines)
         send_with_buttons = getattr(ch, "send_text_with_inline_keyboard", None)
-        if callable(send_with_buttons):
+        if send_with_buttons is not None:
             await send_with_buttons(msg.chat_id, text, buttons)
         else:
             await ch.send_text(msg.chat_id, text)
@@ -295,7 +307,8 @@ class Router:
             self.backend.session_id = target_session_id
         self._compact_summaries.pop(chat_id, None)
         self._resume_contexts.pop(chat_id, None)
-        self.storage.save_session(self.bot_name, target_session_id, chat_id=chat_id)
+        if self.storage is not None:
+            self.storage.save_session(self.bot_name, target_session_id, chat_id=chat_id)
 
         # Build confirmation message
         info_parts = [f"Resumed session `{target_session_id[:8]}`"]
@@ -493,9 +506,9 @@ class Router:
 
         # Acquire a process to run the summary
         proc = None
-        use_pool = self.pool is not None
-        if use_pool:
-            proc = await self.pool.acquire(chat_id)
+        pool = self.pool
+        if pool is not None:
+            proc = await pool.acquire(chat_id)
         else:
             proc = self.backend
 
@@ -505,15 +518,15 @@ class Router:
             env = self._build_env(msg)
             await proc.send(summary_prompt, collector, env=env)
         except Exception as e:
-            if use_pool:
-                self.pool.release(chat_id, proc)
+            if pool is not None:
+                pool.release(chat_id, proc)
             await ch.send_text(
                 chat_id, f"Failed to generate summary: {e}"
             )
             return
 
-        if use_pool:
-            self.pool.release(chat_id, proc)
+        if pool is not None:
+            pool.release(chat_id, proc)
 
         summary = collector.text.strip()
         if not summary:
@@ -523,8 +536,8 @@ class Router:
             return
 
         # Reset session
-        if use_pool:
-            self.pool.clear_session(chat_id)
+        if pool is not None:
+            pool.clear_session(chat_id)
         else:
             await self._reset_backend_session()
         if self.storage:
@@ -640,9 +653,9 @@ class Router:
 
         # Acquire a process from the pool (or use the single backend)
         proc = None
-        use_pool = self.pool is not None
-        if use_pool:
-            proc = await self.pool.acquire(chat_id)
+        pool = self.pool
+        if pool is not None:
+            proc = await pool.acquire(chat_id)
         else:
             proc = self.backend
 
@@ -650,18 +663,18 @@ class Router:
         try:
             await proc.send(prompt, callback, model=model_override, chat_id=chat_id, append_system_prompt=append_system_prompt, env=env)
             drain_output = getattr(proc, "drain_output", None)
-            if callable(drain_output):
+            if drain_output is not None:
                 await drain_output()
             turn_failed = getattr(proc, "last_turn_failed", False) is True
             if used_compact and not turn_failed:
                 self._compact_summaries.pop(chat_id, None)
         finally:
             await callback.close()
-            if use_pool:
-                self.pool.release(chat_id, proc)
+            if pool is not None:
+                pool.release(chat_id, proc)
 
         # Get session_id BEFORE release (release clears proc.session_id)
-        sid = self.pool.get_session_id(chat_id) if use_pool else getattr(proc, "session_id", None)
+        sid = pool.get_session_id(chat_id) if pool is not None else getattr(proc, "session_id", None)
 
         turn_failed = getattr(proc, "last_turn_failed", False) is True
         turn_error = getattr(proc, "last_turn_error", "")
@@ -738,7 +751,7 @@ class Router:
     async def _reset_backend_session(self):
         """Reset session state, falling back to session_id-only backends."""
         reset_session = getattr(self.backend, "reset_session", None)
-        if callable(reset_session):
+        if reset_session is not None:
             await reset_session()
         else:
             self.backend.session_id = None

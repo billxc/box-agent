@@ -55,6 +55,11 @@ select = ["E", "F", "W"]
 # Long lines / star-imports are tolerated (W291/W293 trailing-ws bites enough).
 ignore = ["E501"]
 
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",
@@ -62,4 +67,5 @@ dev = [
     "pytest-mock>=3.12",
     "pytest-timeout>=2.2",
     "ruff>=0.6",
+    "pyright>=1.1.380",
 ]

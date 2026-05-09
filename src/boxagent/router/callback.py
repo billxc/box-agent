@@ -24,7 +24,7 @@ class TextCollector:
     async def on_stream(self, text: str) -> None:
         self.text += text
 
-    async def on_tool_call(self, name: str, input: dict, result: str):
+    async def on_tool_call(self, name: str, input: dict, result: str, tool_id: str = ""):
         pass
 
     async def on_tool_update(
@@ -32,8 +32,8 @@ class TextCollector:
         tool_call_id: str,
         title: str,
         status: str | None = None,
-        input: object = None,
-        output: object = None,
+        input=None,
+        output=None,
     ):
         pass
 
