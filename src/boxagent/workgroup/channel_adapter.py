@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from boxagent.config import SpecialistConfig, WorkgroupConfig
+from boxagent.transports.base import Channel
+from boxagent.transports.web import WebChannel
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +37,7 @@ class WorkgroupChannelAdapter(Protocol):
         callback messages — but reserved for future inbound paths)."""
         ...
 
-    def primary_channel(self) -> object:
+    def primary_channel(self) -> Channel | None:
         """The channel object passed to Router(channel=...). May be None for
         adapters that don't drive Router streaming directly."""
         ...
@@ -89,7 +91,7 @@ class NullWorkgroupChannelAdapter:
     def channel_name(self) -> str:
         return "internal"
 
-    def primary_channel(self) -> object:
+    def primary_channel(self) -> Channel | None:
         return None
 
     def get_specialist_chat_id(self, specialist_name: str, specialist_config: SpecialistConfig) -> str:
@@ -122,13 +124,13 @@ class WebWorkgroupAdapter:
     chat_id in addition to its own and renders the specialist's stream alongside.
     """
 
-    web_channel: object  # boxagent.transports.web.WebChannel
+    web_channel: WebChannel
 
     @property
     def channel_name(self) -> str:
         return "web"
 
-    def primary_channel(self) -> object:
+    def primary_channel(self) -> Channel | None:
         return self.web_channel
 
     def get_specialist_chat_id(self, specialist_name: str, specialist_config: SpecialistConfig) -> str:

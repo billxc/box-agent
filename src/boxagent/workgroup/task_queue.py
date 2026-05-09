@@ -64,11 +64,12 @@ class SpecialistTaskQueue:
     async def cancel(
         self,
         task_id: str,
-        cancel_specialist: Callable[[str], None] | None = None,
+        cancel_specialist: Callable[[str], object] | None = None,
     ) -> dict:
         """Cancel a running task; ``cancel_specialist(target)`` is invoked
         before the asyncio task is cancelled so the underlying CLI process
-        gets a chance to terminate cleanly."""
+        gets a chance to terminate cleanly. The callable may be sync or
+        async (its result is awaited if awaitable)."""
         info = self._results.get(task_id)
         if info is None:
             return {"ok": False, "error": f"task '{task_id}' not found"}

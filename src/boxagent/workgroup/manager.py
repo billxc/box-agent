@@ -6,12 +6,14 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 
 from boxagent.config import BotConfig, SpecialistConfig, WorkgroupConfig
 from boxagent.agent.backend_factory import create_backend
+from boxagent.agent.protocol import AgentBackend
 from boxagent.agent.workspace import ensure_git_repo, sync_skills
+from boxagent.transports.web import WebChannel
 from boxagent.utils import resolve_boxagent_dir
 from boxagent.workgroup.channel_adapter import (
     NullWorkgroupChannelAdapter,
@@ -48,6 +50,7 @@ logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
+    from boxagent.sessions import Storage
     from boxagent.workgroup.workgroup_http_routes import WorkgroupHttpRoutes
 
 
@@ -97,19 +100,19 @@ class WorkgroupManager:
     node_id: str = ""
     local_dir: Path | None = None
     start_time: float = 0.0
-    storage: object = None
-    web_channels: dict[str, object] = field(default_factory=dict)      # name → WebChannel (shared with Gateway)
+    storage: "Storage | None" = None
+    web_channels: dict[str, WebChannel] = field(default_factory=dict)      # name → WebChannel (shared with Gateway)
     # Internal state
     routers: dict[str, Router] = field(default_factory=dict)    # name → Router
     pools: dict[str, SessionPool] = field(default_factory=dict)  # name → Pool
-    procs: dict[str, object] = field(default_factory=dict)       # name → CLI process
+    procs: dict[str, AgentBackend] = field(default_factory=dict)       # name → CLI process
     adapters: dict[str, WorkgroupChannelAdapter] = field(default_factory=dict)  # workgroup_name → adapter
     # Async task tracking — delegated to a dedicated queue.
     tasks: SpecialistTaskQueue = field(default_factory=SpecialistTaskQueue, repr=False)
     _heartbeats: dict[str, HeartbeatManager] = field(default_factory=dict, repr=False)
 
     # Injected by Gateway
-    _peer_provider: object = None    # Callable[[str], list[dict]] — exclude=self_name
+    _peer_provider: Callable[[str], list[dict]] | None = None  # exclude=self_name
 
     # HTTP route adapter — built lazily on first access so the manager and
     # its HTTP surface ship together. Gateway just reads ``mgr.routes``.
@@ -122,14 +125,19 @@ class WorkgroupManager:
             self._routes = WorkgroupHttpRoutes(workgroup_mgr=self)
         return self._routes
 
+    def _require_local_dir(self) -> Path:
+        if self.local_dir is None:
+            raise RuntimeError("WorkgroupManager.local_dir not configured")
+        return self.local_dir
+
     def _specialists_file(self) -> Path:
-        return specialists_file(self.local_dir)
+        return specialists_file(self._require_local_dir())
 
     def _load_saved_specialists(self, workgroup_name: str) -> dict[str, SpecialistConfig]:
-        return load_saved_specialists(self.local_dir, workgroup_name)
+        return load_saved_specialists(self._require_local_dir(), workgroup_name)
 
     def _save_specialist(self, workgroup_name: str, specialist: SpecialistConfig) -> None:
-        save_specialist(self.local_dir, workgroup_name, specialist)
+        save_specialist(self._require_local_dir(), workgroup_name, specialist)
 
     def _make_backend(self, bot_cfg: BotConfig, session_id=None):
         return create_backend(bot_cfg, session_id)
@@ -773,7 +781,7 @@ class WorkgroupManager:
         return {"ok": True}
 
     def _remove_saved_specialist(self, workgroup_name: str, specialist_name: str) -> None:
-        remove_saved_specialist(self.local_dir, workgroup_name, specialist_name)
+        remove_saved_specialist(self._require_local_dir(), workgroup_name, specialist_name)
 
     async def stop(self) -> None:
         """Stop all workgroup processes, pools, and heartbeats."""
