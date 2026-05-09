@@ -212,6 +212,29 @@ class TestRouterPromptSplit:
         assert "[Recovered previous session]" in append_system_prompt
         user_message = mock_cli.send.call_args[0][0]
         assert "[Recovered previous session]" not in user_message
+        # On success the resume_ctx is consumed so the next turn doesn't
+        # double-inject it.
+        assert router._resume_contexts.get("123456", "") == ""
+
+    async def test_resume_context_preserved_when_send_fails(self, mock_cli, mock_channel):
+        """Regression for yait #18: if backend.send() raises, the resume
+        context must NOT be lost — the user can retry on the next turn."""
+        router = Router(
+            backend=mock_cli,
+            channel=mock_channel,
+            allowed_users=[123456],
+        )
+        router._resume_contexts["123456"] = "[Recovered previous session]\nUser: hi\n[End recovered session]"
+        mock_cli.send.side_effect = RuntimeError("backend down")
+
+        try:
+            await router.handle_message(make_msg("continue"))
+        except RuntimeError:
+            pass  # propagated; that's fine, we just care the context survives
+
+        assert router._resume_contexts.get("123456", "") != "", (
+            "resume_ctx must survive a failed send so the next turn can retry"
+        )
 
     async def test_compact_summary_goes_to_append_system_prompt(self, mock_cli, mock_channel):
         router = Router(

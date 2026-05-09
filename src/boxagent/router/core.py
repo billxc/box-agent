@@ -615,9 +615,12 @@ class Router:
             if context:
                 system_parts.append(context)
 
-            resume_ctx = self._resume_contexts.pop(chat_id, "")
+            resume_ctx = self._resume_contexts.get(chat_id, "")
             if resume_ctx:
                 system_parts.append(resume_ctx)
+                used_resume_ctx = True
+            else:
+                used_resume_ctx = False
 
             # Inject compact summary if available (system-level)
             compact_summary = self._compact_summaries.get(chat_id, "")
@@ -668,6 +671,11 @@ class Router:
             turn_failed = getattr(proc, "last_turn_failed", False) is True
             if used_compact and not turn_failed:
                 self._compact_summaries.pop(chat_id, None)
+            if used_resume_ctx and not turn_failed:
+                # Mirror compact_summary: only consume on success so a
+                # failed send leaves the recovered context for retry
+                # (yait #18).
+                self._resume_contexts.pop(chat_id, None)
         finally:
             await callback.close()
             if pool is not None:
