@@ -25,12 +25,8 @@ from boxagent.workgroup.persistence import (
     load_saved_specialists,
     remove_saved_specialist,
     save_specialist,
-    specialists_file,
 )
-from boxagent.workgroup.specialist_skills import (
-    apply_template_skills,
-    symlink_template_skills,
-)
+from boxagent.workgroup.specialist_skills import apply_template_skills
 from boxagent.workgroup.task_queue import SpecialistTaskQueue
 from boxagent.router import Router
 from boxagent.sessions import SessionPool
@@ -130,9 +126,6 @@ class WorkgroupManager:
             raise RuntimeError("WorkgroupManager.local_dir not configured")
         return self.local_dir
 
-    def _specialists_file(self) -> Path:
-        return specialists_file(self._require_local_dir())
-
     def _load_saved_specialists(self, workgroup_name: str) -> dict[str, SpecialistConfig]:
         return load_saved_specialists(self._require_local_dir(), workgroup_name)
 
@@ -149,14 +142,6 @@ class WorkgroupManager:
         ai_backend: str,
     ) -> None:
         apply_template_skills(workspace, template_info, ai_backend)
-
-    def _symlink_template_skills(
-        self,
-        workspace: str,
-        skill_dirs: list[Path],
-        ai_backend: str,
-    ) -> None:
-        symlink_template_skills(workspace, skill_dirs, ai_backend)
 
     async def _create_specialist_agent(
         self, specialist_name: str, specialist_config, workgroup_config: WorkgroupConfig,

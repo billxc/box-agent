@@ -128,11 +128,6 @@ def _load_node_id(args) -> str:
     return str(raw.get("node_id", "") or "")
 
 
-def _load_effective_schedules(args) -> dict[str, dict]:
-    """Load schedules visible to the current node after node_overrides merge."""
-    return load_schedule_entries(_schedules_file(args), node_id=_load_node_id(args))
-
-
 def _save_all(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:

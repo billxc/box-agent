@@ -20,7 +20,7 @@ from boxagent.transports.base import Channel, IncomingMessage
 
 if TYPE_CHECKING:
     from boxagent.agent.protocol import AgentBackend
-    from boxagent.sessions import BaseSessionPool, SessionPool, Storage
+    from boxagent.sessions import BaseSessionPool, Storage
 
 logger = logging.getLogger(__name__)
 
