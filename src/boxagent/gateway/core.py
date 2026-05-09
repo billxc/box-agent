@@ -38,7 +38,7 @@ from boxagent.cluster.topology_service import TopologyService
 from boxagent.gateway.http_api_server import HttpApiServer
 from boxagent.scheduler.scheduler_http_routes import SchedulerHttpRoutes
 from boxagent.transports.web.server import WebHttpServer
-from boxagent.config import AppConfig, node_matches
+from boxagent.config import AppConfig
 from boxagent.utils import default_config_dir, default_local_dir, default_workspace_dir
 from boxagent.sessions import Storage
 from boxagent.scheduler import Scheduler
@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class _GatewayCore:
+class Gateway:
     config: AppConfig
     config_dir: Path = field(default_factory=default_config_dir)
     local_dir: Path = field(default_factory=default_local_dir)
@@ -69,13 +69,14 @@ class _GatewayCore:
 
     async def start(self) -> None:
         self._start_time = time.time()
-        self._storage = Storage(local_dir=self.local_dir)
+        storage = Storage(local_dir=self.local_dir)
+        self._storage = storage
         # Phase 1: build managers. AgentManager owns its bot-state dicts;
         # everyone else who needs to read them gets the dict by reference.
         self._bots = AgentManager(
             config=self.config,
             config_dir=self.config_dir,
-            storage=self._storage,
+            storage=storage,
             start_time=self._start_time,
         )
         self._topology = TopologyService(
@@ -84,7 +85,7 @@ class _GatewayCore:
         )
         self._peer = PeerService(
             topology=self._topology,
-            main_chat_id_provider=self._storage.get_or_create_main_chat_id,
+            main_chat_id_provider=storage.get_or_create_main_chat_id,
         )
         self._cluster_rpc = ClusterRpc(topology=self._topology)
         self._cluster_routes = ClusterHttpRoutes(
@@ -93,7 +94,7 @@ class _GatewayCore:
         self._web_server = WebHttpServer(
             config=self.config,
             local_dir=self.local_dir,
-            storage=self._storage,
+            storage=storage,
             web_channels=self._bots.web_channels,
             pools=self._bots.pools,
             topology=self._topology,
@@ -102,28 +103,21 @@ class _GatewayCore:
         )
         logger.info("Gateway starting (node=%s)", self.config.node_id or "(any)")
 
-        # Start Web UI first so the page is reachable while the rest boots.
+        # Web UI first so the page is reachable while the rest boots.
         await self._web_server.start()
 
-        # Start each bot
-        for name, bot_cfg in self.config.bots.items():
-            if not node_matches(bot_cfg.enabled_on_nodes, self.config.node_id):
-                logger.info("Bot '%s' skipped (enabled_on_nodes=%s, current=%s)", name, bot_cfg.enabled_on_nodes, self.config.node_id)
-                continue
-            await self._bots.start_bot(name, bot_cfg)
+        # Bots (incl. synthetic raw passthrough).
+        await self._bots.start_all_for_node(self.config.node_id)
 
-        # Register the synthetic ``raw`` bot (web-only passthrough).
-        await self._bots.start_raw_bot()
-
-        # Start workgroups
+        # Workgroups.
         if self.config.workgroups:
             self._workgroup_mgr = WorkgroupManager(
                 config=self.config.workgroups,
                 config_dir=str(self.config_dir),
                 node_id=self.config.node_id,
-                local_dir=self._storage.local_dir if self._storage else None,
+                local_dir=storage.local_dir,
                 start_time=self._start_time,
-                storage=self._storage,
+                storage=storage,
                 web_channels=self._bots.web_channels,
                 _peer_provider=self._topology.build_peer_descriptors,
             )
@@ -132,13 +126,9 @@ class _GatewayCore:
             self._topology.set_workgroup_mgr(self._workgroup_mgr)
             self._peer.set_workgroup_mgr(self._workgroup_mgr)
             self._web_server.set_workgroup_mgr(self._workgroup_mgr)
-            for workgroup_name, workgroup_config in self.config.workgroups.items():
-                if not node_matches(workgroup_config.enabled_on_nodes, self.config.node_id):
-                    logger.info("Workgroup '%s' skipped (enabled_on_nodes=%s, current=%s)", workgroup_name, workgroup_config.enabled_on_nodes, self.config.node_id)
-                    continue
-                await self._workgroup_mgr.start_workgroup(workgroup_name, workgroup_config)
+            await self._workgroup_mgr.start_all_for_node(self.config.node_id)
 
-        # Start scheduler
+        # Scheduler + its HTTP route adapter.
         self._start_scheduler()
 
         # HttpApiServer needs workgroup_mgr.routes + scheduler_routes — built
@@ -154,10 +144,9 @@ class _GatewayCore:
         )
         await self._http_server.start()
 
-        # Cluster: kick off host election (host_priority list determines who
-        # is host vs guest at runtime, with failover when primary disappears).
+        # Cluster: host election. host_priority list determines who is host
+        # vs guest at runtime, with failover when primary disappears.
         if self.config.cluster_tunnel:
-            from boxagent.cluster.host_election import HostElection
             self._host_election = HostElection(
                 config=self.config,
                 on_topology_change=self._topology.on_topology_change,
@@ -167,10 +156,7 @@ class _GatewayCore:
             self._topology.set_host_election(self._host_election)
             await self._host_election.start()
 
-        logger.info(
-            "Gateway ready: %d bot(s) active", len(self.config.bots)
-        )
-
+        logger.info("Gateway ready: %d bot(s) active", len(self.config.bots))
 
     def _start_scheduler(self) -> None:
         """Create and start the Scheduler after all active bots are online."""
@@ -231,21 +217,8 @@ class _GatewayCore:
         if self._bots is not None:
             await self._bots.stop()
 
-        # Stop workgroup resources
+        # Workgroup resources
         if self._workgroup_mgr:
             await self._workgroup_mgr.stop()
 
         logger.info("Gateway stopped")
-
-
-# ── Gateway: composition root (no mixins) ──
-
-
-class Gateway(_GatewayCore):
-    """Top-level Gateway. All behavior lives in composed managers
-    (``self._bots``, ``self._topology``, ``self._peer``, ``self._cluster_rpc``,
-    ``self._cluster_routes``, ``self._scheduler_routes``, ``self._http_server``,
-    ``self._web_server``); workgroup HTTP routes live on
-    ``self._workgroup_mgr.routes``. ``_GatewayCore`` only owns the dataclass
-    state and the start/stop wiring."""
-    pass

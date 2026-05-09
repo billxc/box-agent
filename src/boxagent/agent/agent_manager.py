@@ -80,6 +80,23 @@ class AgentManager:
     def set_scheduler(self, scheduler: "Scheduler") -> None:
         self.scheduler = scheduler
 
+    async def start_all_for_node(self, node_id: str) -> None:
+        """Start every bot whose ``enabled_on_nodes`` matches ``node_id``,
+        then register the synthetic ``raw`` passthrough bot.
+
+        Skipped bots are logged but not raised; an empty config is fine.
+        """
+        from boxagent.config import node_matches
+        for name, bot_cfg in self.config.bots.items():
+            if not node_matches(bot_cfg.enabled_on_nodes, node_id):
+                logger.info(
+                    "Bot '%s' skipped (enabled_on_nodes=%s, current=%s)",
+                    name, bot_cfg.enabled_on_nodes, node_id,
+                )
+                continue
+            await self.start_bot(name, bot_cfg)
+        await self.start_raw_bot()
+
     def build_scheduler_refs(self) -> dict:
         """Build the per-bot ``BotRef`` map the Scheduler consumes.
 

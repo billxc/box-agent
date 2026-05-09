@@ -242,6 +242,18 @@ class WorkgroupManager:
             return WebWorkgroupAdapter(web_channel=web_channel)
         return NullWorkgroupChannelAdapter()
 
+    async def start_all_for_node(self, node_id: str) -> None:
+        """Start every workgroup whose ``enabled_on_nodes`` matches ``node_id``."""
+        from boxagent.config import node_matches
+        for workgroup_name, workgroup_config in self.config.items():
+            if not node_matches(workgroup_config.enabled_on_nodes, node_id):
+                logger.info(
+                    "Workgroup '%s' skipped (enabled_on_nodes=%s, current=%s)",
+                    workgroup_name, workgroup_config.enabled_on_nodes, node_id,
+                )
+                continue
+            await self.start_workgroup(workgroup_name, workgroup_config)
+
     async def start_workgroup(self, workgroup_name: str, workgroup_config: WorkgroupConfig) -> None:
         """Initialize a standalone workgroup: create admin + specialist agents."""
         # Web is the workgroup's substrate — always create the WebChannel
