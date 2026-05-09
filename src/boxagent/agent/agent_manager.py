@@ -195,6 +195,68 @@ class AgentManager:
     def set_scheduler(self, scheduler: "Scheduler") -> None:
         self.scheduler = scheduler
 
+    def build_scheduler_refs(self) -> dict:
+        """Build the per-bot ``BotRef`` map the Scheduler consumes.
+
+        Walks the routers/backends/channels dicts this manager owns. Skips
+        the synthetic ``raw`` bot (web-only passthrough — never a scheduler
+        target).
+        """
+        from boxagent.scheduler import BotRef
+        refs: dict = {}
+        for name in self.routers:
+            if name == "raw":
+                continue
+            bot_cfg = self.config.bots[name]
+            chat_id = str(bot_cfg.allowed_users[0]) if bot_cfg.allowed_users else ""
+            refs[name] = BotRef(
+                backend=self.backends[name],
+                channel=self.channels.get(name),
+                chat_id=chat_id,
+                ai_backend=bot_cfg.ai_backend,
+                telegram_token=bot_cfg.telegram_token,
+            )
+        return refs
+
+    async def stop(self) -> None:
+        """Tear down everything this manager owns: watchdog tasks, channels,
+        web_channels, backends (saving session_id first), pools.
+
+        Errors per resource are logged and swallowed so a single bad stop()
+        can't block the rest of teardown.
+        """
+        for task in self.watchdog_tasks:
+            task.cancel()
+        if self.watchdog_tasks:
+            await asyncio.gather(*self.watchdog_tasks, return_exceptions=True)
+        self.watchdog_tasks.clear()
+
+        for name, ch in self.channels.items():
+            try:
+                await ch.stop()
+            except Exception as e:
+                logger.error("Error stopping channel %s: %s", name, e)
+
+        for name, ch in self.web_channels.items():
+            try:
+                await ch.stop()
+            except Exception as e:
+                logger.error("Error stopping web channel %s: %s", name, e)
+
+        for name, backend in self.backends.items():
+            try:
+                if self.storage and backend.session_id:
+                    self.storage.save_session(name, backend.session_id)
+                await backend.stop()
+            except Exception as e:
+                logger.error("Error stopping backend %s: %s", name, e)
+
+        for name, pool in self.pools.items():
+            try:
+                await pool.stop()
+            except Exception as e:
+                logger.error("Error stopping pool %s: %s", name, e)
+
     async def start_bot(self, name: str, bot_cfg: BotConfig) -> None:
         session_id = None
         if _supports_persistent_session(bot_cfg.ai_backend):

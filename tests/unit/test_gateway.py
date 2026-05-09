@@ -97,22 +97,17 @@ class TestGateway:
         assert gw.config_dir == custom_box_agent_dir
         assert gw.local_dir == custom_box_agent_dir / "local"
 
-    async def test_stop_stops_all_components(self, tmp_path):
+    async def test_stop_does_not_crash_without_start(self, tmp_path):
+        """Gateway.stop() before start() should be a no-op (all manager refs
+        are None). Per-resource teardown lives on AgentManager.stop() and is
+        covered by test_agent_manager.py."""
         from boxagent.gateway import Gateway
 
         mock_config = MagicMock()
         mock_config.bots = {}
 
         gw = Gateway(config=mock_config, config_dir=tmp_path)
-        mock_ch = AsyncMock()
-        mock_cli = AsyncMock()
-        gw._channels = {"test-bot": mock_ch}
-        gw._backends = {"test-bot": mock_cli}
-
         await gw.stop()
-
-        mock_ch.stop.assert_called_once()
-        mock_cli.stop.assert_called_once()
 
     async def test_start_creates_scheduler(self, tmp_path):
         from boxagent.gateway import Gateway
@@ -288,25 +283,6 @@ class TestGateway:
 
         assert MockCodex.call_args_list[0].kwargs["session_id"] == "saved-codex-session"
 
-    async def test_stop_persists_codex_session_reference(self, tmp_path):
-        from boxagent.gateway import Gateway
-
-        mock_config = MagicMock()
-        mock_config.bots = {}
-
-        gw = Gateway(config=mock_config, config_dir=tmp_path)
-        gw._storage = MagicMock()
-        mock_ch = AsyncMock()
-        mock_cli = AsyncMock()
-        mock_cli.session_id = "sess_123"
-        mock_cli.supports_session_persistence = True
-        gw._channels = {"test-bot": mock_ch}
-        gw._backends = {"test-bot": mock_cli}
-
-        await gw.stop()
-
-        gw._storage.save_session.assert_called_once_with("test-bot", "sess_123")
-
     def test_sync_skills_uses_agents_dir_for_codex_cli(self, tmp_path):
         from boxagent.agent import sync_skills
 
@@ -409,24 +385,28 @@ class TestGateway:
         assert not port_file.exists()
 
     async def test_clear_http_artifacts_removes_stale_sock(self, tmp_path):
-        """_clear_http_artifacts removes stale api.sock from previous runs."""
-        from boxagent.gateway import Gateway
-
-        mock_config = MagicMock()
-        mock_config.bots = {}
-        mock_config.node_id = "test-node"
-        mock_config.api_port = 0
+        """HttpApiServer._clear_artifacts removes stale api.sock + port files
+        from previous runs."""
+        from boxagent.gateway.http_api_server import HttpApiServer
 
         local_dir = tmp_path / "local"
         local_dir.mkdir()
-        gw = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
 
         sock = local_dir / "api.sock"
         sock.touch()
         port_file = local_dir / "api-port.txt"
         port_file.write_text("50762\n", encoding="utf-8")
 
-        gw._clear_http_artifacts()
+        srv = HttpApiServer(
+            config=MagicMock(),
+            config_dir=tmp_path,
+            local_dir=local_dir,
+            peer=MagicMock(),
+            workgroup_routes=None,
+            scheduler_routes=MagicMock(),
+            mcp_gateway_context=MagicMock(),
+        )
+        srv._clear_artifacts()
         assert not sock.exists()
         assert not port_file.exists()
 

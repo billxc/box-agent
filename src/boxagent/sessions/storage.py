@@ -184,6 +184,19 @@ class Storage:
         with self._main_lock:
             return str(self._load_main_sessions().get(bot_id) or "")
 
+    def get_or_create_main_chat_id(self, bot_id: str) -> str:
+        """Return the persisted main chat_id for a bot, minting one if unset.
+
+        Used for heartbeat ticks and incoming peer messages so they always
+        land in the admin's designated main session.
+        """
+        cid = self.get_main_chat_id(bot_id)
+        if cid:
+            return cid
+        cid = f"main-{bot_id}-{int(time.time())}"
+        self.set_main_chat_id(bot_id, cid)
+        return cid
+
     def set_main_chat_id(self, bot_id: str, chat_id: str) -> None:
         with self._main_lock:
             data = dict(self._load_main_sessions())  # copy to avoid in-place mutation of cache

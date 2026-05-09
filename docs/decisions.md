@@ -213,3 +213,20 @@
 **Gateway.start() 现在关于 workgroup 的代码**: 只有 `WorkgroupManager(...)` 那一行 + 3 处 setter 给别的 manager（topology / peer / web_server，这些是别的 manager 的内部依赖，不是 workgroup 的 wiring）。
 
 **测试**: 824 passed
+
+## 2026-05-09 — Gateway core 进一步瘦身（yait #86 续）
+
+延续 #86 的"职责归位"思路，扫了一遍 core.py 又干了 6 件事：
+
+1. **`AgentManager.stop()`**：channels / web_channels / backends（含 session save）/ pools / watchdog tasks 的 teardown 全归 AgentManager —— 它本来就是这些 dict 的 owner。Gateway.stop() 里关于 bot 资源的 ~30 行变 1 行 `await self._bots.stop()`。
+2. **`AgentManager.build_scheduler_refs()`**：`_start_scheduler()` 里走三个 dict 拼 `BotRef` 的逻辑搬过去。Gateway 一行 `bot_refs=self._bots.build_scheduler_refs()`。
+3. **`Storage.get_or_create_main_chat_id()`**：原本 `_GatewayCore._get_or_create_main_chat_id()` 全是 storage 操作，挪到 Storage。PeerService 直接拿 `self._storage.get_or_create_main_chat_id` 当 callable 用。
+4. **删 `_GatewayCore.guest_registry / guest_client / cluster_tunnel` 三个 property**：所有读点之前都通过 `self._topology.guest_registry` 访问了，core 这边的 property 已经无用。
+5. **删 `_api_port_file / _mcp_port_file / _web_port_file / _clear_http_artifacts`**：HttpApiServer 自己有同名 property + `_clear_artifacts`。`test_clear_http_artifacts_removes_stale_sock` 改成直测 HttpApiServer。
+6. **module + Gateway class docstring 更新**：去掉对已删除字段的引用。
+
+测试: 826 passed (新增 3 个 AgentManager 单测：stop / 错误吞噬 / build_scheduler_refs 跳过 raw)。
+
+src/ 净 -37 行（核心收益在 core.py：-127/+45 = 净 -82）。Gateway.stop() 现在按职责清晰分层：listening ports → host election → scheduler → bots (resources) → workgroup。
+
+**未做（#7）**：WorkgroupManager 接受 `_create_backend / _ensure_git_repo / _sync_skills` 三个 callable —— 改成直接 import 会破 5 处 test_workgroup_integration.py 的 patch 注入点。注入模式本身没坏，只是看起来啰嗦，留给后续。
