@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from boxagent.agent.manager import _create_backend, _ensure_git_repo, sync_skills
+from boxagent.agent.manager import AgentManager, _create_backend, _ensure_git_repo, sync_skills
 from boxagent.transports.web import WebChannel
 from boxagent.cluster import ClusterTunnel, GuestClient, GuestRegistry
 from boxagent.config import AppConfig, node_matches
@@ -59,6 +59,7 @@ class _GatewayCore:
     _host_election: object | None = field(default=None, repr=False)
     _start_time: float = 0.0
     _workgroup_mgr: WorkgroupManager | None = field(default=None, repr=False)
+    _bots: AgentManager | None = field(default=None, repr=False)
 
     # Public read-only views into HostElection-owned components. Read sites
     # use these instead of reaching into ``_host_election.registry`` directly,
@@ -81,6 +82,21 @@ class _GatewayCore:
     async def start(self) -> None:
         self._start_time = time.time()
         self._storage = Storage(local_dir=self.local_dir)
+        # Phase 1 of two-phase DI: hand AgentManager its infrastructure
+        # (storage + shared dicts that other managers also read).
+        self._bots = AgentManager(
+            config=self.config,
+            config_dir=self.config_dir,
+            storage=self._storage,
+            start_time=self._start_time,
+            backends=self._backends,
+            pools=self._pools,
+            routers=self._routers,
+            channels=self._channels,
+            web_channels=self._web_channels,
+            watchdogs=self._watchdogs,
+            watchdog_tasks=self._watchdog_tasks,
+        )
         logger.info("Gateway starting (node=%s)", self.config.node_id or "(any)")
 
         # Start Web UI first so the page is reachable while the rest boots.
@@ -166,6 +182,10 @@ class _GatewayCore:
             local_dir=str(self.local_dir),
         )
         self._scheduler_task = asyncio.create_task(self._scheduler.run_forever())
+        # Phase 2 of two-phase DI: scheduler exists now, inject into AgentManager
+        # so restart_bot / on_backend_switched can sync scheduler.bot_refs.
+        if self._bots is not None:
+            self._bots.set_scheduler(self._scheduler)
         logger.info("Scheduler started (file=%s)", schedules_file)
 
     @property

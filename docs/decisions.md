@@ -168,3 +168,16 @@
 新链路：`Router.get_peers` callable → `AgentEnv.peers` tuple → `build_session_context` 渲染。WorkgroupManager 通过 `_peer_provider` 钩子拿 Gateway 的 helper。
 
 **已知不足**: guest 节点的 `_guest_registry` 是 None — 只能看到本机 workgroup，看不到 host 上的或其他 guest 上的 workgroup。需要 guest→host 反向 RPC 查询补齐（yait #67）。
+
+## 2026-05-09 — Gateway 8 mixin → 显式组合 / 两阶段 DI（yait #86，进行中）
+
+**问题**: Gateway 是 8 个 mixin 经 MRO 拼成的 god-class，每个 mixin 用 `self.X` 隐式访问 Gateway 字段、互相调用对方方法，IDE 跳不过去，依赖关系藏在 self 命名空间里。
+
+**方案**: 8 个 mixin 一对一拆成 8 个 manager 类；依赖通过两阶段注入：
+1. **Phase 1（构造器）**: 接收基础设施（config / Storage / 共享 dict）。共享 dict 传引用，不拷贝，原 mixin 的读点（其他文件里的 `self._backends` 等）零改动。
+2. **Phase 2（setter）**: 兄弟 manager 在装配阶段通过 `set_xxx()` 注入，解循环依赖（Scheduler 在 bot 起完后才创建）。
+3. **Phase 3（start_*）**: Gateway 驱动每个 manager 的生命周期。
+
+**进度**: 第 1 个完成 — `BotsMixin` → `AgentManager`。BotsMixin 保留为 5 行 shim（带 lazy `_ensure_bots()`）以兼容 `test_gateway.py` 里 `patch.object(gw, "_start_bot", ...)` 的写法，最终一个 commit 删干净。
+
+**接下来**: TopologyService → PeerService → ClusterRpc → ClusterHttpRoutes → WorkgroupHttpRoutes → HttpApiServer → WebHttpServer，各自独立 commit + 全量绿。

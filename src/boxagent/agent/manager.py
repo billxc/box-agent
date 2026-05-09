@@ -4,22 +4,28 @@ Free helpers (`_create_backend`, `_ensure_git_repo`, `sync_skills`,
 `_supports_persistent_session`) are also injected into WorkgroupManager and
 re-exported via ``boxagent.gateway`` for back-compat with tests / commands.
 
-``BotsMixin`` is mounted on Gateway and owns the per-bot lifecycle:
-``_start_bot``, ``_restart_bot``, ``_start_raw_bot``, plus helpers used by
-the Router (``_on_backend_switched``, ``_raw_backend_factory``).
+``AgentManager`` (composition) owns the per-bot lifecycle. ``BotsMixin``
+remains as a thin shim over ``self._bots`` so existing tests that patch
+``Gateway._start_bot`` etc. keep working.
 """
 
 import asyncio
 import datetime
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from boxagent.agent.claude_process import ClaudeProcess
 from boxagent.agent.protocol import AgentBackend
-from boxagent.config import BotConfig
-from boxagent.sessions import SessionPool
+from boxagent.config import AppConfig, BotConfig
+from boxagent.sessions import SessionPool, Storage
 from boxagent.sessions.raw_pool import RawSessionPool
 from boxagent.transports.web import WebChannel
+from boxagent.watchdog import Watchdog
+
+if TYPE_CHECKING:
+    from boxagent.router import Router
+    from boxagent.scheduler import Scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -146,13 +152,53 @@ def sync_skills(
     return linked
 
 
-# ── Mixin: per-bot lifecycle ──
+# ── Composition: AgentManager ──
+#
+# Two-phase DI:
+#   Phase 1 (constructor): infrastructure — config, storage, shared dicts.
+#                          Shared dicts are passed by reference because other
+#                          managers (web/server, topology, peer) read them.
+#   Phase 2 (set_scheduler): cross-manager refs that don't exist at __init__
+#                            time (Scheduler is created after bots are up).
+#   Phase 3 (start_bot/start_raw_bot): driven by Gateway.start().
 
-class BotsMixin:
-    async def _start_bot(self, name: str, bot_cfg: BotConfig) -> None:
+class AgentManager:
+    def __init__(
+        self,
+        *,
+        config: AppConfig,
+        config_dir: Path,
+        storage: Storage,
+        start_time: float,
+        backends: dict[str, AgentBackend],
+        pools: dict,
+        routers: dict[str, "Router"],
+        channels: dict[str, object],
+        web_channels: dict[str, WebChannel],
+        watchdogs: dict[str, Watchdog],
+        watchdog_tasks: list[asyncio.Task],
+    ) -> None:
+        self.config = config
+        self.config_dir = config_dir
+        self.storage = storage
+        self.start_time = start_time
+        self.backends = backends
+        self.pools = pools
+        self.routers = routers
+        self.channels = channels
+        self.web_channels = web_channels
+        self.watchdogs = watchdogs
+        self.watchdog_tasks = watchdog_tasks
+        # Phase 2 deps
+        self.scheduler: "Scheduler | None" = None
+
+    def set_scheduler(self, scheduler: "Scheduler") -> None:
+        self.scheduler = scheduler
+
+    async def start_bot(self, name: str, bot_cfg: BotConfig) -> None:
         session_id = None
         if _supports_persistent_session(bot_cfg.ai_backend):
-            saved = self._storage.load_session(name)
+            saved = self.storage.load_session(name)
             if isinstance(saved, dict):
                 session_id = saved.get("session_id")
             elif isinstance(saved, str):
@@ -160,7 +206,7 @@ class BotsMixin:
 
         backend = _create_backend(bot_cfg, session_id)
         backend.start()
-        self._backends[name] = backend
+        self.backends[name] = backend
 
         def _factory():
             return _create_backend(bot_cfg, None)
@@ -169,11 +215,11 @@ class BotsMixin:
             size=3,
             default_model=bot_cfg.model,
             default_workspace=bot_cfg.workspace,
-            storage=self._storage,
+            storage=self.storage,
             bot_name=name,
         )
         pool.start(_factory)
-        self._pools[name] = pool
+        self.pools[name] = pool
 
         ws_path = Path(bot_cfg.workspace)
         git_created = _ensure_git_repo(ws_path)
@@ -199,42 +245,42 @@ class BotsMixin:
                 tool_calls_display=bot_cfg.display_tool_calls,
             )
             primary_channel = channel
-            self._channels[name] = channel
+            self.channels[name] = channel
 
         from boxagent import gateway as _gw_pkg
         router = _gw_pkg.Router(
             backend=backend,
             channel=primary_channel,
             allowed_users=bot_cfg.allowed_users,
-            storage=self._storage,
+            storage=self.storage,
             pool=pool,
             bot_name=name,
             display_name=display_name,
             config_dir=str(self.config_dir),
             node_id=self.config.node_id,
-            local_dir=self._storage.local_dir if self._storage else None,
-            start_time=self._start_time,
+            local_dir=self.storage.local_dir if self.storage else None,
+            start_time=self.start_time,
             workspace=bot_cfg.workspace,
             extra_skill_dirs=bot_cfg.extra_skill_dirs,
             ai_backend=bot_cfg.ai_backend,
-            on_backend_switched=self._on_backend_switched,
+            on_backend_switched=self.on_backend_switched,
             has_peer_channel=False,
             telegram_token=bot_cfg.telegram_token,
         )
 
-        if name in self._channels:
-            router._channels["telegram"] = self._channels[name]
-            self._channels[name].on_message = router.handle_message
-            await self._channels[name].start()
+        if name in self.channels:
+            router._channels["telegram"] = self.channels[name]
+            self.channels[name].on_message = router.handle_message
+            await self.channels[name].start()
 
         if bot_cfg.web_enabled:
             web_channel = WebChannel(bot_name=name)
             web_channel.on_message = router.handle_message
-            self._web_channels[name] = web_channel
+            self.web_channels[name] = web_channel
             router._channels["web"] = web_channel
             logger.info("Bot '%s' web channel enabled", name)
 
-        self._routers[name] = router
+        self.routers[name] = router
 
         skill_count = len(linked)
         channels_active = []
@@ -257,8 +303,8 @@ class BotsMixin:
         notify_text = "\n".join(info_lines)
 
         tg_chat_id = str(bot_cfg.telegram_allowed_users[0]) if bot_cfg.telegram_token and bot_cfg.telegram_allowed_users else ""
-        if tg_chat_id and name in self._channels:
-            async def _send_tg_notify(ch=self._channels[name], chat_id=tg_chat_id, text=notify_text, bot_name=name):
+        if tg_chat_id and name in self.channels:
+            async def _send_tg_notify(ch=self.channels[name], chat_id=tg_chat_id, text=notify_text, bot_name=name):
                 try:
                     await ch.send_text(chat_id, text)
                 except Exception as e:
@@ -266,7 +312,7 @@ class BotsMixin:
             asyncio.create_task(_send_tg_notify())
 
         async def restart_bot(n=name, bc=bot_cfg):
-            await self._restart_bot(n, bc)
+            await self.restart_bot(n, bc)
 
         wd_chat_id = tg_chat_id
 
@@ -279,16 +325,13 @@ class BotsMixin:
             pool=pool,
         )
         task = asyncio.create_task(wd.run_forever())
-        self._watchdogs[name] = wd
-        self._watchdog_tasks.append(task)
+        self.watchdogs[name] = wd
+        self.watchdog_tasks.append(task)
 
         logger.info("Bot '%s' started (session=%s)", name, session_id)
 
-    # ---- raw virtual bot ----
-
     def _raw_backend_factory(self, *, backend: str, workspace: str, model: str,
                              session_id: str | None, bot_name: str) -> object:
-        """Spawn a fresh per-chat backend process for the raw bot."""
         cfg = BotConfig(
             name=bot_name,
             ai_backend=backend or "claude-cli",
@@ -299,14 +342,7 @@ class BotsMixin:
         )
         return _create_backend(cfg, session_id)
 
-    async def _start_raw_bot(self) -> None:
-        """Register the synthetic ``raw`` bot.
-
-        ``raw`` is a web-only passthrough bot: no Telegram, no
-        BoxAgent context/MCP injection, per-chat backend chosen at resume
-        time. Used as a clean ``--resume`` shell for native claude / codex
-        sessions.
-        """
+    async def start_raw_bot(self) -> None:
         from boxagent import gateway as _gw_pkg
         name = "raw"
         bot_cfg = BotConfig(
@@ -321,12 +357,12 @@ class BotsMixin:
         self.config.bots[name] = bot_cfg
 
         pool = RawSessionPool(
-            storage=self._storage,
+            storage=self.storage,
             bot_name=name,
             backend_factory=self._raw_backend_factory,
         )
         pool.start()
-        self._pools[name] = pool
+        self.pools[name] = pool
 
         stub = ClaudeProcess(
             workspace="/tmp",
@@ -336,24 +372,24 @@ class BotsMixin:
             bot_name=name,
             yolo=True,
         )
-        self._backends[name] = stub
+        self.backends[name] = stub
 
         router = _gw_pkg.Router(
             backend=stub,
             channel=None,
             allowed_users=[],
-            storage=self._storage,
+            storage=self.storage,
             pool=pool,
             bot_name=name,
             display_name=bot_cfg.display_name,
             config_dir=str(self.config_dir),
             node_id=self.config.node_id,
-            local_dir=self._storage.local_dir if self._storage else None,
-            start_time=self._start_time,
+            local_dir=self.storage.local_dir if self.storage else None,
+            start_time=self.start_time,
             workspace="",
             extra_skill_dirs=[],
             ai_backend="claude-cli",
-            on_backend_switched=self._on_backend_switched,
+            on_backend_switched=self.on_backend_switched,
             has_peer_channel=False,
             telegram_token="",
             passthrough=True,
@@ -361,15 +397,14 @@ class BotsMixin:
 
         web_channel = WebChannel(bot_name=name)
         web_channel.on_message = router.handle_message
-        self._web_channels[name] = web_channel
+        self.web_channels[name] = web_channel
         router._channels["web"] = web_channel
 
-        self._routers[name] = router
+        self.routers[name] = router
         logger.info("Bot 'raw' (passthrough, web-only) registered")
 
-    async def _restart_bot(self, name: str, bot_cfg: BotConfig) -> None:
-        """Restart a dead backend process."""
-        old_backend = self._backends.get(name)
+    async def restart_bot(self, name: str, bot_cfg: BotConfig) -> None:
+        old_backend = self.backends.get(name)
         session_id = None
         if old_backend and _supports_persistent_session(bot_cfg.ai_backend):
             session_id = old_backend.session_id
@@ -381,7 +416,7 @@ class BotsMixin:
 
         new_backend = _create_backend(bot_cfg, session_id)
         new_backend.start()
-        self._backends[name] = new_backend
+        self.backends[name] = new_backend
 
         if bot_cfg.extra_skill_dirs:
             sync_skills(
@@ -390,30 +425,70 @@ class BotsMixin:
                 bot_cfg.ai_backend,
             )
 
-        if name in self._routers:
-            self._routers[name].backend = new_backend
+        if name in self.routers:
+            self.routers[name].backend = new_backend
 
-        if self._scheduler and name in self._scheduler.bot_refs:
-            self._scheduler.bot_refs[name].backend = new_backend
-            self._scheduler.bot_refs[name].telegram_token = bot_cfg.telegram_token
+        if self.scheduler and name in self.scheduler.bot_refs:
+            self.scheduler.bot_refs[name].backend = new_backend
+            self.scheduler.bot_refs[name].telegram_token = bot_cfg.telegram_token
 
-        if name in self._watchdogs:
-            self._watchdogs[name].backend = new_backend
+        if name in self.watchdogs:
+            self.watchdogs[name].backend = new_backend
 
         logger.info("Bot '%s' backend restarted", name)
 
-    async def _on_backend_switched(self, bot_name: str, new_backend: AgentBackend, new_kind: str) -> None:
-        """Called by Router after /backend switch — sync external references.
-
-        Args:
-            bot_name: Name of the bot whose backend was swapped.
-            new_backend: The new backend instance (replaces the old one).
-            new_kind: The new ai_backend string (e.g. 'codex-cli').
-        """
-        self._backends[bot_name] = new_backend
-        if self._scheduler and bot_name in self._scheduler.bot_refs:
-            self._scheduler.bot_refs[bot_name].backend = new_backend
-            self._scheduler.bot_refs[bot_name].ai_backend = new_kind
-        if bot_name in self._watchdogs:
-            self._watchdogs[bot_name].backend = new_backend
+    async def on_backend_switched(self, bot_name: str, new_backend: AgentBackend, new_kind: str) -> None:
+        self.backends[bot_name] = new_backend
+        if self.scheduler and bot_name in self.scheduler.bot_refs:
+            self.scheduler.bot_refs[bot_name].backend = new_backend
+            self.scheduler.bot_refs[bot_name].ai_backend = new_kind
+        if bot_name in self.watchdogs:
+            self.watchdogs[bot_name].backend = new_backend
         logger.info("Bot '%s' backend switched to %s (refs synced)", bot_name, new_kind)
+
+
+# ── Mixin shim: delegate to self._bots so legacy call sites & test patches keep working ──
+
+class BotsMixin:
+    def _ensure_bots(self) -> "AgentManager":
+        # Some tests call _start_bot/_restart_bot directly without driving
+        # start(); lazy-init AgentManager from the same fields start() would use.
+        if self._bots is None:
+            # Storage may also be uninitialized in those tests — mirror start().
+            if self._storage is None:
+                self._storage = Storage(local_dir=self.local_dir)
+            self._bots = AgentManager(
+                config=self.config,
+                config_dir=self.config_dir,
+                storage=self._storage,
+                start_time=self._start_time,
+                backends=self._backends,
+                pools=self._pools,
+                routers=self._routers,
+                channels=self._channels,
+                web_channels=self._web_channels,
+                watchdogs=self._watchdogs,
+                watchdog_tasks=self._watchdog_tasks,
+            )
+            if self._scheduler is not None:
+                self._bots.set_scheduler(self._scheduler)
+        return self._bots
+
+    async def _start_bot(self, name: str, bot_cfg: BotConfig) -> None:
+        await self._ensure_bots().start_bot(name, bot_cfg)
+
+    async def _start_raw_bot(self) -> None:
+        await self._ensure_bots().start_raw_bot()
+
+    async def _restart_bot(self, name: str, bot_cfg: BotConfig) -> None:
+        await self._ensure_bots().restart_bot(name, bot_cfg)
+
+    async def _on_backend_switched(self, bot_name: str, new_backend: AgentBackend, new_kind: str) -> None:
+        await self._ensure_bots().on_backend_switched(bot_name, new_backend, new_kind)
+
+    def _raw_backend_factory(self, *, backend: str, workspace: str, model: str,
+                             session_id: str | None, bot_name: str) -> object:
+        return self._ensure_bots()._raw_backend_factory(
+            backend=backend, workspace=workspace, model=model,
+            session_id=session_id, bot_name=bot_name,
+        )
