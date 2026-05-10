@@ -18,6 +18,7 @@ from typing import Protocol, runtime_checkable
 from boxagent.config import SpecialistConfig, WorkgroupConfig
 from boxagent.transports.base import Channel
 from boxagent.transports.web import WebChannel
+from boxagent.workgroup.formatting import specialist_chat_id
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,7 @@ class NullWorkgroupChannelAdapter:
         return None
 
     def get_specialist_chat_id(self, specialist_name: str, specialist_config: SpecialistConfig) -> str:
-        return f"wg:{specialist_name}"
+        return specialist_chat_id(specialist_name)
 
     async def setup_specialist(self, specialist_name, specialist_config, workgroup_config, router) -> None:
         return
@@ -134,7 +135,7 @@ class WebWorkgroupAdapter:
         return self.web_channel
 
     def get_specialist_chat_id(self, specialist_name: str, specialist_config: SpecialistConfig) -> str:
-        return f"wg:{specialist_name}"
+        return specialist_chat_id(specialist_name)
 
     async def setup_specialist(self, specialist_name, specialist_config, workgroup_config, router) -> None:
         # Inbound affordance: if a web POST addresses the specialist via its
@@ -152,7 +153,7 @@ class WebWorkgroupAdapter:
         # Render the admin's task as a user-role message in the specialist's
         # virtual chat so the web UI shows what was dispatched.
         self.web_channel._publish(
-            f"wg:{specialist_name}",
+            specialist_chat_id(specialist_name),
             {
                 "type": "message",
                 "role": "user",

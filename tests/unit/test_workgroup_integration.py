@@ -238,6 +238,24 @@ class TestCreateSpecialist:
         assert result["ok"] is False
         assert "not found" in result["error"]
 
+    async def test_rejects_invalid_name_with_colon(self, tmp_path):
+        """Names with ':' would collide with the wg:<name> chat_id namespace."""
+        mgr, _ = _make_manager(tmp_path)
+        result = await mgr.create_specialist("test-wg", "wg:foo")
+        assert result["ok"] is False
+        assert "invalid" in result["error"]
+
+    async def test_rejects_empty_name(self, tmp_path):
+        mgr, _ = _make_manager(tmp_path)
+        result = await mgr.create_specialist("test-wg", "")
+        assert result["ok"] is False
+
+    async def test_rejects_uppercase_or_spaces(self, tmp_path):
+        mgr, _ = _make_manager(tmp_path)
+        for bad in ("Dev-1", "my dev", ".hidden", "-leading", "way-too-long-specialist-name-exceeds-31-chars"):
+            result = await mgr.create_specialist("test-wg", bad)
+            assert result["ok"] is False, f"name {bad!r} should be rejected"
+
     async def test_default_workspace(self, tmp_path):
         mgr, workgroup_config = _make_manager(tmp_path)
 

@@ -19,7 +19,11 @@ from boxagent.workgroup.channel_adapter import (
     WebWorkgroupAdapter,
     WorkgroupChannelAdapter,
 )
-from boxagent.workgroup.formatting import extract_specialist_response
+from boxagent.workgroup.formatting import (
+    extract_specialist_response,
+    specialist_chat_id,
+    validate_specialist_name,
+)
 from boxagent.workgroup.heartbeat import HeartbeatManager
 from boxagent.workgroup.persistence import (
     load_saved_specialists,
@@ -382,7 +386,7 @@ class WorkgroupManager:
                 workgroup_name = name
                 break
 
-        chat_id = adapter.get_specialist_chat_id(target, specialist_config) if specialist_config else f"wg:{target}"
+        chat_id = adapter.get_specialist_chat_id(target, specialist_config) if specialist_config else specialist_chat_id(target)
 
         # Wrap admin's message with system instruction for XML-tagged response
         wrapped_text = (
@@ -531,7 +535,7 @@ class WorkgroupManager:
             # Find session_id for this specialist
             for workgroup_config in self.config.values():
                 if target in workgroup_config.specialists:
-                    chat_id = f"wg:{target}"
+                    chat_id = specialist_chat_id(target)
                     sid = pool.get_session_id(chat_id)
                     if sid:
                         transcript_path = self.local_dir / "transcripts" / f"{sid}.jsonl"
@@ -601,7 +605,7 @@ class WorkgroupManager:
         # chat_id used by send_to_specialist
         for workgroup_config in self.config.values():
             if target in workgroup_config.specialists:
-                chat_id = f"wg:{target}"
+                chat_id = specialist_chat_id(target)
                 pool.clear_session(chat_id)
                 logger.info("Reset session for specialist '%s' (chat_id=%s)", target, chat_id)
                 return {"ok": True}
@@ -615,6 +619,13 @@ class WorkgroupManager:
         display_name: str = "",
     ) -> dict:
         """Dynamically create a specialist agent in a workgroup."""
+        # Validate name first — it'll be used as a chat_id namespace key
+        # (specialist_chat_id) and a YAML key, so reject anything that
+        # could collide or break the wg:<name> contract.
+        name_err = validate_specialist_name(specialist_name)
+        if name_err:
+            return {"ok": False, "error": name_err}
+
         workgroup_config = self.config.get(workgroup_name)
         if workgroup_config is None:
             return {"ok": False, "error": f"workgroup '{workgroup_name}' not found"}

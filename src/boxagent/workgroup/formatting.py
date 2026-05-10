@@ -11,6 +11,43 @@ import re
 import time
 
 
+# ── chat_id helpers ────────────────────────────────────────────────
+
+
+_SPECIALIST_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,30}$")
+
+
+def specialist_chat_id(specialist_name: str) -> str:
+    """The virtual chat_id under which a specialist's pool/transcripts live.
+
+    Single source of truth for the ``wg:<name>`` namespace; previously
+    duplicated in 6 places. Names are validated by ``validate_specialist_name``
+    at create time so the format is safe (no ``:`` collisions).
+    """
+    return f"wg:{specialist_name}"
+
+
+def validate_specialist_name(name: str) -> str | None:
+    """Return error message if ``name`` is invalid for a specialist, else None.
+
+    Allowed: 1–31 chars, lowercase letters / digits / underscores / hyphens,
+    must start with a letter or digit. Rejects names that would collide with
+    the ``wg:`` chat_id namespace or contain reserved characters.
+    """
+    if not isinstance(name, str) or not name:
+        return "specialist name must be a non-empty string"
+    if not _SPECIALIST_NAME_RE.match(name):
+        return (
+            f"specialist name {name!r} is invalid — must be 1–31 chars of "
+            "lowercase letters / digits / underscores / hyphens, "
+            "starting with a letter or digit"
+        )
+    return None
+
+
+# ── display ────────────────────────────────────────────────────────
+
+
 def format_running_tasks(running_tasks: list[dict] | None) -> str:
     """Format running tasks into a display block. Used by context and heartbeat."""
     if not running_tasks:
