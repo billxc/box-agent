@@ -65,6 +65,18 @@ class ClaudeAgentHistory:
             return []
         return self._convert_messages(messages)
 
+    # ── Sync API for callers already inside an event loop ─────────
+    # Mirrors codex.py: ``loaders._load_all_unified_sessions`` runs
+    # under the sessions_list MCP tool path which is already inside an
+    # asyncio event loop, so it can't ``asyncio.run`` the async API.
+    # New code should prefer the async API above.
+
+    def list_projects_sync(self) -> list[ProjectInfo]:
+        return self._list_projects_sync()
+
+    def list_sessions_sync(self, project_id: str) -> list[SessionInfo]:
+        return self._list_sessions_sync(project_id)
+
     # ── Sync internals (run via to_thread) ───────────────────────
 
     def _list_projects_sync(self) -> list[ProjectInfo]:

@@ -1,18 +1,28 @@
-"""Loaders — pull session metadata from disk and merge into a unified list.
+"""Loaders — pull session metadata via boxagent.history and merge with
+BoxAgent's own annotations.
 
-Sources merged here:
-  1. ~/.claude/projects/<encoded-cwd>/{sessions-index.json, *.jsonl}
-  2. BoxAgent's session_history.yaml (via Storage)
-  3. Codex rollout JSONLs (via Storage)
+Three data sources merged into a unified DTO:
+
+1. Claude SDK transcripts — ``boxagent.history.claude.ClaudeAgentHistory``
+2. BoxAgent's session_history.yaml — ``Storage.list_session_history``
+   (annotates entries with backend label / model / bot, plus stand-alone
+   entries for sessions BoxAgent saved that have no on-disk transcript yet)
+3. Codex rollout JSONLs — ``boxagent.history.codex.CodexAgentHistory``
+
+Reading is fully delegated to the ``boxagent.history`` package; this
+module owns only the merge + DTO shape that the legacy ``/sessions`` UI
+and ``/resume`` consumers expect.
 """
 
 from __future__ import annotations
 
-import json
-import os
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from boxagent.history.claude import ClaudeAgentHistory
+from boxagent.history.codex import CodexAgentHistory
+from boxagent.history.protocol import SessionInfo
 
 if TYPE_CHECKING:
     from boxagent.sessions.storage import Storage
@@ -33,107 +43,13 @@ def _parse_iso_to_ts(iso_str: str) -> int:
         return 0
 
 
-def _parse_jsonl_metadata(jsonl_file: Path) -> dict | None:
-    """Extract minimal metadata from a session .jsonl file."""
-    sid = jsonl_file.stem
-
-    first_prompt = ""
-    created = ""
-    project_path = ""
-    message_count = 0
-
-    try:
-        with open(jsonl_file, encoding="utf-8", errors="replace") as f:
-            for line in f:
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                rtype = record.get("type", "")
-                if rtype == "user":
-                    message_count += 1
-                    if not first_prompt:
-                        msg = record.get("message", {})
-                        content = msg.get("content", "")
-                        if isinstance(content, str):
-                            first_prompt = content
-                        elif isinstance(content, list):
-                            for block in content:
-                                if isinstance(block, dict) and block.get("type") == "text":
-                                    first_prompt = block.get("text", "")
-                                    break
-                    if not created:
-                        created = record.get("timestamp", "")
-                    if not project_path:
-                        project_path = record.get("cwd", "")
-                elif rtype == "assistant":
-                    message_count += 1
-    except OSError:
-        return None
-
-    if not message_count:
-        return None
-
-    try:
-        mtime = os.path.getmtime(jsonl_file)
-        modified = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
-    except OSError:
-        modified = created
-
-    return {
-        "sessionId": sid,
-        "projectPath": project_path,
-        "firstPrompt": first_prompt,
-        "summary": "",
-        "messageCount": message_count,
-        "created": created,
-        "modified": modified,
-    }
-
-
-def _load_claude_sessions() -> list[dict]:
-    """Collect sessions from Claude CLI index files and unindexed .jsonl files."""
-    projects_dir = CLAUDE_DIR / "projects"
-    if not projects_dir.is_dir():
-        return []
-
-    entries: list[dict] = []
-    indexed_ids: set[str] = set()
-
-    # Pass 1: load from sessions-index.json (rich metadata)
-    for index_file in projects_dir.glob("*/sessions-index.json"):
-        try:
-            data = json.loads(index_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if not isinstance(data, dict):
-            continue
-
-        project_path = data.get("originalPath", "")
-        for entry in data.get("entries", []):
-            if not isinstance(entry, dict):
-                continue
-            sid = entry.get("sessionId", "")
-            if sid:
-                indexed_ids.add(sid)
-            entry.setdefault("projectPath", project_path)
-            entries.append(entry)
-
-    # Pass 2: scan .jsonl files not covered by any index
-    for jsonl_file in projects_dir.glob("*/*.jsonl"):
-        sid = jsonl_file.stem
-        if sid in indexed_ids:
-            continue
-
-        entry = _parse_jsonl_metadata(jsonl_file)
-        if entry:
-            entries.append(entry)
-
-    return entries
-
-
 def _resolve_session_path(sid: str) -> Path | None:
-    """Find the JSONL file for a Claude CLI session ID."""
+    """Find the JSONL file for a Claude CLI session ID.
+
+    Used by /sessions grep filter to read transcript content. The history
+    layer doesn't expose paths, so we still scan ``~/.claude/projects/``
+    here.
+    """
     projects_dir = CLAUDE_DIR / "projects"
     if not projects_dir.is_dir():
         return None
@@ -142,38 +58,48 @@ def _resolve_session_path(sid: str) -> Path | None:
     return None
 
 
+def _claude_session_to_unified(s: SessionInfo) -> dict:
+    """Convert a ClaudeAgentHistory.SessionInfo to the legacy unified dict."""
+    return {
+        "sessionId": s.session_id,
+        "project": Path(s.project_id or s.cwd).name if (s.project_id or s.cwd) else "",
+        "projectPath": s.project_id or s.cwd or "",
+        "summary": s.summary or "",
+        "firstPrompt": s.first_user or "",
+        "preview": "",
+        "messageCount": s.message_count,
+        "modified_ts": int(s.last_ts) if s.last_ts else 0,
+        "backend": "",  # filled in by Storage overlay if BoxAgent saved this
+        "model": "",
+        "bot": "",
+    }
+
+
 def _load_all_unified_sessions(
     storage: "Storage | None" = None,
     workspace: str = "",
 ) -> list[dict]:
-    """Merge Claude CLI sessions, BoxAgent session_history, and Codex sessions.
+    """Merge Claude + BoxAgent session_history + Codex sessions.
 
     Returns a list of dicts with a common schema, sorted by modified desc.
     """
-    claude_entries = _load_claude_sessions()
-
     unified: dict[str, dict] = {}
 
-    for e in claude_entries:
-        sid = e.get("sessionId", "")
-        if not sid:
-            continue
-        modified_ts = _parse_iso_to_ts(e.get("modified", ""))
-        unified[sid] = {
-            "sessionId": sid,
-            "project": Path(e.get("projectPath", "")).name if e.get("projectPath") else "",
-            "projectPath": e.get("projectPath", ""),
-            "summary": e.get("summary", ""),
-            "firstPrompt": e.get("firstPrompt", ""),
-            "preview": "",
-            "messageCount": e.get("messageCount", 0),
-            "modified_ts": modified_ts,
-            "backend": "",
-            "model": "",
-            "bot": "",
-        }
+    # 1) Claude — via ClaudeAgentHistory (SDK)
+    claude_history = ClaudeAgentHistory()
+    try:
+        for project in claude_history.list_projects_sync():
+            for s in claude_history.list_sessions_sync(project.project_id):
+                if not s.session_id:
+                    continue
+                unified[s.session_id] = _claude_session_to_unified(s)
+    except Exception:
+        # SDK can fail (e.g. Claude not installed); leave Claude empty.
+        pass
 
-    # Overlay BoxAgent session_history (if storage available)
+    # 2) BoxAgent session_history.yaml — overlays annotations onto Claude
+    # entries above, and adds standalone entries for sessions BoxAgent
+    # tracked but that have no on-disk transcript yet.
     if storage is not None:
         try:
             box_entries = storage.list_session_history()
@@ -217,11 +143,9 @@ def _load_all_unified_sessions(
                     "bot": str(e.get("bot", "")),
                 }
 
-    # Overlay Codex sessions (sync API on CodexAgentHistory; loaders
-    # is called from inside an already-running event loop in the
-    # sessions_list MCP tool path, so we can't asyncio.run here).
+    # 3) Codex — via CodexAgentHistory
+    codex_history: CodexAgentHistory | None = None
     try:
-        from boxagent.history.codex import CodexAgentHistory
         codex_history = CodexAgentHistory(codex_dir=CODEX_DIR)
         codex_sessions = codex_history.list_sessions_sync(workspace or "")
     except Exception:
@@ -268,4 +192,6 @@ def _load_all_unified_sessions(
                 "_codex_path": path,
             }
 
-    return sorted(unified.values(), key=lambda e: e.get("modified_ts") or 0, reverse=True)
+    out = list(unified.values())
+    out.sort(key=lambda e: e.get("modified_ts") or 0, reverse=True)
+    return out

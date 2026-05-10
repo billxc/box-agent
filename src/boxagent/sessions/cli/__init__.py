@@ -23,9 +23,7 @@ from .format import _format_id_match, format_sessions_list
 from .loaders import (
     CLAUDE_DIR,
     _load_all_unified_sessions,
-    _load_claude_sessions,
     _parse_iso_to_ts,
-    _parse_jsonl_metadata,
     _resolve_session_path,
 )
 from .tokens import parse_session_tokens
@@ -37,9 +35,7 @@ __all__ = [
     # loaders
     "CLAUDE_DIR",
     "_load_all_unified_sessions",
-    "_load_claude_sessions",
     "_parse_iso_to_ts",
-    "_parse_jsonl_metadata",
     "_resolve_session_path",
     # tokens
     "parse_session_tokens",
