@@ -46,6 +46,9 @@ struct Session: Identifiable, Codable {
     let backend: String?
     let model: String?
     let messageCount: Int?
+    let summary: String?
+    let customTitle: String?
+    let recap: String?
 
     enum CodingKeys: String, CodingKey {
         case chatId = "chat_id"
@@ -56,6 +59,9 @@ struct Session: Identifiable, Codable {
         case lastTs = "last_ts"
         case backend, model
         case messageCount = "message_count"
+        case summary
+        case customTitle = "custom_title"
+        case recap
     }
 }
 

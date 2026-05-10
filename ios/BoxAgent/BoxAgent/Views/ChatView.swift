@@ -8,15 +8,23 @@ import UIKit
 struct ChatView: View {
     @State var viewModel: ChatViewModel
     var botDisplayName: String = ""
+    var initialRecap: String = ""
+    var initialSummary: String = ""
+    var initialCustomTitle: String = ""
     @Environment(BotsViewModel.self) private var botsVM
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("showToolCalls") private var showToolCalls = true
     @State private var inputText = ""
     @FocusState private var inputFocused: Bool
     @State private var showInfo = false
+    @State private var recapDismissed = false
+    @State private var recap: String = ""
+    @State private var summary: String = ""
+    @State private var customTitle: String = ""
 
     var body: some View {
         VStack(spacing: 0) {
+            recapBanner
             messageList
             composeBar
         }
@@ -49,16 +57,15 @@ struct ChatView: View {
         }
         .task {
             AppLog.shared.info("ChatView .task: chatId=\(viewModel.chatId)")
+            recap = initialRecap
+            summary = initialSummary
+            customTitle = initialCustomTitle
+            recapDismissed = false
             await viewModel.loadHistory()
             AppLog.shared.info("ChatView loadHistory done, count=\(viewModel.messages.count)")
             viewModel.connect()
-            RecentEntry.record(
-                chatId: viewModel.chatId,
-                botName: viewModel.bot,
-                botDisplayName: botDisplayName.isEmpty ? viewModel.bot : botDisplayName,
-                machineId: viewModel.machine,
-                backend: ""
-            )
+            recordCache()
+            await refreshSessionMetadata()
         }
         .onDisappear {
             viewModel.disconnect()
@@ -84,6 +91,32 @@ struct ChatView: View {
 
     @State private var isAtBottom = true
     @State private var hasNewMessages = false
+
+    @ViewBuilder
+    private var recapBanner: some View {
+        if !recap.isEmpty && !recapDismissed {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "pin.fill")
+                    .foregroundStyle(Color.accentColor)
+                Text(recap)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    withAnimation { recapDismissed = true }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.secondary.opacity(0.08))
+        }
+    }
 
     private var messageList: some View {
         ScrollViewReader { proxy in
@@ -243,6 +276,35 @@ struct ChatView: View {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         inputText = ""
         Task { await viewModel.send(text) }
+    }
+
+    private func recordCache() {
+        RecentEntry.record(
+            chatId: viewModel.chatId,
+            botName: viewModel.bot,
+            botDisplayName: botDisplayName.isEmpty ? viewModel.bot : botDisplayName,
+            machineId: viewModel.machine,
+            backend: "",
+            summary: summary.isEmpty ? nil : summary,
+            customTitle: customTitle.isEmpty ? nil : customTitle,
+            recap: recap.isEmpty ? nil : recap
+        )
+    }
+
+    /// Re-fetch the session list and update the local recap/summary/title for
+    /// this chat so users entering via the cached Continue list still see
+    /// up-to-date metadata (rename/recap done elsewhere flows in).
+    private func refreshSessionMetadata() async {
+        let fresh = await botsVM.fetchSessions(bot: viewModel.bot, machine: viewModel.machine)
+        guard let match = fresh.first(where: { $0.chatId == viewModel.chatId }) else { return }
+        let newRecap = match.recap ?? ""
+        let newSummary = match.summary ?? ""
+        let newCustomTitle = match.customTitle ?? ""
+        var changed = false
+        if newRecap != recap { recap = newRecap; changed = true; recapDismissed = false }
+        if newSummary != summary { summary = newSummary; changed = true }
+        if newCustomTitle != customTitle { customTitle = newCustomTitle; changed = true }
+        if changed { recordCache() }
     }
 }
 

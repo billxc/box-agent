@@ -328,16 +328,19 @@ class WebHttpServer:
 
             # Try claude-native lookup first (covers claude-cli + agent-sdk-claude).
             if _claude_history is not None:
-                if cached:
-                    s["preview"] = cached.get("preview", "")
-                    s["last_ts"] = cached.get("last_ts", 0)
-                    s["message_count"] = cached.get("message_count", 0)
-                    s["summary"] = cached.get("summary", "")
-                    s["custom_title"] = cached.get("custom_title")
-                    s["recap"] = cached.get("recap", "")
-                    continue
                 info = await _claude_history.get_session_info(sid)
                 if info is not None:
+                    # Reuse cache only when SDK reports the same last_modified —
+                    # otherwise the session has new messages / away_summary /
+                    # rename and we must re-read.
+                    if cached and cached.get("last_ts") == info.last_ts:
+                        s["preview"] = cached.get("preview", "")
+                        s["last_ts"] = cached.get("last_ts", 0)
+                        s["message_count"] = cached.get("message_count", 0)
+                        s["summary"] = cached.get("summary", "")
+                        s["custom_title"] = cached.get("custom_title")
+                        s["recap"] = cached.get("recap", "")
+                        continue
                     preview = (info.first_user or "").strip().replace("\n", " ")
                     s["preview"] = preview[:90] + ("..." if len(preview) > 90 else "")
                     s["last_ts"] = info.last_ts

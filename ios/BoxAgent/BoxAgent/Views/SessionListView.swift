@@ -20,7 +20,7 @@ struct SessionListView: View {
                 }
                 ForEach(sessions) { session in
                     NavigationLink {
-                        chatView(for: session.chatId)
+                        chatView(for: session)
                     } label: {
                         SessionRow(session: session)
                     }
@@ -78,10 +78,22 @@ struct SessionListView: View {
         }
     }
 
-    private func chatView(for chatId: String) -> some View {
+    private func chatView(for chatId: String, recap: String = "") -> some View {
         let api = botsVM.makeAPIClient()!
         let vm = ChatViewModel(bot: bot.name, machine: machine.machineId, chatId: chatId, api: api)
-        return ChatView(viewModel: vm, botDisplayName: bot.displayName)
+        return ChatView(viewModel: vm, botDisplayName: bot.displayName, initialRecap: recap)
+    }
+
+    private func chatView(for session: Session) -> some View {
+        let api = botsVM.makeAPIClient()!
+        let vm = ChatViewModel(bot: bot.name, machine: machine.machineId, chatId: session.chatId, api: api)
+        return ChatView(
+            viewModel: vm,
+            botDisplayName: bot.displayName,
+            initialRecap: session.recap ?? "",
+            initialSummary: session.summary ?? "",
+            initialCustomTitle: session.customTitle ?? ""
+        )
     }
 }
 
@@ -91,7 +103,7 @@ struct SessionRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(session.chatId)
+                Text(displayTitle)
                     .font(.subheadline.weight(.medium))
                     .lineLimit(1)
                 Spacer()
@@ -105,6 +117,12 @@ struct SessionRow: View {
                 Text(preview)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            if let recap = session.recap, !recap.isEmpty {
+                Label(recap, systemImage: "pin.fill")
+                    .font(.caption)
+                    .foregroundStyle(Color.accentColor)
                     .lineLimit(2)
             }
             HStack(spacing: 8) {
@@ -123,5 +141,11 @@ struct SessionRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .padding(.vertical, 2)
+    }
+
+    private var displayTitle: String {
+        if let title = session.customTitle, !title.isEmpty { return title }
+        if let summary = session.summary, !summary.isEmpty { return summary }
+        return session.chatId
     }
 }

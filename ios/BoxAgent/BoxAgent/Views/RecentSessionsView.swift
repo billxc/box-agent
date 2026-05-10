@@ -41,7 +41,13 @@ struct RecentsView: View {
             chatId: recent.session.chatId,
             api: api
         )
-        return ChatView(viewModel: vm, botDisplayName: recent.botDisplayName)
+        return ChatView(
+            viewModel: vm,
+            botDisplayName: recent.botDisplayName,
+            initialRecap: recent.session.recap ?? "",
+            initialSummary: recent.session.summary ?? "",
+            initialCustomTitle: recent.session.customTitle ?? ""
+        )
     }
 }
 
@@ -51,18 +57,30 @@ struct ServerRecentRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(recent.botDisplayName)
+                Text(displayTitle)
                     .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
                 Spacer()
                 Text(recent.machineId)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
 
+            Text(recent.botDisplayName)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             if let preview = recent.session.preview, !preview.isEmpty {
                 Text(preview)
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            if let recap = recent.session.recap, !recap.isEmpty {
+                Label(recap, systemImage: "pin.fill")
+                    .font(.caption)
+                    .foregroundStyle(Color.accentColor)
                     .lineLimit(2)
             }
 
@@ -87,6 +105,12 @@ struct ServerRecentRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .padding(.vertical, 4)
+    }
+
+    private var displayTitle: String {
+        if let title = recent.session.customTitle, !title.isEmpty { return title }
+        if let summary = recent.session.summary, !summary.isEmpty { return summary }
+        return recent.botDisplayName
     }
 
     private func platformIcon(_ platform: String) -> String {
