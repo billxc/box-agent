@@ -695,15 +695,11 @@ class TestTrustWorkspaceCommand:
         workspace_dir.mkdir()
         router.workspace = str(workspace_dir)
 
-        from boxagent.router.commands import cmd_trust_workspace
+        from boxagent.router.commands.workspace import cmd_trust_workspace
         from unittest.mock import patch
 
-        with patch("boxagent.router.commands.Path.home", return_value=tmp_path):
-            await cmd_trust_workspace(
-                msg("/trust_workspace"),
-                channel=mock_channel,
-                workspace=str(workspace_dir),
-            )
+        with patch("boxagent.router.commands.workspace.Path.home", return_value=tmp_path):
+            await cmd_trust_workspace(router, msg("/trust_workspace"), mock_channel)
 
         text = mock_channel.send_text.call_args[0][1]
         assert "Trusted" in text
@@ -721,75 +717,63 @@ class TestTrustWorkspaceCommand:
         workspace_dir = tmp_path / "workspace"
         workspace_dir.mkdir()
         ws_key = str(workspace_dir.resolve())
+        router.workspace = str(workspace_dir)
 
         claude_json = tmp_path / ".claude.json"
         claude_json.write_text(json.dumps({
             "projects": {ws_key: {"hasTrustDialogAccepted": True}},
         }))
 
-        from boxagent.router.commands import cmd_trust_workspace
+        from boxagent.router.commands.workspace import cmd_trust_workspace
         from unittest.mock import patch
 
-        with patch("boxagent.router.commands.Path.home", return_value=tmp_path):
-            await cmd_trust_workspace(
-                msg("/trust_workspace"),
-                channel=mock_channel,
-                workspace=str(workspace_dir),
-            )
+        with patch("boxagent.router.commands.workspace.Path.home", return_value=tmp_path):
+            await cmd_trust_workspace(router, msg("/trust_workspace"), mock_channel)
 
         text = mock_channel.send_text.call_args[0][1]
         assert "Already trusted" in text
 
-    async def test_trust_no_workspace(self, mock_channel):
+    async def test_trust_no_workspace(self, router, mock_channel):
         """No workspace configured — should report error."""
-        from boxagent.router.commands import cmd_trust_workspace
+        from boxagent.router.commands.workspace import cmd_trust_workspace
 
-        await cmd_trust_workspace(
-            msg("/trust_workspace"),
-            channel=mock_channel,
-            workspace="",
-        )
+        router.workspace = ""
+        await cmd_trust_workspace(router, msg("/trust_workspace"), mock_channel)
 
         text = mock_channel.send_text.call_args[0][1]
         assert "No valid workspace" in text
 
-    async def test_trust_no_claude_json(self, mock_channel, tmp_path):
+    async def test_trust_no_claude_json(self, router, mock_channel, tmp_path):
         """~/.claude.json doesn't exist — should report error."""
         workspace_dir = tmp_path / "workspace"
         workspace_dir.mkdir()
+        router.workspace = str(workspace_dir)
 
-        from boxagent.router.commands import cmd_trust_workspace
+        from boxagent.router.commands.workspace import cmd_trust_workspace
         from unittest.mock import patch
 
-        with patch("boxagent.router.commands.Path.home", return_value=tmp_path):
-            await cmd_trust_workspace(
-                msg("/trust_workspace"),
-                channel=mock_channel,
-                workspace=str(workspace_dir),
-            )
+        with patch("boxagent.router.commands.workspace.Path.home", return_value=tmp_path):
+            await cmd_trust_workspace(router, msg("/trust_workspace"), mock_channel)
 
         text = mock_channel.send_text.call_args[0][1]
         assert "not found" in text
 
-    async def test_trust_adds_default_fields(self, mock_channel, tmp_path):
+    async def test_trust_adds_default_fields(self, router, mock_channel, tmp_path):
         """New project entry should have all default fields."""
         import json
 
         workspace_dir = tmp_path / "workspace"
         workspace_dir.mkdir()
+        router.workspace = str(workspace_dir)
 
         claude_json = tmp_path / ".claude.json"
         claude_json.write_text(json.dumps({"numStartups": 1}))
 
-        from boxagent.router.commands import cmd_trust_workspace
+        from boxagent.router.commands.workspace import cmd_trust_workspace
         from unittest.mock import patch
 
-        with patch("boxagent.router.commands.Path.home", return_value=tmp_path):
-            await cmd_trust_workspace(
-                msg("/trust_workspace"),
-                channel=mock_channel,
-                workspace=str(workspace_dir),
-            )
+        with patch("boxagent.router.commands.workspace.Path.home", return_value=tmp_path):
+            await cmd_trust_workspace(router, msg("/trust_workspace"), mock_channel)
 
         data = json.loads(claude_json.read_text())
         ws_key = str(workspace_dir.resolve())

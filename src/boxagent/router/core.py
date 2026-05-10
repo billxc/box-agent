@@ -11,20 +11,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 from boxagent.transports.base import Channel, IncomingMessage
-from boxagent.agent.protocol import AgentBackend, BACKEND_KINDS
-from boxagent.router.callback import ChannelCallback, TextCollector, log_turn
-from boxagent.router.commands import (
-    cmd_exec,
-    cmd_help,
-    cmd_schedule,
-    cmd_sessions,
-    cmd_start,
-    cmd_status,
-    cmd_sync_skills,
-    cmd_trust_workspace,
-    cmd_verbose,
-    cmd_version,
-)
+from boxagent.agent.protocol import AgentBackend
+from boxagent.router.callback import ChannelCallback, log_turn
+from boxagent.router.commands.registry import COMMAND_REGISTRY
 
 if TYPE_CHECKING:
     from boxagent.agent_env import AgentEnv
@@ -70,12 +59,12 @@ class Router:
         rather than a runtime fluke (raw bot's web_channel is always
         registered before it sees its first message).
         """
-        ch = self._channels.get(msg.channel, self.channel)
-        if ch is None:
+        channel = self._channels.get(msg.channel, self.channel)
+        if channel is None:
             raise RuntimeError(
                 f"Router '{self.bot_name}' has no channel for {msg.channel!r}"
             )
-        return ch
+        return channel
 
     @contextlib.asynccontextmanager
     async def _acquire_proc(self, chat_id: str):
@@ -107,10 +96,10 @@ class Router:
             msg.user_id, uid, self.allowed_users,
         )
 
-        ch = self._resolve_channel(msg)
+        channel = self._resolve_channel(msg)
 
         if not msg.trusted and uid not in self.allowed_users:
-            await ch.send_text(
+            await channel.send_text(
                 msg.chat_id,
                 "Unauthorized: you are not allowed to use this bot.",
             )
@@ -121,8 +110,9 @@ class Router:
             return  # ignore empty messages
         if text.startswith("/"):
             command = text.split()[0].lower()
-            if command in self._command_handlers():
-                await self._handle_command(command, msg)
+            spec = COMMAND_REGISTRY.get(command)
+            if spec is not None:
+                await spec.fn(self, msg, channel)
                 return
 
         # Buffer if this chat_id already has an active turn
@@ -135,389 +125,6 @@ class Router:
             return
 
         await self._dispatch(msg)
-
-    def _command_handlers(self):
-        """Return ``command → async callable(msg, channel)`` dispatch map.
-
-        Built per-call (cheap, ~17 entries) so handlers can close over
-        ``self``. ``SYSTEM_COMMANDS`` is derived from the keys, so adding
-        a command means one entry instead of two list edits.
-        """
-        return {
-            # Core commands (touch session state — defined on Router)
-            "/new":     lambda msg, ch: self._cmd_new(msg),
-            "/cancel":  lambda msg, ch: self._cmd_cancel(msg),
-            "/resume":  lambda msg, ch: self._cmd_resume(msg),
-            "/compact": lambda msg, ch: self._cmd_compact(msg),
-            "/model":   lambda msg, ch: self._cmd_model(msg),
-            "/cd":      lambda msg, ch: self._cmd_cd(msg),
-            "/backend": lambda msg, ch: self._cmd_backend(msg),
-            # Auxiliary commands (free functions in router/commands.py)
-            "/status":   lambda msg, ch: cmd_status(
-                msg, channel=ch, bot_name=self.display_name or self.bot_name,
-                backend=self.backend, start_time=self.start_time,
-                display_name=self.display_name, ai_backend=self.ai_backend,
-                workspace=(self.pool.get_workspace(msg.chat_id) if self.pool else "") or self.workspace,
-                node_id=self.node_id, pool=self.pool, chat_id=msg.chat_id,
-            ),
-            "/start":    lambda msg, ch: cmd_start(msg, channel=ch, bot_name=self.display_name or self.bot_name),
-            "/help":     lambda msg, ch: cmd_help(msg, channel=ch),
-            "/verbose":  lambda msg, ch: cmd_verbose(msg, channel=ch),
-            "/sync_skills": lambda msg, ch: cmd_sync_skills(
-                msg, channel=ch, workspace=self.workspace,
-                extra_skill_dirs=self.extra_skill_dirs, ai_backend=self.ai_backend,
-            ),
-            "/exec":     lambda msg, ch: cmd_exec(msg, channel=ch, workspace=self.workspace),
-            "/version":  lambda msg, ch: cmd_version(msg, channel=ch),
-            "/trust_workspace": lambda msg, ch: cmd_trust_workspace(msg, channel=ch, workspace=self.workspace),
-            "/sessions": lambda msg, ch: cmd_sessions(msg, channel=ch, storage=self.storage, workspace=self.workspace),
-            "/schedule": lambda msg, ch: cmd_schedule(
-                msg, channel=ch, config_dir=self.config_dir,
-                local_dir=self.local_dir, node_id=self.node_id,
-            ),
-        }
-
-    async def _handle_command(self, command: str, msg: IncomingMessage):
-        handler = self._command_handlers().get(command)
-        if handler is None:
-            return
-        ch = self._resolve_channel(msg)
-        await handler(msg, ch)
-
-    # ---- Core session commands ----
-
-    async def _cmd_new(self, msg: IncomingMessage):
-        ch = self._resolve_channel(msg)
-        chat_id = msg.chat_id
-        if self.pool:
-            self.pool.clear_session(chat_id)
-        else:
-            await self._reset_backend_session()
-        self._compact_summaries.pop(chat_id, None)
-        self._resume_contexts.pop(chat_id, None)
-        if self.storage:
-            self.storage.clear_session(self.bot_name, chat_id=chat_id)
-        await ch.send_text(
-            chat_id, "Started a fresh conversation."
-        )
-
-    async def _cmd_cancel(self, msg: IncomingMessage):
-        ch = self._resolve_channel(msg)
-        chat_id = msg.chat_id
-        if self.pool:
-            active = self.pool.get_active(chat_id)
-            if active:
-                await active.cancel()
-                await ch.send_text(chat_id, "Cancelled current task.")
-            else:
-                await ch.send_text(chat_id, "No active task to cancel.")
-        else:
-            await self.backend.cancel()
-            await ch.send_text(chat_id, "Cancelled current task.")
-
-    async def _cmd_resume(self, msg: IncomingMessage):
-        ch = self._resolve_channel(msg)
-        if not self.storage:
-            await ch.send_text(
-                msg.chat_id, "Resume history is unavailable (storage is disabled)."
-            )
-            return
-
-        arg = msg.text.strip().partition(" ")[2].strip()
-
-        # Use unified 3-source loader (Claude CLI + BoxAgent + Codex)
-        from boxagent.sessions.cli import _load_all_unified_sessions
-
-        all_sessions = _load_all_unified_sessions(
-            storage=self.storage, workspace=self.workspace,
-        )
-
-        if not arg:
-            await self._resume_list(msg, all_sessions)
-            return
-
-        # Look up by session ID
-        target = None
-        for entry in all_sessions:
-            if str(entry.get("sessionId", "")) == arg:
-                target = entry
-                break
-
-        if target is None:
-            await ch.send_text(
-                msg.chat_id,
-                f"Resume target not found: `{arg}`. Send `/resume` to list available sessions.",
-            )
-            return
-
-        await self._do_resume_native(msg, target)
-
-    async def _resume_list(
-        self,
-        msg: IncomingMessage,
-        sessions: list[dict[str, object]],
-    ):
-        ch = self._resolve_channel(msg)
-        if not sessions:
-            await ch.send_text(
-                msg.chat_id, "No saved sessions found.",
-            )
-            return
-
-        # Group by backend, keep up to 10 per group
-        groups: dict[str, list[dict[str, object]]] = {}
-        for entry in sessions:
-            backend = str(entry.get("backend", "")) or "other"
-            groups.setdefault(backend, []).append(entry)
-
-        lines = ["**Resume Sessions**"]
-        buttons = []
-        idx = 0
-        for backend in sorted(groups):
-            lines.append(f"\n**{backend}**")
-            for entry in groups[backend][:10]:
-                idx += 1
-                session_id = str(entry.get("sessionId", ""))
-                modified_ts = entry.get("modified_ts")
-                time_str = ""
-                if isinstance(modified_ts, int | float) and modified_ts:
-                    time_str = time.strftime("%m-%d %H:%M", time.localtime(modified_ts))
-                preview = entry.get("summary") or entry.get("firstPrompt") or entry.get("preview") or ""
-                preview_text = ""
-                if isinstance(preview, str) and preview:
-                    preview_text = f" — {preview[:60]}"
-                short_id = session_id[:8]
-                project = entry.get("project", "")
-                ws_label = f" `{project}`" if project else ""
-                lines.append(f"{idx}. `{short_id}` {time_str}{ws_label}{preview_text}")
-                btn_label = f"{idx}. {time_str}"
-                if isinstance(preview, str) and preview:
-                    btn_label += f" {preview[:28]}"
-                buttons.append((btn_label, f"/resume {session_id}"))
-        text = "\n".join(lines)
-        send_with_buttons = getattr(ch, "send_text_with_inline_keyboard", None)
-        if send_with_buttons is not None:
-            await send_with_buttons(msg.chat_id, text, buttons)
-        else:
-            await ch.send_text(msg.chat_id, text)
-
-    async def _do_resume_native(self, msg: IncomingMessage, entry: dict[str, object]):
-        ch = self._resolve_channel(msg)
-        chat_id = msg.chat_id
-        target_session_id = str(entry["sessionId"])
-        restored_workspace = str(entry.get("projectPath", "")) if entry.get("projectPath") else ""
-        restored_model = str(entry.get("model", "")) if entry.get("model") else ""
-
-        if self.pool:
-            self.pool.set_session_id(chat_id, target_session_id)
-            if restored_workspace:
-                self.pool.set_workspace(chat_id, restored_workspace)
-            if restored_model:
-                self.pool.set_model(chat_id, restored_model)
-        else:
-            await self._reset_backend_session()
-            self.backend.session_id = target_session_id
-        self._compact_summaries.pop(chat_id, None)
-        self._resume_contexts.pop(chat_id, None)
-        if self.storage is not None:
-            self.storage.save_session(self.bot_name, target_session_id, chat_id=chat_id)
-
-        # Build confirmation message
-        info_parts = [f"Resumed session `{target_session_id[:8]}`"]
-        if restored_workspace:
-            info_parts.append(f"workspace: `{restored_workspace}`")
-        if restored_model:
-            info_parts.append(f"model: `{restored_model}`")
-        await ch.send_text(chat_id, "\n".join(info_parts))
-
-    async def _cmd_model(self, msg: IncomingMessage):
-        """Show or switch the model for this chat."""
-        ch = self._resolve_channel(msg)
-        chat_id = msg.chat_id
-        parts = msg.text.strip().split(maxsplit=1)
-
-        if self.pool:
-            current = self.pool.get_model(chat_id) or "default"
-        else:
-            current = getattr(self.backend, "model", "") or "default"
-
-        if len(parts) < 2:
-            await ch.send_text(
-                chat_id, f"Current model: {current}"
-            )
-            return
-
-        new_model = parts[1].strip()
-        if self.pool:
-            self.pool.set_model(chat_id, new_model)
-        else:
-            self.backend.model = new_model
-        await ch.send_text(
-            chat_id, f"Model switched: {current} → {new_model}"
-        )
-
-    async def _cmd_cd(self, msg: IncomingMessage):
-        """Show or switch the working directory for this chat."""
-        import os
-
-        ch = self._resolve_channel(msg)
-        chat_id = msg.chat_id
-        parts = msg.text.strip().split(maxsplit=1)
-
-        if self.pool:
-            current = self.pool.get_workspace(chat_id) or "(not set)"
-        else:
-            current = self.workspace or "(not set)"
-
-        if len(parts) < 2:
-            await ch.send_text(
-                chat_id, f"Current workspace: {current}"
-            )
-            return
-
-        new_path = os.path.expanduser(parts[1].strip())
-        if not os.path.isdir(new_path):
-            await ch.send_text(
-                chat_id, f"Directory not found: {new_path}"
-            )
-            return
-
-        new_path = os.path.realpath(new_path)
-        if self.pool:
-            self.pool.set_workspace(chat_id, new_path)
-            self.pool.clear_session(chat_id)
-        else:
-            self.backend.workspace = new_path
-            self.workspace = new_path
-            await self._reset_backend_session()
-        self._compact_summaries.pop(chat_id, None)
-        self._resume_contexts.pop(chat_id, None)
-        if self.storage:
-            self.storage.clear_session(self.bot_name, chat_id=chat_id)
-        await ch.send_text(
-            chat_id, f"Workspace switched: {current} → {new_path}"
-        )
-
-
-
-    async def _cmd_backend(self, msg: IncomingMessage):
-        """Show or switch the AI backend."""
-        from boxagent.agent.backend_factory import create_backend
-        from boxagent.config import BotConfig
-
-        ch = self._resolve_channel(msg)
-        parts = msg.text.strip().split(maxsplit=1)
-        valid = sorted(BACKEND_KINDS)
-
-        if len(parts) < 2:
-            await ch.send_text(
-                msg.chat_id,
-                f"Current backend: {self.ai_backend}\nAvailable: {', '.join(valid)}",
-            )
-            return
-
-        new_kind = parts[1].strip()
-        if new_kind not in BACKEND_KINDS:
-            await ch.send_text(
-                msg.chat_id,
-                f"Unknown backend: {new_kind}\nAvailable: {', '.join(valid)}",
-            )
-            return
-
-        if new_kind == self.ai_backend:
-            await ch.send_text(msg.chat_id, f"Already using {new_kind}.")
-            return
-
-        old_kind = self.ai_backend
-        old_backend = self.backend
-
-        # Carry over common attributes from old backend.
-        bot_cfg = BotConfig(
-            name=self.bot_name,
-            ai_backend=new_kind,
-            workspace=getattr(old_backend, "workspace", self.workspace),
-            model=getattr(old_backend, "model", "") or "",
-            agent=getattr(old_backend, "agent", "") or "",
-            yolo=bool(getattr(old_backend, "yolo", False)),
-        )
-        await old_backend.stop()
-        new_backend = create_backend(bot_cfg, session_id=None)
-
-        new_backend.start()
-        self.backend = new_backend
-        self.ai_backend = new_kind
-        self._compact_summaries.clear()
-        self._resume_contexts.clear()
-        if self.storage:
-            self.storage.clear_session(self.bot_name, chat_id=msg.chat_id)
-        # Notify Gateway so watchdog/scheduler refs are updated too.
-        if self.on_backend_switched:
-            await self.on_backend_switched(self.bot_name, new_backend, new_kind)
-        await ch.send_text(
-            msg.chat_id, f"Backend switched: {old_kind} → {new_kind}"
-        )
-
-    async def _cmd_compact(self, msg: IncomingMessage):
-        """Summarize current conversation, reset session, carry summary forward."""
-        ch = self._resolve_channel(msg)
-        chat_id = msg.chat_id
-
-        sid = self.pool.get_session_id(chat_id) if self.pool else getattr(self.backend, "session_id", None)
-        if not sid:
-            await ch.send_text(
-                chat_id, "No active session to compact."
-            )
-            return
-
-        await ch.send_text(chat_id, "Compacting conversation...")
-
-        # Extract user instructions after /compact
-        user_hint = msg.text.strip().partition(" ")[2].strip()
-
-        summary_prompt = (
-            "Please provide a concise summary of our entire conversation so far. "
-            "Include: key topics discussed, decisions made, important context, "
-            "and any pending tasks. Format as bullet points. "
-            "This summary will be used to continue in a new session."
-        )
-        if user_hint:
-            summary_prompt += f"\n\nAdditional instructions: {user_hint}"
-
-        collector = TextCollector()
-        await ch.show_typing(chat_id)
-        try:
-            env = self._build_env(msg)
-            async with self._acquire_proc(chat_id) as proc:
-                await proc.send(summary_prompt, collector, env=env)
-        except Exception as e:
-            await ch.send_text(
-                chat_id, f"Failed to generate summary: {e}"
-            )
-            return
-
-        summary = collector.text.strip()
-        if not summary:
-            await ch.send_text(
-                chat_id, "Failed to generate summary (empty response)."
-            )
-            return
-
-        # Reset session
-        if self.pool is not None:
-            self.pool.clear_session(chat_id)
-        else:
-            await self._reset_backend_session()
-        if self.storage:
-            self.storage.clear_session(self.bot_name, chat_id=chat_id)
-
-        self._resume_contexts.pop(chat_id, None)
-        self._compact_summaries[chat_id] = summary
-
-        await ch.send_text(
-            chat_id,
-            f"Session compacted. Summary:\n\n{summary}\n\n"
-            "Next message will start a new session with this context.",
-        )
 
     # ---- Dispatch ----
 
