@@ -5,12 +5,13 @@ The old single-file ``sessions/cli.py`` was split into:
     tokens    — /sessions DSL parser (regex-driven, pure)
     filters   — list filters + search helpers (pure functions)
     format    — text rendering for /sessions output
-    commands  — argparse subcommand wiring + JSON output
 
 Public surface is re-exported here so existing imports keep working.
+The old ``boxagent sessions`` CLI subcommand was removed; the remaining
+callers are the ``/sessions`` and ``/resume`` slash commands and the MCP
+``sessions`` tool.
 """
 
-from .commands import build_sessions_parser, sessions_list
 from .filters import (
     _filter_sessions,
     _find_by_id_prefix,
@@ -29,9 +30,6 @@ from .loaders import (
 from .tokens import parse_session_tokens
 
 __all__ = [
-    # commands
-    "build_sessions_parser",
-    "sessions_list",
     # loaders
     "CLAUDE_DIR",
     "_load_all_unified_sessions",

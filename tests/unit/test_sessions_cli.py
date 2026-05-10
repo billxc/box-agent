@@ -1,8 +1,7 @@
-"""Tests for sessions_cli — CLI subcommand handlers."""
+"""Tests for sessions_cli — helpers used by /sessions + MCP tool."""
 
 import json
 import time
-from argparse import Namespace
 from pathlib import Path
 
 import pytest
@@ -16,7 +15,6 @@ from boxagent.sessions.cli import (
     _grep_sessions,
     format_sessions_list,
     parse_session_tokens,
-    sessions_list,
 )
 
 
@@ -553,55 +551,3 @@ class TestFormatSessionsList:
         result = format_sessions_list(query="grep:nonexistent")
         assert "No sessions" in result
 
-
-class TestSessionsList:
-    @pytest.fixture(autouse=True)
-    def _isolate_backends(self, tmp_path_factory, monkeypatch):
-        empty = tmp_path_factory.mktemp("empty-codex")
-        monkeypatch.setattr("boxagent.sessions.cli.loaders.CODEX_DIR", empty)
-        _mock_claude_sessions(monkeypatch, [])
-
-    def test_no_sessions(self, capsys):
-        args = Namespace(query=[], output_json=False, workspace="")
-        sessions_list(args)
-        assert "No sessions found" in capsys.readouterr().out
-
-    def test_formatted_output(self, monkeypatch, capsys):
-        _mock_claude_sessions(monkeypatch, [_sample_entry("id-1")])
-        args = Namespace(query=[], output_json=False, workspace="")
-        sessions_list(args)
-        out = capsys.readouterr().out
-        assert "id-1" in out
-        assert "Sessions" in out
-
-    def test_json_output(self, monkeypatch, capsys):
-        _mock_claude_sessions(monkeypatch, [_sample_entry("id-1")])
-        args = Namespace(query=[], output_json=True, workspace="")
-        sessions_list(args)
-        out = capsys.readouterr().out
-        data = json.loads(out)
-        assert len(data) == 1
-        assert data[0]["sessionId"] == "id-1"
-
-    def test_query_filter(self, monkeypatch, capsys):
-        _mock_claude_sessions(monkeypatch, [
-            _sample_entry("id-1", projectPath="/Users/test/proj-a", summary="Discord fix"),
-            _sample_entry("id-2", projectPath="/Users/test/proj-b",
-                          modified="2026-04-02T11:00:00.000Z"),
-        ])
-        args = Namespace(query=["cwd:proj-a"], output_json=True, workspace="")
-        sessions_list(args)
-        data = json.loads(capsys.readouterr().out)
-        assert len(data) == 1
-        assert data[0]["sessionId"] == "id-1"
-
-    def test_workspace_filter(self, monkeypatch, capsys):
-        _mock_claude_sessions(monkeypatch, [
-            _sample_entry("id-1", projectPath="/Users/test/proj-a"),
-            _sample_entry("id-2", projectPath="/Users/test/proj-b"),
-        ])
-        args = Namespace(query=[], output_json=True, workspace="/Users/test/proj-a")
-        sessions_list(args)
-        data = json.loads(capsys.readouterr().out)
-        assert len(data) == 1
-        assert data[0]["sessionId"] == "id-1"

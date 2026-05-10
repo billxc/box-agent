@@ -499,7 +499,7 @@ src/boxagent/
 │
 ├── sessions/               # Persistence + per-chat backend pool
 │   ├── ...                   # Storage, SessionPool, RawSessionPool, claude_native
-│   └── cli/                  # `boxagent sessions` subcommand
+│   └── cli/                  # /sessions slash command + MCP `sessions` tool helpers
 │
 ├── scheduler/              # Cron-based task scheduler
 │   ├── engine.py             # Scheduler loop + catch-up
