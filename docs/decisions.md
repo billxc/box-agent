@@ -2,6 +2,8 @@
 
 记录每次偏离原始设计的决定，以及原因。
 
+> **路径漂移说明**：本文件是历史日志。条目里提到的文件路径反映**决策当时**的代码布局；后来许多文件改名/搬迁/合并（如 `cluster/cluster_rpc.py` → `cluster/rpc.py`、`gateway/http_api_server.py` → `gateway.py`、`channels/` → `transports/`、`sessions/claude_native.py` → `sessions/browser/loaders.py`）。当前代码以 `codebase-guide.md` 为准。
+
 ---
 
 ## 2026-05-08: 完全删除 Discord 支持
@@ -28,7 +30,8 @@
 
 **原因**: 项目从设计到实现过程中大幅收敛，早期文档（V1 设计、V2 路线图、实现计划）与实际代码不一致，容易误导维护者。`codebase-guide.md` 已经准确描述了当前状态。
 
-**归档的文件**:
+**实际处理**: 当时这批文件其实是**直接删除**而非归档（`docs/archive/` 目录此后才在 2026-05-10 创建）。下面列表是当时被删的文件清单，仅作历史记录：
+
 - `2026-03-20-boxagent-design/` — 初版英文设计
 - `2026-03-20-boxagent-design.zh-CN/` — 初版中文设计
 - `plans/2026-03-20-boxagent-v1/` — V1 实现计划（10 个文件）

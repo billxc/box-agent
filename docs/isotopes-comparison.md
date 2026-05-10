@@ -1,5 +1,7 @@
 # Box-Agent Workgroup vs Isotopes Subagent: Comparison & Lessons
 
+> **[ADVISORY — none of these recommendations have been adopted as of 2026-05-10. Kept as inspiration / brainstorming only.]**
+>
 > Date: 2026-04-26
 > Source: [isotopes](../../../isotopes) (`@ghostcomplex/isotopes`, TypeScript)
 

@@ -1,5 +1,7 @@
 # Guide: Remove Legacy Fields from base_cli
 
+> **[IN PROGRESS — 部分 step 已完成（`bot_token` 大部分清理完）。剩余清理项需要逐一对照当前代码确认状态。这份指南还有效，但要重新核对完成度。]**
+
 ## Goal
 
 Delete `bot_token`, `is_workgroup_admin` from `base_cli.py` (and `bot_token` from `acp_process.py`). All callers should use `AgentEnv` instead.

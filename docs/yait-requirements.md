@@ -1,5 +1,7 @@
 # YAIT 需求报告 — BoxAgent Workgroup 集成
 
+> **[STATUS: 上游依赖未跟踪。这份是发给 yait 工具的需求清单，BoxAgent 这边无可对照状态。如果要确认有无落地，去看 yait 自己的 CHANGELOG。]**
+
 ## 背景
 
 BoxAgent workgroup 使用 YAIT 作为 issue tracker。Admin 和 specialist agents 通过 CLI 管理任务。当前 YAIT 缺少 workgroup 所需的关键功能。
