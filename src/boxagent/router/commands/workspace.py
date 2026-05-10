@@ -31,7 +31,7 @@ async def cmd_sync_skills(router: "Router", msg: "IncomingMessage", channel: "Ch
 )
 async def cmd_sessions(router: "Router", msg: "IncomingMessage", channel: "Channel") -> None:
     """List unified sessions (Claude CLI + BoxAgent history + Codex)."""
-    from boxagent.sessions.cli import format_sessions_list
+    from boxagent.sessions.browser import format_sessions_list
 
     arg = msg.text.strip().partition(" ")[2].strip()
     text = format_sessions_list(query=arg, storage=router.storage, workspace=router.workspace)

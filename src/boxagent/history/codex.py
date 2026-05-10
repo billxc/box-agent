@@ -68,7 +68,7 @@ class CodexAgentHistory:
     # ── Sync escape hatches ──
     # The CodexAgentHistory implementation is entirely synchronous
     # under the hood (file I/O on the local rollout dir). Sync callers
-    # — like the legacy ``sessions/cli/loaders.py`` driven by the
+    # — like the legacy ``sessions/browser/loaders.py`` driven by the
     # ``sessions_list`` tool — can use these directly to avoid running
     # ``asyncio.run`` from within an already-running event loop.
     # New code should prefer the async API above.

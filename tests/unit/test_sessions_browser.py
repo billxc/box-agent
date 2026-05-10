@@ -1,4 +1,4 @@
-"""Tests for sessions_cli — helpers used by /sessions + MCP tool."""
+"""Tests for sessions.browser — helpers used by /sessions + MCP tool."""
 
 import json
 import time
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from boxagent.sessions.cli import (
+from boxagent.sessions.browser import (
     _truncate,
     _relative_time,
     _filter_sessions,
@@ -62,7 +62,7 @@ def _mock_claude_sessions(monkeypatch, sessions_index_entries: list[dict]) -> No
         def list_sessions_sync(self, project_id: str):
             return list(by_project.get(project_id, []))
 
-    monkeypatch.setattr("boxagent.sessions.cli.loaders.ClaudeAgentHistory", _MockHistory)
+    monkeypatch.setattr("boxagent.sessions.browser.loaders.ClaudeAgentHistory", _MockHistory)
 
 
 def _sample_entry(session_id: str = "abc-123", **overrides) -> dict:
@@ -344,7 +344,7 @@ class TestFindByIdPrefix:
 
 class TestGrepSessions:
     def test_match_in_content(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions.cli.loaders.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.browser.loaders.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _write_jsonl(projects_dir, "proj", "sess-1", [
             _make_user_message("please fix the pineapple bug"),
@@ -355,7 +355,7 @@ class TestGrepSessions:
         assert len(result) == 1
 
     def test_no_match_in_content(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions.cli.loaders.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.browser.loaders.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _write_jsonl(projects_dir, "proj", "sess-1", [
             _make_user_message("hello world"),
@@ -366,7 +366,7 @@ class TestGrepSessions:
         assert len(result) == 0
 
     def test_case_insensitive(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions.cli.loaders.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.browser.loaders.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
         _write_jsonl(projects_dir, "proj", "sess-1", [
             _make_user_message("Fix the Discord bot"),
@@ -428,7 +428,7 @@ class TestFormatSessionsList:
         — autouse stubs default to empty.
         """
         empty = tmp_path_factory.mktemp("empty-codex")
-        monkeypatch.setattr("boxagent.sessions.cli.loaders.CODEX_DIR", empty)
+        monkeypatch.setattr("boxagent.sessions.browser.loaders.CODEX_DIR", empty)
         _mock_claude_sessions(monkeypatch, [])
 
     def test_no_sessions(self):
@@ -520,7 +520,7 @@ class TestFormatSessionsList:
 
     def test_grep_filter(self, tmp_path, monkeypatch):
         """grep:xxx does full-text search on JSONL content."""
-        monkeypatch.setattr("boxagent.sessions.cli.loaders.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.browser.loaders.CLAUDE_DIR", tmp_path)
         _mock_claude_sessions(monkeypatch, [
             _sample_entry("sess-1", projectPath="/Users/test/proj-a"),
             _sample_entry("sess-2", projectPath="/Users/test/proj-a",
@@ -540,7 +540,7 @@ class TestFormatSessionsList:
         assert "/resume sess-2" not in result
 
     def test_grep_no_match(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("boxagent.sessions.cli.loaders.CLAUDE_DIR", tmp_path)
+        monkeypatch.setattr("boxagent.sessions.browser.loaders.CLAUDE_DIR", tmp_path)
         _mock_claude_sessions(monkeypatch, [
             _sample_entry("sess-1", projectPath="/Users/test/proj-a"),
         ])

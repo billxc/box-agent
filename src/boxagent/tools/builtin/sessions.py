@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 )
 async def sessions_list(args: dict, ctx: ToolContext) -> str:
     from boxagent.sessions import Storage
-    from boxagent.sessions.cli import format_sessions_list
+    from boxagent.sessions.browser import format_sessions_list
 
     storage = Storage(ctx.local_dir) if ctx.local_dir else None
     return format_sessions_list(

@@ -56,7 +56,7 @@ async def cmd_resume(router: "Router", msg: "IncomingMessage", channel: "Channel
 
     arg = msg.text.strip().partition(" ")[2].strip()
 
-    from boxagent.sessions.cli import _load_all_unified_sessions
+    from boxagent.sessions.browser import _load_all_unified_sessions
     all_sessions = _load_all_unified_sessions(
         storage=router.storage, workspace=router.workspace,
     )

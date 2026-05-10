@@ -321,7 +321,6 @@ typing loop 每 4 秒发送一次 `ChatAction.TYPING`。这套生命周期在 `t
 
 - **Chat**（Telegram）：`router_commands.cmd_sessions()` → `format_sessions_list(storage=self.storage)`
 - **MCP**：`mcp_server.sessions_list()` → `format_sessions_list(storage=Storage(LOCAL_DIR))`
-- **CLI**：`sessions_cli.sessions_list(args)` → `_load_all_unified_sessions(storage=...)`
 
 ### 与 `/resume` 的关系
 

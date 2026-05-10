@@ -1,14 +1,12 @@
-"""sessions.cli — package layout.
+"""sessions.browser — read-only multi-source session listing.
 
-The old single-file ``sessions/cli.py`` was split into:
+Layout:
     loaders   — Claude CLI + BoxAgent + Codex session merge (file IO)
     tokens    — /sessions DSL parser (regex-driven, pure)
     filters   — list filters + search helpers (pure functions)
     format    — text rendering for /sessions output
 
-Public surface is re-exported here so existing imports keep working.
-The old ``boxagent sessions`` CLI subcommand was removed; the remaining
-callers are the ``/sessions`` and ``/resume`` slash commands and the MCP
+Used by the ``/sessions`` and ``/resume`` slash commands and the MCP
 ``sessions`` tool.
 """
 

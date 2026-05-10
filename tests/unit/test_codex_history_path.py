@@ -66,10 +66,10 @@ def test_loaders_unified_includes_codex(tmp_path):
     ])
 
     from unittest.mock import patch
-    from boxagent.sessions.cli.loaders import _load_all_unified_sessions
+    from boxagent.sessions.browser.loaders import _load_all_unified_sessions
 
-    with patch("boxagent.sessions.cli.loaders.CODEX_DIR", sessions_dir), \
-         patch("boxagent.sessions.cli.loaders.CLAUDE_DIR", tmp_path / "empty-claude"):
+    with patch("boxagent.sessions.browser.loaders.CODEX_DIR", sessions_dir), \
+         patch("boxagent.sessions.browser.loaders.CLAUDE_DIR", tmp_path / "empty-claude"):
         entries = _load_all_unified_sessions(workspace=str(tmp_path / "ws"))
 
     sids = {e.get("sessionId") for e in entries}
