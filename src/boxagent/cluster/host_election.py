@@ -158,8 +158,7 @@ class HostElection:
         if self.state == "host":
             # Sanity: is the tunnel actually serving *us*?
             tunnel = self.tunnel
-            proc = getattr(tunnel, "_host_proc", None) if tunnel is not None else None
-            tunnel_dead = proc is None or proc.returncode is not None
+            tunnel_dead = tunnel is None or not tunnel.is_alive()
             stolen = upstream and upstream != me
             if tunnel_dead or stolen:
                 logger.warning(

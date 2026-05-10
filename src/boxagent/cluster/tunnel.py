@@ -184,6 +184,20 @@ class ClusterTunnel:
             except (asyncio.CancelledError, Exception):
                 pass
 
+    def is_alive(self) -> bool:
+        """Whether the supervisor still owns a tunnel.
+
+        True while ``_monitor_host`` is the authority — covers the brief
+        respawn window where ``_host_proc`` is the dying child but a new
+        one is about to be launched. Callers (e.g. HostElection) must
+        use this instead of peeking at ``_host_proc`` directly, otherwise
+        they race the supervisor and trigger spurious demotes.
+        """
+        if self._stopping:
+            return False
+        task = self._monitor_task
+        return task is not None and not task.done()
+
     async def _run(self, *args: str) -> tuple[int, str, str]:
         proc = await asyncio.create_subprocess_exec(
             "devtunnel", *args,
