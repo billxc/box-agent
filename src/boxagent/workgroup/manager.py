@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from boxagent.sessions import Storage
-    from boxagent.workgroup.workgroup_http_routes import WorkgroupHttpRoutes
+    from boxagent.workgroup.http_routes import WorkgroupHttpRoutes
 
 
 # Builtin template root, shipped with the codebase. Empty for v1; users add
@@ -116,7 +116,7 @@ class WorkgroupManager:
 
     @property
     def routes(self) -> "WorkgroupHttpRoutes":
-        from boxagent.workgroup.workgroup_http_routes import WorkgroupHttpRoutes
+        from boxagent.workgroup.http_routes import WorkgroupHttpRoutes
         if self._routes is None:
             self._routes = WorkgroupHttpRoutes(workgroup_mgr=self)
         return self._routes

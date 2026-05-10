@@ -24,8 +24,8 @@ from aiohttp import web
 if TYPE_CHECKING:
     from boxagent.cluster.peer_service import PeerService
     from boxagent.config import AppConfig
-    from boxagent.scheduler.scheduler_http_routes import SchedulerHttpRoutes
-    from boxagent.workgroup.workgroup_http_routes import WorkgroupHttpRoutes
+    from boxagent.scheduler.http_routes import SchedulerHttpRoutes
+    from boxagent.workgroup.http_routes import WorkgroupHttpRoutes
 
 logger = logging.getLogger(__name__)
 

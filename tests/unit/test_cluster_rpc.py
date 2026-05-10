@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from boxagent.cluster.cluster_rpc import ClusterRpc
+from boxagent.cluster.rpc import ClusterRpc
 
 
 class _Req:

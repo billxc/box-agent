@@ -30,13 +30,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from boxagent.agent.agent_manager import AgentManager
-from boxagent.cluster.cluster_http_routes import ClusterHttpRoutes
-from boxagent.cluster.cluster_rpc import ClusterRpc
+from boxagent.cluster.http_routes import ClusterHttpRoutes
+from boxagent.cluster.rpc import ClusterRpc
 from boxagent.cluster.host_election import HostElection
 from boxagent.cluster.peer_service import PeerService
 from boxagent.cluster.topology_service import TopologyService
 from boxagent.gateway.http_api_server import HttpApiServer
-from boxagent.scheduler.scheduler_http_routes import SchedulerHttpRoutes
+from boxagent.scheduler.http_routes import SchedulerHttpRoutes
 from boxagent.transports.web.server import WebHttpServer
 from boxagent.config import AppConfig
 from boxagent.utils import default_config_dir, default_local_dir, default_workspace_dir

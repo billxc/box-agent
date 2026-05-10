@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 if TYPE_CHECKING:
-    from boxagent.cluster.cluster_rpc import ClusterRpc
+    from boxagent.cluster.rpc import ClusterRpc
     from boxagent.cluster.peer_service import PeerService
 
 
