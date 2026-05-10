@@ -465,7 +465,11 @@
     state.toolCards = {};
     refreshSessionList();
     const meta = (state.sessions[curKey()] || {})[chatId] || {};
-    chatTitle.textContent = meta.title || chatId;
+    const serverList = state.serverSessions[curKey()] || [];
+    const serverMeta = serverList.find(s => s.chat_id === chatId);
+    const backendTitle = serverMeta && (serverMeta.custom_title || serverMeta.summary);
+    const resolvedTitle = backendTitle || meta.title || (serverMeta ? defaultTitle(serverMeta) : chatId);
+    chatTitle.textContent = resolvedTitle;
     localStorage.setItem("ba.last." + curKey(), chatId);
 
     // Record this open in the cross-bot recents so the next visit can find
@@ -473,13 +477,11 @@
     const botInfo = (state.machines || [])
       .find(m => m.machine_id === state.botMachine)?.bots
       ?.find(b => b.name === state.bot);
-    const serverList = state.serverSessions[curKey()] || [];
-    const serverMeta = serverList.find(s => s.chat_id === chatId);
     touchRecent({
       machine: state.botMachine,
       bot: state.bot,
       chat_id: chatId,
-      title: meta.title || (serverMeta ? defaultTitle(serverMeta) : chatId),
+      title: resolvedTitle,
       preview: serverMeta?.preview || meta.preview || "",
       platform: serverMeta?.platform
         || (chatId.startsWith("web-") ? "web"
