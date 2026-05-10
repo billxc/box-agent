@@ -34,9 +34,8 @@ class GuestClient:
     host_token: str         # cluster shared token (gates WS hello)
     machine_id: str
     local_web_port: int
-    tunnel_name: str = ""   # devtunnel id, derived from host_url if empty
-    local_web_port: int
     local_web_token: str = ""
+    tunnel_name: str = ""   # devtunnel id, derived from host_url if empty
     bot_provider: Callable[[], list[dict]] = field(default=lambda: [])
     reconnect_delay: float = 3.0
 
