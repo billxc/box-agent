@@ -231,7 +231,13 @@ class AgentSDKClaude(AgentBackend):
         from boxagent.tools.adapters.claude_sdk import build_mcp_servers
 
         ctx = ToolContext(bot_name=self.bot_name, chat_id=chat_id)
-        mcp_servers = build_mcp_servers(ctx=ctx, env=env) if env is not None else {}
+        # passthrough bots (raw) skip MCP injection so the backend behaves
+        # identically to running ``claude --resume`` from a terminal —
+        # mirrors the gate in ``mcp_endpoints.pick_mcp_endpoints``.
+        if env is None or getattr(env, "passthrough", False):
+            mcp_servers: dict[str, Any] = {}
+        else:
+            mcp_servers = build_mcp_servers(ctx=ctx, env=env)
 
         options = ClaudeAgentOptions(
             cwd=self.workspace or None,
