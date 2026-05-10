@@ -331,3 +331,14 @@ src/ 净 -37 行（核心收益在 core.py：-127/+45 = 净 -82）。Gateway.sto
 
 **测试**：`tests/unit/test_sdk_patch.py` 加了 3 个 case 覆盖 recap 抽取（tail 命中 / 多条取最新 / 没有时返回空）。共 862 passed。
 
+## 2026-05-11 — `claude-cli` 静默重定向到 `agent-sdk-claude`
+
+CLI 子进程那条路准备废弃。为了不强迫所有用户立刻改 `~/.boxagent/config.yaml`，先做平滑迁移：`backend_factory.create_backend()` 里 `claude-cli`（以及未指定的 default）一律实例化 `AgentSDKClaude`，CLI 类 `ClaudeProcess` 本次保留不删，下个 commit 物理删除（含 `test_claude_process.py`）。
+
+**保留项**：
+- `BACKEND_KINDS` 里的 `"claude-cli"` 字符串（旧 config 不报错）
+- `BotConfig.ai_backend` 默认值 `"claude-cli"`
+- `claude_process.py` 文件本身（仅作为下一步删除的占位）
+
+**测试影响**：`test_gateway.py` 两处 `patch("...backend_factory.ClaudeProcess")` 改为 patch `AgentSDKClaude` —— 反映真实派发目标。新增 `test_claude_cli_silently_redirects_to_sdk_claude` 锁定行为。共 863 passed。
+

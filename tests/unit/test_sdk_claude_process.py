@@ -86,3 +86,16 @@ class TestFactoryWiring:
     def test_supports_persistent_session_includes_sdk_claude(self):
         from boxagent.agent.agent_manager import _supports_persistent_session
         assert _supports_persistent_session("agent-sdk-claude") is True
+
+    def test_claude_cli_silently_redirects_to_sdk_claude(self):
+        from boxagent.agent.backend_factory import create_backend
+        from boxagent.agent.sdk_claude_process import AgentSDKClaude
+        from boxagent.config import BotConfig
+
+        config = BotConfig(
+            name="t", ai_backend="claude-cli",
+            workspace="/tmp", model="sonnet",
+        )
+        backend = create_backend(config, session_id="s-legacy")
+        assert isinstance(backend, AgentSDKClaude)
+        assert backend.session_id == "s-legacy"

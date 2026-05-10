@@ -174,7 +174,7 @@ class TestGateway:
         bot_config.ai_backend = "claude-cli"
         bot_config.enabled_on_nodes = ""
 
-        with patch("boxagent.agent.backend_factory.ClaudeProcess") as MockCLI, \
+        with patch("boxagent.agent.backend_factory.AgentSDKClaude") as MockCLI, \
              patch("boxagent.transports.telegram.TelegramChannel") as MockChan, \
              patch("boxagent.agent.agent_manager.Router"), \
              patch("boxagent.agent.agent_manager.Watchdog") as MockWD:
@@ -228,7 +228,7 @@ class TestGateway:
         bot_config.telegram_token = "token"
         bot_config.extra_skill_dirs = []
 
-        with patch("boxagent.agent.backend_factory.ClaudeProcess") as MockCLI:
+        with patch("boxagent.agent.backend_factory.AgentSDKClaude") as MockCLI:
             new_backend = MagicMock()
             MockCLI.return_value = new_backend
             manager = _agent_manager_from(gateway)
