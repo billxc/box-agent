@@ -5,30 +5,21 @@ import time
 from pathlib import Path
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, PropertyMock
+from unittest.mock import MagicMock
 
 from boxagent.transports.base import IncomingMessage
 from boxagent.router import Router
+from boxagent.testing.mocks import MockBackend, MockChannel
 
 
 @pytest.fixture
 def mock_cli():
-    proc = AsyncMock()
-    proc.cancel = AsyncMock()
-    proc.state = "idle"
-    proc.session_id = "sess_123"
-    proc.supports_session_persistence = True
-    proc.reset_session = AsyncMock(
-        side_effect=lambda: setattr(proc, "session_id", None)
-    )
-    return proc
+    return MockBackend(session_id="sess_123", supports_session_persistence=True)
 
 
 @pytest.fixture
 def mock_channel():
-    ch = AsyncMock()
-    ch.send_text = AsyncMock()
-    return ch
+    return MockChannel()
 
 
 @pytest.fixture
@@ -61,27 +52,31 @@ def msg(text):
     )
 
 
+def _last_text(channel):
+    """Last text body sent on the channel (chat_id, text) → text."""
+    return channel.sent_texts[-1][1]
+
+
 class TestStatusCommand:
     async def test_returns_state_and_session(self, router, mock_channel):
         await router.handle_message(msg("/status"))
-        text = mock_channel.send_text.call_args[0][1]
+        text = _last_text(mock_channel)
         assert "idle" in text.lower()
         assert "sess_123" in text
 
     async def test_shows_uptime(self, router, mock_channel):
         await router.handle_message(msg("/status"))
-        text = mock_channel.send_text.call_args[0][1]
+        text = _last_text(mock_channel)
         assert "uptime" in text.lower() or "1h" in text.lower() or "3600" in text
 
 
 class TestNewCommand:
     async def test_clears_session(self, router, mock_cli, mock_storage):
         await router.handle_message(msg("/new"))
-        # With pool, /new clears pool session; without pool, resets backend
         if router.pool:
             pass  # pool.clear_session tested via pool tests
         else:
-            mock_cli.reset_session.assert_called_once()
+            assert mock_cli.reset_session_count == 1
             assert mock_cli.session_id is None
         mock_storage.clear_session.assert_called_once_with("test-bot", chat_id="123")
 
@@ -94,19 +89,18 @@ class TestNewCommand:
 
     async def test_sends_confirmation(self, router, mock_channel):
         await router.handle_message(msg("/new"))
-        text = mock_channel.send_text.call_args[0][1]
+        text = _last_text(mock_channel)
         assert "new" in text.lower() or "fresh" in text.lower()
 
 
 class TestCancelCommand:
     async def test_calls_cancel(self, router, mock_cli):
         await router.handle_message(msg("/cancel"))
-        mock_cli.cancel.assert_called_once()
+        assert mock_cli.cancel_count == 1
 
     async def test_sends_confirmation(self, router, mock_channel):
         await router.handle_message(msg("/cancel"))
-        text = mock_channel.send_text.call_args[0][1]
-        assert "cancel" in text.lower()
+        assert "cancel" in _last_text(mock_channel).lower()
 
 
 class TestResumeCommand:
@@ -119,35 +113,32 @@ class TestResumeCommand:
 
         await router.handle_message(msg("/resume"))
 
-        # New format uses send_text_with_inline_keyboard if available, else send_text
-        if mock_channel.send_text_with_inline_keyboard.called:
-            text = mock_channel.send_text_with_inline_keyboard.call_args[0][1]
-        else:
-            text = mock_channel.send_text.call_args[0][1]
+        # MockChannel doesn't expose send_text_with_inline_keyboard, so the
+        # resume command falls through to send_text.
+        text = _last_text(mock_channel)
         assert "sess_old" in text
+
 
 class TestStartCommand:
     async def test_sends_welcome(self, router, mock_channel):
         await router.handle_message(msg("/start"))
-        mock_channel.send_text.assert_called_once()
-        text = mock_channel.send_text.call_args[0][1]
-        assert "welcome" in text.lower()
+        assert len(mock_channel.sent_texts) == 1
+        assert "welcome" in _last_text(mock_channel).lower()
 
     async def test_includes_bot_name(self, router, mock_channel):
         await router.handle_message(msg("/start"))
-        text = mock_channel.send_text.call_args[0][1]
-        assert "test-bot" in text
+        assert "test-bot" in _last_text(mock_channel)
 
     async def test_not_dispatched_to_cli(self, router, mock_cli):
         await router.handle_message(msg("/start"))
-        mock_cli.send.assert_not_called()
+        assert mock_cli.sends == []
 
 
 class TestHelpCommand:
     async def test_sends_help(self, router, mock_channel):
         await router.handle_message(msg("/help"))
-        mock_channel.send_text.assert_called_once()
-        text = mock_channel.send_text.call_args[0][1]
+        assert len(mock_channel.sent_texts) == 1
+        text = _last_text(mock_channel)
         assert "/new" in text
         assert "/status" in text
         assert "/cancel" in text
@@ -155,7 +146,7 @@ class TestHelpCommand:
 
     async def test_not_dispatched_to_cli(self, router, mock_cli):
         await router.handle_message(msg("/help"))
-        mock_cli.send.assert_not_called()
+        assert mock_cli.sends == []
 
 
 class TestVerboseCommand:
@@ -163,46 +154,40 @@ class TestVerboseCommand:
         mock_channel.tool_calls_display = "silent"
         await router.handle_message(msg("/verbose"))
         assert mock_channel.tool_calls_display == "summary"
-        text = mock_channel.send_text.call_args[0][1]
-        assert "summary" in text.lower()
+        assert "summary" in _last_text(mock_channel).lower()
 
     async def test_cycles_summary_to_detailed(self, router, mock_channel):
         mock_channel.tool_calls_display = "summary"
         await router.handle_message(msg("/verbose"))
         assert mock_channel.tool_calls_display == "detailed"
-        text = mock_channel.send_text.call_args[0][1]
-        assert "detailed" in text.lower()
+        assert "detailed" in _last_text(mock_channel).lower()
 
     async def test_cycles_detailed_to_silent(self, router, mock_channel):
         mock_channel.tool_calls_display = "detailed"
         await router.handle_message(msg("/verbose"))
         assert mock_channel.tool_calls_display == "silent"
-        text = mock_channel.send_text.call_args[0][1]
-        assert "silent" in text.lower()
+        assert "silent" in _last_text(mock_channel).lower()
 
     async def test_full_cycle(self, router, mock_channel):
         """Three /verbose calls cycle through all modes."""
         mock_channel.tool_calls_display = "summary"
         await router.handle_message(msg("/verbose"))
         assert mock_channel.tool_calls_display == "detailed"
-        mock_channel.send_text.reset_mock()
         await router.handle_message(msg("/verbose"))
         assert mock_channel.tool_calls_display == "silent"
-        mock_channel.send_text.reset_mock()
         await router.handle_message(msg("/verbose"))
         assert mock_channel.tool_calls_display == "summary"
 
     async def test_not_dispatched_to_cli(self, router, mock_cli, mock_channel):
         mock_channel.tool_calls_display = "summary"
         await router.handle_message(msg("/verbose"))
-        mock_cli.send.assert_not_called()
+        assert mock_cli.sends == []
 
 
 class TestSyncSkillsCommand:
     async def test_syncs_and_reports(self, mock_cli, mock_channel, mock_storage):
         with tempfile.TemporaryDirectory() as work_dir, \
              tempfile.TemporaryDirectory() as skill_src:
-            # Create fake skill dirs
             (Path(skill_src) / "my-skill").mkdir()
             (Path(skill_src) / "my-skill" / "SKILL.md").write_text("# Skill")
             (Path(skill_src) / "other-skill").mkdir()
@@ -217,12 +202,11 @@ class TestSyncSkillsCommand:
                 extra_skill_dirs=[skill_src],
             )
             await r.handle_message(msg("/sync_skills"))
-            text = mock_channel.send_text.call_args[0][1]
+            text = _last_text(mock_channel)
             assert "2" in text
             assert "my-skill" in text
             assert "other-skill" in text
 
-            # Verify symlinks created
             skills_dir = Path(work_dir) / ".claude" / "skills"
             assert (skills_dir / "my-skill").is_symlink()
             assert (skills_dir / "other-skill").is_symlink()
@@ -238,7 +222,7 @@ class TestSyncSkillsCommand:
             extra_skill_dirs=[],
         )
         await r.handle_message(msg("/sync_skills"))
-        text = mock_channel.send_text.call_args[0][1]
+        text = _last_text(mock_channel)
         assert "no skills" in text.lower() or "empty" in text.lower()
 
     async def test_not_dispatched_to_cli(self, mock_cli, mock_channel, mock_storage):
@@ -250,29 +234,18 @@ class TestSyncSkillsCommand:
             bot_name="test-bot",
         )
         await r.handle_message(msg("/sync_skills"))
-        mock_cli.send.assert_not_called()
+        assert mock_cli.sends == []
 
 
 class TestCompactCommand:
     async def test_no_session_returns_message(self, router, mock_cli, mock_channel):
         mock_cli.session_id = None
         await router.handle_message(msg("/compact"))
-        text = mock_channel.send_text.call_args[0][1]
-        assert "no active session" in text.lower()
+        assert "no active session" in _last_text(mock_channel).lower()
 
     async def test_compact_generates_summary_and_resets(self, mock_channel, mock_storage):
-        cli = AsyncMock()
-        cli.session_id = "sess_123"
-        cli.state = "idle"
-        cli.reset_session = AsyncMock(
-            side_effect=lambda: setattr(cli, "session_id", None)
-        )
-
-        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
-            await callback.on_stream("- Discussed topic A\n- Decided B")
-
-        cli.send = fake_send
-        mock_channel.show_typing = AsyncMock()
+        cli = MockBackend(session_id="sess_123")
+        cli.script(["- Discussed topic A\n- Decided B"])
 
         r = Router(
             backend=cli,
@@ -283,40 +256,19 @@ class TestCompactCommand:
         )
         await r.handle_message(msg("/compact"))
 
-        # Session should be cleared
-        cli.reset_session.assert_awaited_once()
+        assert cli.reset_session_count == 1
         assert cli.session_id is None
         mock_storage.clear_session.assert_called_once_with("test-bot", chat_id="123")
-        calls = mock_channel.send_text.call_args_list
-        final_text = calls[-1][0][1]
+        # Final summary lands either as a sent_text or as the closing
+        # stream chunk depending on the channel path.
+        final_text = (mock_channel.sent_texts[-1][1] if mock_channel.sent_texts else "") + \
+            (mock_channel.streams[-1].chunks[-1] if mock_channel.streams else "")
         assert "topic A" in final_text
         assert "Decided B" in final_text
 
     async def test_compact_summary_injected_in_next_dispatch(self, mock_channel, mock_storage):
-        cli = AsyncMock()
-        cli.session_id = "sess_123"
-        cli.state = "idle"
-        cli.reset_session = AsyncMock(
-            side_effect=lambda: setattr(cli, "session_id", None)
-        )
-
-        call_log = []
-        system_log = []
-
-        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
-            call_log.append(prompt)
-            system_log.append(append_system_prompt)
-            await callback.on_stream("summary text here")
-
-        cli.send = fake_send
-        mock_channel.show_typing = AsyncMock()
-        mock_channel.stream_start = AsyncMock(
-            return_value=__import__("boxagent.transports.base", fromlist=["StreamHandle"]).StreamHandle(
-                message_id="m1", chat_id="123"
-            )
-        )
-        mock_channel.stream_update = AsyncMock()
-        mock_channel.stream_end = AsyncMock()
+        cli = MockBackend(session_id="sess_123")
+        cli.script(["summary text here"])
 
         r = Router(
             backend=cli,
@@ -329,36 +281,23 @@ class TestCompactCommand:
         # Compact
         await r.handle_message(msg("/compact"))
 
-        # Next message should include summary in append_system_prompt
-        call_log.clear()
-        system_log.clear()
+        cli.sends.clear()
+        cli.script(["next reply"])
         await r.handle_message(msg("hello"))
-        assert len(call_log) == 1
-        assert "summary text here" in system_log[0]
-        assert "hello" in call_log[0]
+
+        assert len(cli.sends) == 1
+        assert "summary text here" in cli.sends[-1].append_system_prompt
+        assert "hello" in cli.sends[-1].message
 
     async def test_not_dispatched_to_cli_directly(self, router, mock_cli, mock_channel):
         mock_cli.session_id = None
         await router.handle_message(msg("/compact"))
-        mock_cli.send.assert_not_called()
+        assert mock_cli.sends == []
 
     async def test_compact_with_user_hint(self, mock_channel, mock_storage):
         """User text after /compact is passed as additional instructions."""
-        cli = AsyncMock()
-        cli.session_id = "sess_123"
-        cli.state = "idle"
-        cli.reset_session = AsyncMock(
-            side_effect=lambda: setattr(cli, "session_id", None)
-        )
-
-        captured_prompts = []
-
-        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
-            captured_prompts.append(prompt)
-            await callback.on_stream("summary with focus")
-
-        cli.send = fake_send
-        mock_channel.show_typing = AsyncMock()
+        cli = MockBackend(session_id="sess_123")
+        cli.script(["summary with focus"])
 
         r = Router(
             backend=cli,
@@ -369,27 +308,14 @@ class TestCompactCommand:
         )
         await r.handle_message(msg("/compact 帮我重点保存数据库相关的内容"))
 
-        assert len(captured_prompts) == 1
-        assert "帮我重点保存数据库相关的内容" in captured_prompts[0]
-        assert "Additional instructions" in captured_prompts[0]
+        assert len(cli.sends) == 1
+        assert "帮我重点保存数据库相关的内容" in cli.sends[-1].message
+        assert "Additional instructions" in cli.sends[-1].message
 
     async def test_compact_without_hint_no_additional(self, mock_channel, mock_storage):
         """Plain /compact has no additional instructions."""
-        cli = AsyncMock()
-        cli.session_id = "sess_123"
-        cli.state = "idle"
-        cli.reset_session = AsyncMock(
-            side_effect=lambda: setattr(cli, "session_id", None)
-        )
-
-        captured_prompts = []
-
-        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
-            captured_prompts.append(prompt)
-            await callback.on_stream("plain summary")
-
-        cli.send = fake_send
-        mock_channel.show_typing = AsyncMock()
+        cli = MockBackend(session_id="sess_123")
+        cli.script(["plain summary"])
 
         r = Router(
             backend=cli,
@@ -400,59 +326,37 @@ class TestCompactCommand:
         )
         await r.handle_message(msg("/compact"))
 
-        assert len(captured_prompts) == 1
-        assert "Additional instructions" not in captured_prompts[0]
+        assert len(cli.sends) == 1
+        assert "Additional instructions" not in cli.sends[-1].message
 
 
 class TestModelCommand:
     async def test_show_current_model(self, router, mock_cli, mock_channel):
         mock_cli.model = "opus"
         await router.handle_message(msg("/model"))
-        text = mock_channel.send_text.call_args[0][1]
-        assert "opus" in text
+        assert "opus" in _last_text(mock_channel)
 
     async def test_show_default_when_empty(self, router, mock_cli, mock_channel):
         mock_cli.model = ""
         await router.handle_message(msg("/model"))
-        text = mock_channel.send_text.call_args[0][1]
-        assert "default" in text.lower()
+        assert "default" in _last_text(mock_channel).lower()
 
     async def test_switch_model(self, router, mock_cli, mock_channel):
         mock_cli.model = "sonnet"
         await router.handle_message(msg("/model opus"))
         assert mock_cli.model == "opus"
-        text = mock_channel.send_text.call_args[0][1]
+        text = _last_text(mock_channel)
         assert "opus" in text
         assert "sonnet" in text
 
     async def test_not_dispatched_to_cli(self, router, mock_cli, mock_channel):
         await router.handle_message(msg("/model"))
-        mock_cli.send.assert_not_called()
+        assert mock_cli.sends == []
 
 
 class TestAtModelPrefix:
     async def test_session_context_includes_display_name(self, mock_channel, mock_storage):
-        cli = AsyncMock()
-        cli.session_id = None
-        cli.state = "idle"
-
-        captured = {}
-
-        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
-            captured["prompt"] = prompt
-            captured["append_system_prompt"] = append_system_prompt
-
-        cli.send = fake_send
-        mock_channel.show_typing = AsyncMock()
-        mock_channel.stream_start = AsyncMock(
-            return_value=__import__("boxagent.transports.base", fromlist=["StreamHandle"]).StreamHandle(
-                message_id="m1", chat_id="123"
-            )
-        )
-        mock_channel.stream_update = AsyncMock()
-        mock_channel.stream_end = AsyncMock()
-        mock_channel.format_tool_call = lambda name, inp: ""
-
+        cli = MockBackend()
         r = Router(
             backend=cli,
             channel=mock_channel,
@@ -464,33 +368,12 @@ class TestAtModelPrefix:
 
         await r.handle_message(msg("hello world"))
 
-        assert "bot: test-bot" in captured["append_system_prompt"]
-        assert "display_name: Demo Bot" in captured["append_system_prompt"]
+        send = cli.sends[-1]
+        assert "bot: test-bot" in send.append_system_prompt
+        assert "display_name: Demo Bot" in send.append_system_prompt
 
     async def test_at_model_passes_override(self, mock_channel, mock_storage):
-        cli = AsyncMock()
-        cli.session_id = None
-        cli.state = "idle"
-        cli.model = "sonnet"
-
-        captured = {}
-
-        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
-            captured["prompt"] = prompt
-            captured["model"] = model
-            captured["append_system_prompt"] = append_system_prompt
-
-        cli.send = fake_send
-        mock_channel.show_typing = AsyncMock()
-        mock_channel.stream_start = AsyncMock(
-            return_value=__import__("boxagent.transports.base", fromlist=["StreamHandle"]).StreamHandle(
-                message_id="m1", chat_id="123"
-            )
-        )
-        mock_channel.stream_update = AsyncMock()
-        mock_channel.stream_end = AsyncMock()
-        mock_channel.format_tool_call = lambda name, inp: ""
-
+        cli = MockBackend(model="sonnet")
         r = Router(
             backend=cli,
             channel=mock_channel,
@@ -500,33 +383,13 @@ class TestAtModelPrefix:
         )
         await r.handle_message(msg("@opus explain this"))
 
-        assert captured["model"] == "opus"
-        assert captured["prompt"] == "explain this"
-        assert "[BoxAgent Context]" in captured["append_system_prompt"]
+        send = cli.sends[-1]
+        assert send.model == "opus"
+        assert send.message == "explain this"
+        assert "[BoxAgent Context]" in send.append_system_prompt
 
     async def test_no_prefix_no_override(self, mock_channel, mock_storage):
-        cli = AsyncMock()
-        cli.session_id = None
-        cli.state = "idle"
-
-        captured = {}
-
-        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
-            captured["prompt"] = prompt
-            captured["model"] = model
-            captured["append_system_prompt"] = append_system_prompt
-
-        cli.send = fake_send
-        mock_channel.show_typing = AsyncMock()
-        mock_channel.stream_start = AsyncMock(
-            return_value=__import__("boxagent.transports.base", fromlist=["StreamHandle"]).StreamHandle(
-                message_id="m1", chat_id="123"
-            )
-        )
-        mock_channel.stream_update = AsyncMock()
-        mock_channel.stream_end = AsyncMock()
-        mock_channel.format_tool_call = lambda name, inp: ""
-
+        cli = MockBackend()
         r = Router(
             backend=cli,
             channel=mock_channel,
@@ -536,33 +399,14 @@ class TestAtModelPrefix:
         )
         await r.handle_message(msg("hello world"))
 
-        assert captured["model"] == ""
-        assert captured["prompt"] == "hello world"
-        assert "[BoxAgent Context]" in captured["append_system_prompt"]
+        send = cli.sends[-1]
+        assert send.model == ""
+        assert send.message == "hello world"
+        assert "[BoxAgent Context]" in send.append_system_prompt
 
     async def test_second_message_also_has_context(self, mock_channel, mock_storage):
         """Context is injected on every message via --append-system-prompt."""
-        cli = AsyncMock()
-        cli.session_id = None
-        cli.state = "idle"
-
-        captured = {}
-
-        async def fake_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
-            captured["prompt"] = prompt
-            captured["append_system_prompt"] = append_system_prompt
-
-        cli.send = fake_send
-        mock_channel.show_typing = AsyncMock()
-        mock_channel.stream_start = AsyncMock(
-            return_value=__import__("boxagent.transports.base", fromlist=["StreamHandle"]).StreamHandle(
-                message_id="m1", chat_id="123"
-            )
-        )
-        mock_channel.stream_update = AsyncMock()
-        mock_channel.stream_end = AsyncMock()
-        mock_channel.format_tool_call = lambda name, inp: ""
-
+        cli = MockBackend()
         r = Router(
             backend=cli,
             channel=mock_channel,
@@ -571,76 +415,65 @@ class TestAtModelPrefix:
             bot_name="test-bot",
         )
         await r.handle_message(msg("first"))
-        assert "[BoxAgent Context]" in captured["append_system_prompt"]
+        assert "[BoxAgent Context]" in cli.sends[-1].append_system_prompt
 
         await r.handle_message(msg("second"))
-        assert captured["prompt"] == "second"
-        assert "[BoxAgent Context]" in captured["append_system_prompt"]
+        assert cli.sends[-1].message == "second"
+        assert "[BoxAgent Context]" in cli.sends[-1].append_system_prompt
 
 
 class TestExecCommand:
     async def test_exec_simple_command(self, router, mock_channel):
         await router.handle_message(msg("/exec echo hello"))
-        text = mock_channel.send_text.call_args[0][1]
+        text = _last_text(mock_channel)
         assert "hello" in text
         assert "Exit: 0" in text
 
     async def test_exec_shows_exit_code(self, router, mock_channel):
         await router.handle_message(msg("/exec false"))
-        text = mock_channel.send_text.call_args[0][1]
-        assert "Exit: 1" in text
+        assert "Exit: 1" in _last_text(mock_channel)
 
     async def test_exec_no_command(self, router, mock_channel):
         await router.handle_message(msg("/exec"))
-        text = mock_channel.send_text.call_args[0][1]
-        assert "usage" in text.lower()
+        assert "usage" in _last_text(mock_channel).lower()
 
     async def test_exec_empty_command(self, router, mock_channel):
         await router.handle_message(msg("/exec   "))
-        text = mock_channel.send_text.call_args[0][1]
-        assert "usage" in text.lower()
+        assert "usage" in _last_text(mock_channel).lower()
 
     async def test_exec_with_custom_timeout(self, router, mock_channel):
         await router.handle_message(msg("/exec -t 5 echo timeout_test"))
-        text = mock_channel.send_text.call_args[0][1]
-        assert "timeout_test" in text
+        assert "timeout_test" in _last_text(mock_channel)
 
     async def test_exec_timeout_kills_process(self, router, mock_channel):
         await router.handle_message(msg("/exec -t 1 sleep 30"))
-        text = mock_channel.send_text.call_args[0][1]
-        assert "timed out" in text.lower()
+        assert "timed out" in _last_text(mock_channel).lower()
 
     async def test_exec_invalid_timeout(self, router, mock_channel):
         await router.handle_message(msg("/exec -t 0 echo x"))
-        text = mock_channel.send_text.call_args[0][1]
-        assert "1-600" in text
+        assert "1-600" in _last_text(mock_channel)
 
     async def test_exec_timeout_too_large(self, router, mock_channel):
         await router.handle_message(msg("/exec -t 999 echo x"))
-        text = mock_channel.send_text.call_args[0][1]
-        assert "1-600" in text
+        assert "1-600" in _last_text(mock_channel)
 
     async def test_exec_stderr_included(self, router, mock_channel):
         await router.handle_message(msg("/exec echo err >&2"))
-        text = mock_channel.send_text.call_args[0][1]
-        assert "err" in text
+        assert "err" in _last_text(mock_channel)
 
     async def test_exec_no_output(self, router, mock_channel):
         await router.handle_message(msg("/exec true"))
-        text = mock_channel.send_text.call_args[0][1]
-        assert "Exit: 0" in text
+        assert "Exit: 0" in _last_text(mock_channel)
 
     async def test_exec_output_in_code_block(self, router, mock_channel):
         await router.handle_message(msg("/exec echo hello"))
-        text = mock_channel.send_text.call_args[0][1]
-        assert "```" in text
+        assert "```" in _last_text(mock_channel)
 
     async def test_exec_not_dispatched_to_cli(self, router, mock_cli):
         await router.handle_message(msg("/exec echo test"))
-        mock_cli.send.assert_not_called()
+        assert mock_cli.sends == []
 
     async def test_exec_uses_workspace_as_cwd(self, mock_cli, mock_channel, mock_storage):
-        import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             r = Router(
                 backend=mock_cli,
@@ -651,34 +484,26 @@ class TestExecCommand:
                 workspace=tmpdir,
             )
             await r.handle_message(msg("/exec pwd"))
-            text = mock_channel.send_text.call_args[0][1]
-            assert tmpdir in text
+            assert tmpdir in _last_text(mock_channel)
 
     async def test_exec_long_output_sends_file(self, router, mock_channel):
-        """Output > 3900 chars should be sent as a file."""
-        # Generate output longer than 3900 chars
-        mock_channel._bot = MagicMock()
-        mock_channel._bot.send_document = AsyncMock()
+        """Output > 3900 chars should be sent as a file.
+
+        TelegramChannel-only; MockChannel has no _bot, so the exec
+        command falls back to sending a truncated code block via
+        send_text. Verify either path produces the right exit marker.
+        """
         await router.handle_message(
             msg("/exec python3 -c \"print('x' * 5000)\"")
         )
-        # Should call send_document instead of send_text for the output
-        # (send_text is called for show_typing, so check the last call)
-        if mock_channel._bot.send_document.called:
-            caption = mock_channel._bot.send_document.call_args.kwargs.get("caption", "")
-            assert "Exit:" in caption
-        else:
-            # Fallback path: truncated in code block
-            text = mock_channel.send_text.call_args[0][1]
-            assert "Exit:" in text
+        assert "Exit:" in _last_text(mock_channel)
 
     async def test_exec_nonflag_t(self, router, mock_channel):
         """-t without valid number treats entire rest as command."""
         await router.handle_message(msg("/exec -t abc echo hi"))
-        text = mock_channel.send_text.call_args[0][1]
         # Should try to run "-t abc echo hi" as a command or handle gracefully
         # The important thing is it doesn't crash
-        assert mock_channel.send_text.called
+        assert mock_channel.sent_texts
 
 
 class TestTrustWorkspaceCommand:
@@ -701,8 +526,7 @@ class TestTrustWorkspaceCommand:
         with patch("boxagent.router.commands.workspace.Path.home", return_value=tmp_path):
             await cmd_trust_workspace(router, msg("/trust_workspace"), mock_channel)
 
-        text = mock_channel.send_text.call_args[0][1]
-        assert "Trusted" in text
+        assert "Trusted" in _last_text(mock_channel)
 
         data = json.loads(claude_json.read_text())
         ws_key = str(workspace_dir.resolve())
@@ -730,8 +554,7 @@ class TestTrustWorkspaceCommand:
         with patch("boxagent.router.commands.workspace.Path.home", return_value=tmp_path):
             await cmd_trust_workspace(router, msg("/trust_workspace"), mock_channel)
 
-        text = mock_channel.send_text.call_args[0][1]
-        assert "Already trusted" in text
+        assert "Already trusted" in _last_text(mock_channel)
 
     async def test_trust_no_workspace(self, router, mock_channel):
         """No workspace configured — should report error."""
@@ -740,8 +563,7 @@ class TestTrustWorkspaceCommand:
         router.workspace = ""
         await cmd_trust_workspace(router, msg("/trust_workspace"), mock_channel)
 
-        text = mock_channel.send_text.call_args[0][1]
-        assert "No valid workspace" in text
+        assert "No valid workspace" in _last_text(mock_channel)
 
     async def test_trust_no_claude_json(self, router, mock_channel, tmp_path):
         """~/.claude.json doesn't exist — should report error."""
@@ -755,8 +577,7 @@ class TestTrustWorkspaceCommand:
         with patch("boxagent.router.commands.workspace.Path.home", return_value=tmp_path):
             await cmd_trust_workspace(router, msg("/trust_workspace"), mock_channel)
 
-        text = mock_channel.send_text.call_args[0][1]
-        assert "not found" in text
+        assert "not found" in _last_text(mock_channel)
 
     async def test_trust_adds_default_fields(self, router, mock_channel, tmp_path):
         """New project entry should have all default fields."""
@@ -789,23 +610,19 @@ class TestTrustWorkspaceCommand:
 class TestCdCommand:
     async def test_shows_current_workspace(self, router, mock_channel):
         await router.handle_message(msg("/cd"))
-        text = mock_channel.send_text.call_args[0][1]
-        assert "/home/testuser/.boxagent/workspace" in text
+        assert "/home/testuser/.boxagent/workspace" in _last_text(mock_channel)
 
     async def test_invalid_directory(self, router, mock_channel):
         await router.handle_message(msg("/cd /nonexistent/path"))
-        text = mock_channel.send_text.call_args[0][1]
-        assert "not found" in text.lower()
+        assert "not found" in _last_text(mock_channel).lower()
 
     async def test_switches_workspace(self, router, mock_cli, mock_channel, mock_storage):
-        import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             await router.handle_message(msg(f"/cd {tmpdir}"))
-            text = mock_channel.send_text.call_args[0][1]
-            assert "switched" in text.lower()
+            assert "switched" in _last_text(mock_channel).lower()
             assert mock_cli.workspace == router.workspace
             assert router.workspace == str(Path(tmpdir).resolve())
-            mock_cli.reset_session.assert_called()
+            assert mock_cli.reset_session_count >= 1
             mock_storage.clear_session.assert_called_with("test-bot", chat_id="123")
         import os
         home = os.path.expanduser("~")
@@ -816,30 +633,26 @@ class TestCdCommand:
 class TestBackendCommand:
     async def test_shows_current_backend(self, router, mock_channel):
         await router.handle_message(msg("/backend"))
-        text = mock_channel.send_text.call_args[0][1]
-        assert "claude-cli" in text
+        assert "claude-cli" in _last_text(mock_channel)
 
     async def test_invalid_backend(self, router, mock_channel):
         await router.handle_message(msg("/backend invalid"))
-        text = mock_channel.send_text.call_args[0][1]
-        assert "unknown" in text.lower()
+        assert "unknown" in _last_text(mock_channel).lower()
 
     async def test_same_backend_noop(self, router, mock_channel):
         await router.handle_message(msg("/backend claude-cli"))
-        text = mock_channel.send_text.call_args[0][1]
-        assert "already" in text.lower()
+        assert "already" in _last_text(mock_channel).lower()
 
     async def test_switches_backend(self, router, mock_cli, mock_channel, mock_storage):
         mock_cli.workspace = router.workspace
         mock_cli.model = "opus"
         mock_cli.agent = ""
         mock_cli.yolo = False
-        mock_cli.stop = AsyncMock()
 
         await router.handle_message(msg("/backend codex-cli"))
 
-        mock_cli.stop.assert_awaited_once()
-        text = mock_channel.send_text.call_args[0][1]
+        assert mock_cli.stopped is True
+        text = _last_text(mock_channel)
         assert "switched" in text.lower()
         assert "codex-cli" in text
         assert router.ai_backend == "codex-cli"
