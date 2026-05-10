@@ -304,11 +304,15 @@
     const server = state.serverSessions[curKey()] || [];
     const merged = new Map(); // chat_id -> entry
     for (const s of server) {
+      const backendTitle = s.custom_title || s.summary || "";
       merged.set(s.chat_id, {
         chat_id: s.chat_id,
         platform: s.platform || "unknown",
         is_main: !!s.is_main,
-        title: (local[s.chat_id] && local[s.chat_id].title) || defaultTitle(s),
+        title: backendTitle || (local[s.chat_id] && local[s.chat_id].title) || defaultTitle(s),
+        custom_title: s.custom_title || "",
+        summary: s.summary || "",
+        session_id: s.session_id || "",
         preview: s.preview || "",
         ts: (s.last_ts ? s.last_ts * 1000 : 0) || (local[s.chat_id] && local[s.chat_id].ts) || 0,
         backend: s.backend || "",
@@ -1006,18 +1010,49 @@
     input.focus();
   };
 
-  $("rename-session").onclick = () => {
+  $("rename-session").onclick = async () => {
     if (!state.chatId) return;
     const key = curKey();
+    const server = (state.serverSessions[key] || []).find(s => s.chat_id === state.chatId);
     const sessions = state.sessions[key] || {};
     const cur = sessions[state.chatId] || {};
-    const t = prompt("Rename session:", cur.title || "");
+    const currentTitle = (server && (server.custom_title || server.summary)) || cur.title || "";
+    const t = prompt("Rename session:", currentTitle);
     if (t == null) return;
-    cur.title = t.trim() || cur.title;
-    sessions[state.chatId] = cur;
-    state.sessions[key] = sessions;
-    saveSessions(state.botMachine, state.bot, sessions);
-    chatTitle.textContent = cur.title;
+    const newTitle = t.trim();
+    if (!newTitle) return;
+
+    const sid = server && server.session_id;
+    if (sid) {
+      try {
+        const r = await fetch("/api/sessions/rename", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            bot: state.bot,
+            machine: state.botMachine,
+            session_id: sid,
+            title: newTitle,
+          }),
+        });
+        const j = await r.json();
+        if (!j.ok) {
+          alert("Rename failed: " + (j.error || "unknown"));
+          return;
+        }
+        if (server) server.custom_title = newTitle;
+      } catch (e) {
+        alert("Rename failed: " + e);
+        return;
+      }
+    } else {
+      // No backend session yet (brand-new web chat) — fall back to local rename.
+      cur.title = newTitle;
+      sessions[state.chatId] = cur;
+      state.sessions[key] = sessions;
+      saveSessions(state.botMachine, state.bot, sessions);
+    }
+    chatTitle.textContent = newTitle;
     refreshSessionList();
   };
 

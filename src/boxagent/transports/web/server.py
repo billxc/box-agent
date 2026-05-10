@@ -154,6 +154,7 @@ class WebHttpServer:
         app.router.add_get("/api/machines", self._handle_web_machines)
         app.router.add_get("/api/sessions", self._handle_web_sessions)
         app.router.add_post("/api/sessions/set_main", self._handle_set_main_session)
+        app.router.add_post("/api/sessions/rename", self._handle_rename_session)
         app.router.add_get("/api/version", self._handle_version)
         app.router.add_post("/api/admin/restart", self._handle_admin_restart)
         app.router.add_post("/api/admin/cluster_restart", self._handle_admin_cluster_restart)
@@ -316,6 +317,8 @@ class WebHttpServer:
             s["preview"] = ""
             s["last_ts"] = 0
             s["message_count"] = 0
+            s["summary"] = ""
+            s["custom_title"] = None
             if not sid:
                 continue
 
@@ -327,6 +330,8 @@ class WebHttpServer:
                     s["preview"] = cached.get("preview", "")
                     s["last_ts"] = cached.get("last_ts", 0)
                     s["message_count"] = cached.get("message_count", 0)
+                    s["summary"] = cached.get("summary", "")
+                    s["custom_title"] = cached.get("custom_title")
                     continue
                 info = await _claude_history.get_session_info(sid)
                 if info is not None:
@@ -334,11 +339,15 @@ class WebHttpServer:
                     s["preview"] = preview[:90] + ("..." if len(preview) > 90 else "")
                     s["last_ts"] = info.last_ts
                     s["message_count"] = info.message_count
+                    s["summary"] = info.summary or ""
+                    s["custom_title"] = info.custom_title
                     self.session_meta_cache[sid] = {
                         "mtime": info.last_ts,
                         "preview": s["preview"],
                         "last_ts": s["last_ts"],
                         "message_count": s["message_count"],
+                        "summary": s["summary"],
+                        "custom_title": s["custom_title"],
                     }
                     continue
 
@@ -417,6 +426,44 @@ class WebHttpServer:
             return web.json_response({"ok": False, "error": "no storage"}, status=500)
         self.storage.set_main_chat_id(bot, chat_id)
         return web.json_response({"ok": True, "main_chat_id": chat_id})
+
+    async def _handle_rename_session(self, request: web.Request) -> web.Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "invalid json"}, status=400)
+        bot = str(data.get("bot") or "").strip()
+        machine = str(data.get("machine") or "").strip()
+        session_id = str(data.get("session_id") or "").strip()
+        title = str(data.get("title") or "").strip()
+        if not bot or not machine or not session_id:
+            return web.json_response({"ok": False, "error": "missing bot/machine/session_id"}, status=400)
+        if not title:
+            return web.json_response({"ok": False, "error": "title is empty"}, status=400)
+        if machine != self.topology.local_machine_id():
+            response = await self.cluster_rpc.dispatch_machine_request(
+                machine, "POST", "/api/sessions/rename", request, body=data,
+            )
+            if response is not None:
+                return response
+        bot_config = self.config.bots.get(bot)
+        workgroup_config = self.config.workgroups.get(bot)
+        backend = (bot_config.ai_backend if bot_config else None) or (workgroup_config.ai_backend if workgroup_config else "claude-cli")
+        if backend not in ("claude-cli", "agent-sdk-claude"):
+            return web.json_response(
+                {"ok": False, "error": f"backend {backend!r} does not support rename"},
+                status=400,
+            )
+        try:
+            from boxagent.history import get_history
+            history = get_history(backend)
+            await history.rename_session(session_id, title)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
+        self.session_meta_cache.pop(session_id, None)
+        return web.json_response({"ok": True, "session_id": session_id, "title": title})
 
     async def _handle_version(self, request: web.Request) -> web.Response:
         if not self._authorized(request):

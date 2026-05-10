@@ -22,6 +22,7 @@ from claude_agent_sdk import (
     get_session_info as sdk_get_session_info,
     get_session_messages,
     list_sessions as sdk_list_sessions,
+    rename_session as sdk_rename_session,
 )
 
 from boxagent.history.protocol import Message, ProjectInfo, SessionInfo
@@ -49,6 +50,14 @@ class ClaudeAgentHistory:
         if info is None:
             return None
         return self._sdk_to_session_info(info, project_id or info.cwd or "")
+
+    async def rename_session(
+        self, session_id: str, title: str, project_id: str = "",
+    ) -> None:
+        """Set the SDK ``custom_title`` for a session. Cross-device persistent."""
+        await asyncio.to_thread(
+            sdk_rename_session, session_id, title, project_id or None,
+        )
 
     async def read_messages(
         self, session_id: str, project_id: str = "",
