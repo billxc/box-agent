@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from boxagent.agent.base_cli import BaseCLIProcess
@@ -89,41 +88,17 @@ class ClaudeProcess(BaseCLIProcess):
             from boxagent.agent_env import AgentEnv as _AE
             env = _AE(bot_name=self.bot_name)
 
-        mcp_port_file = Path(env.local_dir) / "mcp-port.txt" if env.local_dir else None
-        if not env.passthrough and mcp_port_file and mcp_port_file.exists() and chat_id:
-            mcp_port = mcp_port_file.read_text().strip()
-            base_url = f"http://127.0.0.1:{mcp_port}"
-            headers = {
-                "X-BoxAgent-Bot-Name": env.bot_name,
-                "X-BoxAgent-Chat-Id": chat_id,
-            }
-
+        from boxagent.agent.mcp_endpoints import pick_mcp_endpoints
+        endpoints = pick_mcp_endpoints(env, chat_id)
+        if endpoints:
             mcp_servers = {
-                "boxagent": {
+                endpoint["name"]: {
                     "type": "http",
-                    "url": f"{base_url}/mcp/base",
-                    "headers": headers,
-                },
+                    "url": endpoint["url"],
+                    "headers": endpoint["headers"],
+                }
+                for endpoint in endpoints
             }
-            if env.is_workgroup_admin:
-                mcp_servers["boxagent-admin"] = {
-                    "type": "http",
-                    "url": f"{base_url}/mcp/admin",
-                    "headers": headers,
-                }
-            if env.has_telegram:
-                mcp_servers["boxagent-telegram"] = {
-                    "type": "http",
-                    "url": f"{base_url}/mcp/telegram",
-                    "headers": headers,
-                }
-            if env.has_peer_channel:
-                mcp_servers["boxagent-peer"] = {
-                    "type": "http",
-                    "url": f"{base_url}/mcp/peer",
-                    "headers": headers,
-                }
-
             args += ["--mcp-config", json.dumps({"mcpServers": mcp_servers})]
 
         # -p (print mode) is a boolean flag; message is a positional arg.

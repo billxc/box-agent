@@ -36,8 +36,26 @@ class CodexProcess(BaseCLIProcess):
         return "Codex CLI"
 
     def _mcp_args(self, chat_id: str, env=None) -> list[str]:
-        """MCP args — currently no-op (MCP is served via HTTP by Gateway)."""
-        return []
+        """Inject boxagent's HTTP MCP endpoints via Codex's ``-c`` config overrides.
+
+        Same endpoint list claude_process attaches via ``--mcp-config``,
+        expressed in Codex's TOML config form.
+        """
+        if env is None:
+            return []
+        from boxagent.agent.mcp_endpoints import pick_mcp_endpoints
+        endpoints = pick_mcp_endpoints(env, chat_id)
+        if not endpoints:
+            return []
+        out: list[str] = []
+        for endpoint in endpoints:
+            name = endpoint["name"]
+            out += ["-c", f'mcp_servers.{name}.url="{endpoint["url"]}"']
+            headers_toml = "{ " + ", ".join(
+                f'"{key}" = "{value}"' for key, value in endpoint["headers"].items()
+            ) + " }"
+            out += ["-c", f"mcp_servers.{name}.http_headers={headers_toml}"]
+        return out
 
     def _extra_env(self, chat_id: str, env=None) -> dict[str, str] | None:
         """Environment variables for the subprocess."""
