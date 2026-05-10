@@ -20,13 +20,13 @@ async def resolve_url(tunnel_name: str, port: int = 9292) -> str:
     """
     if not shutil.which("devtunnel"):
         raise RuntimeError("devtunnel CLI not found on PATH")
-    proc = await asyncio.create_subprocess_exec(
+    process = await asyncio.create_subprocess_exec(
         "devtunnel", "show", tunnel_name, "-j",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    out, err = await proc.communicate()
-    if proc.returncode != 0:
+    out, err = await process.communicate()
+    if process.returncode != 0:
         raise RuntimeError(
             f"devtunnel show '{tunnel_name}' failed: "
             + err.decode("utf-8", "replace").strip()
@@ -54,13 +54,13 @@ async def connect_token(tunnel_name: str) -> str:
     """
     if not shutil.which("devtunnel"):
         raise RuntimeError("devtunnel CLI not found on PATH")
-    proc = await asyncio.create_subprocess_exec(
+    process = await asyncio.create_subprocess_exec(
         "devtunnel", "token", tunnel_name, "--scopes", "connect",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    out, err = await proc.communicate()
-    if proc.returncode != 0:
+    out, err = await process.communicate()
+    if process.returncode != 0:
         raise RuntimeError(
             f"devtunnel token failed: {err.decode('utf-8', 'replace').strip()}"
         )

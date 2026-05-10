@@ -175,11 +175,11 @@ class GuestClient:
         kwargs: dict = {"params": query or {}, "headers": headers}
         if body is not None:
             kwargs["json"] = body
-        async with self._session.request(method, url, **kwargs) as resp:
+        async with self._session.request(method, url, **kwargs) as response:
             try:
-                return await resp.json(content_type=None)
+                return await response.json(content_type=None)
             except Exception:
-                return {"ok": False, "error": f"non-json response status={resp.status}"}
+                return {"ok": False, "error": f"non-json response status={response.status}"}
 
     async def _run_forever(self) -> None:
         effective_tunnel_name = self.tunnel_name or devtunnel.tunnel_name_from_url(self.host_url)
@@ -321,11 +321,11 @@ class GuestClient:
             kwargs = {"params": query, "headers": headers}
             if method != "GET" and body is not None:
                 kwargs["json"] = body
-            async with self._session.request(method, url, **kwargs) as resp:
-                if is_sse and resp.status == 200:
+            async with self._session.request(method, url, **kwargs) as response:
+                if is_sse and response.status == 200:
                     # Forward SSE frames as rpc_stream messages
                     buf = b""
-                    async for chunk in resp.content.iter_any():
+                    async for chunk in response.content.iter_any():
                         buf += chunk
                         # Split on \n\n SSE event boundaries
                         while b"\n\n" in buf:
@@ -341,12 +341,12 @@ class GuestClient:
 
                 # Non-streaming: parse JSON (or wrap raw)
                 try:
-                    body_out = await resp.json(content_type=None)
+                    body_out = await response.json(content_type=None)
                 except Exception:
-                    body_out = {"raw": (await resp.text())[:4096]}
+                    body_out = {"raw": (await response.text())[:4096]}
                 await ws.send_json({
                     "type": "rpc_resp", "id": rpc_id,
-                    "status": resp.status, "body": body_out,
+                    "status": response.status, "body": body_out,
                 })
         except Exception as e:
             logger.warning("guest: rpc %s %s failed: %s", method, path, e)

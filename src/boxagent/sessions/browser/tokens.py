@@ -7,7 +7,7 @@ Recognized tokens:
   backend:X        substring match on entry.backend
   bot:X            substring match on entry.bot
   cwd:X            substring match on entry.projectPath
-  grep:X           full-text search inside the session JSONL
+  grep_pattern:X           full-text search inside the session JSONL
   <hex prefix>     resolved later by the format layer (≥4 hex chars)
   <other>          collected as free-text query (multi-word AND, multi-field OR)
 """
@@ -22,14 +22,14 @@ _RE_DAYS = re.compile(r"^(\d+)d$", re.IGNORECASE)
 _RE_BACKEND = re.compile(r"^backend:(.+)$", re.IGNORECASE)
 _RE_BOT = re.compile(r"^bot:(.+)$", re.IGNORECASE)
 _RE_CWD = re.compile(r"^cwd:(.+)$", re.IGNORECASE)
-_RE_GREP = re.compile(r"^grep:(.+)$", re.IGNORECASE)
+_RE_GREP = re.compile(r"^grep_pattern:(.+)$", re.IGNORECASE)
 _RE_HEX = re.compile(r"^[0-9a-f]{4,}$", re.IGNORECASE)
 
 
 def parse_session_tokens(raw: str) -> dict:
     """Parse the argument string after ``/sessions``.
 
-    Returns a dict with keys: page, days, backend, bot, cwd_search, grep,
+    Returns a dict with keys: page, days, backend, bot, cwd_search, grep_pattern,
     id_prefix, query, all.
     """
     tokens = raw.split()
@@ -38,7 +38,7 @@ def parse_session_tokens(raw: str) -> dict:
     backend = ""
     bot = ""
     cwd_search = ""
-    grep = ""
+    grep_pattern = ""
     id_prefix = ""
     all_flag = False
     query_parts: list[str] = []
@@ -79,8 +79,8 @@ def parse_session_tokens(raw: str) -> dict:
             continue
 
         m = _RE_GREP.match(token)
-        if m and not grep:
-            grep = m.group(1)
+        if m and not grep_pattern:
+            grep_pattern = m.group(1)
             continue
 
         # Hex prefix is checked later against actual sessions
@@ -93,7 +93,7 @@ def parse_session_tokens(raw: str) -> dict:
         "backend": backend,
         "bot": bot,
         "cwd_search": cwd_search,
-        "grep": grep,
+        "grep_pattern": grep_pattern,
         "id_prefix": id_prefix,
         "query": " ".join(query_parts),
         "all": all_flag,

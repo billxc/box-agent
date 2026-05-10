@@ -206,21 +206,21 @@ class AgentSDKClaude(AgentBackend):
         ctx = ToolContext(bot_name=self.bot_name, chat_id=chat_id)
         mcp_servers = build_mcp_servers(ctx=ctx, env=env) if env is not None else {}
 
-        opts = ClaudeAgentOptions(
+        options = ClaudeAgentOptions(
             cwd=self.workspace or None,
             model=model,
             resume=self.session_id,
             mcp_servers=mcp_servers,
         )
         if self.yolo:
-            opts.permission_mode = "bypassPermissions"
+            options.permission_mode = "bypassPermissions"
         if append_system_prompt:
-            opts.system_prompt = {
+            options.system_prompt = {
                 "type": "preset",
                 "preset": "claude_code",
                 "append": append_system_prompt,
             }
-        return opts
+        return options
 
     @staticmethod
     def _stringify_tool_result(content: Any) -> str:

@@ -187,6 +187,44 @@ Telegram → TelegramChannel → Router → ClaudeProcess / CodexProcess / SDKCl
 ### 文档
 - **代码和文档同一个 commit**
 
+### 命名（硬性规定，不许讨价还价）
+
+**禁止使用缩写命名变量、参数、函数、属性。** 一律用完整英文单词。
+
+❌ 历史血泪教训（已被批量清理过几轮的垃圾命名）：
+`mid` / `sess` / `st` / `proc` / `mgr` / `cfg` / `resp` / `msgs` / `secs`
+/ `caps` / `deco` / `opts` / `impl` / `inst` / `ch` / `cb` / `wg` / `gw`
+/ `dest`（局部变量）/ `grep`（变量名）/ `sess_mid` / `local_mid` 等
+
+✅ 必须写：
+`message_id` / `machine_id` / `session` / `chat_state` / `process` /
+`backend` / `manager` / `config` / `response` / `messages` / `seconds` /
+`capabilities` / `decorator` / `options` / `implementation` /
+`install_parser` / `channel` / `callback` / `workgroup` / `gateway` /
+`dest_path` / `grep_pattern`
+
+**例外（仅限以下，写新代码用之前先想清楚是不是真符合）**：
+- 标准 Python 习语：`i` / `j` / `k` 循环计数、`e` exception、`f` 文件句柄、
+  `args` / `kwargs` / `self` / `cls`、typing 的 `T` / `P` / `R` / `K` / `V`
+- 第三方 API 关键字：argparse 的 `dest=`（API 强制）、`yolo`（CLI flag 名）
+- 业内通用工具名：`pwsh`（Microsoft 官方简称）、`mcp` / `rpc` / `http` 等协议缩写
+- 项目核心域词：`bot`（项目主语，非缩写）
+
+**为什么这条卡这么死**：
+1. 一份代码读 100 次写 1 次，缩写省的 3 个键打字代价远小于阅读时的歧义
+2. `mid` 在 cluster/ 是 machine_id，在 transports/ 是 message_id —— 同一缩写两种含义，重命名时被坑过
+3. `sess` 4 个字母刚好躲过简单的 ≤3 字符 audit，藏了几十处一次清完
+4. `proc` 在本项目其实多数是 `AgentBackend` 不是 process，命名直接误导
+5. `caps` 看着像帽子其实是 `capabilities`、`opts` 是 `options`、`inst` 是 `install_parser` —— 全是 self-documenting 不到位
+6. 缩写无标准：`mgr` 还是 `manager`？`cfg` 还是 `config`？团队里每人写一种，grep 都 grep 不全
+
+**写代码前自检**：
+- 这个名字念出来像不像一个完整英文词？不像就展开
+- 同事 / 三个月后的自己看到能不能 100% 猜对它代表什么？不能就展开
+- 拿不准就用全名，没人会因为变量名长 8 个字母多加批评
+
+**重命名工具**：`scripts/naming_audit.py`，跑一下看当前 suspect。
+
 ### Bug 追踪
 - Bug 修复用 commit 前缀 `fix(BUGxxx):` 记录
 - 已知问题记录在 `docs/decisions.md` 的相关条目中

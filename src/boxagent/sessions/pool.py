@@ -53,10 +53,10 @@ class SessionPool(BaseSessionPool):
         """Spawn ``size`` backends from ``factory`` and seed the queue."""
         self._factory = factory
         for _ in range(self.size):
-            proc = factory()
-            proc.start()
-            self._all.append(proc)
-            self._pool.put_nowait(proc)
+            backend = factory()
+            backend.start()
+            self._all.append(backend)
+            self._pool.put_nowait(backend)
         logger.info("SessionPool started with %d processes", self.size)
 
     # ── BaseSessionPool hooks ──
@@ -64,19 +64,19 @@ class SessionPool(BaseSessionPool):
     async def _borrow(self, chat_id: str) -> AgentBackend:
         return await self._pool.get()
 
-    def _return(self, chat_id: str, proc: AgentBackend) -> None:
+    def _return(self, chat_id: str, backend: AgentBackend) -> None:
         # Clear session_id before returning — next borrower restores its own.
-        proc.session_id = None
-        self._pool.put_nowait(proc)
+        backend.session_id = None
+        self._pool.put_nowait(backend)
 
     @property
     def all_processes(self) -> list[AgentBackend]:
         return list(self._all)
 
     async def stop(self) -> None:
-        for proc in self._all:
+        for backend in self._all:
             try:
-                await proc.stop()
+                await backend.stop()
             except Exception as e:
                 logger.warning("Error stopping pool process: %s", e)
         self._all.clear()
@@ -92,10 +92,10 @@ class SessionPool(BaseSessionPool):
             return 0
         restarted = 0
         new_all: list[AgentBackend] = []
-        for proc in self._all:
-            if getattr(proc, "state", "idle") == "dead":
+        for backend in self._all:
+            if getattr(backend, "state", "idle") == "dead":
                 try:
-                    await proc.stop()
+                    await backend.stop()
                 except Exception:
                     pass
                 new_proc = self._factory()
@@ -104,7 +104,7 @@ class SessionPool(BaseSessionPool):
                 restarted += 1
                 logger.info("Replaced dead pool process")
             else:
-                new_all.append(proc)
+                new_all.append(backend)
         if restarted:
             self._all = new_all
             # Rebuild queue with only idle (non-active) processes.
@@ -114,7 +114,7 @@ class SessionPool(BaseSessionPool):
                 except asyncio.QueueEmpty:
                     break
             active_set = set(id(p) for p in self._active.values())
-            for proc in self._all:
-                if id(proc) not in active_set:
-                    self._pool.put_nowait(proc)
+            for backend in self._all:
+                if id(backend) not in active_set:
+                    self._pool.put_nowait(backend)
         return restarted

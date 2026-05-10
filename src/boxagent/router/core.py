@@ -70,7 +70,7 @@ class Router:
     async def _acquire_proc(self, chat_id: str):
         """Borrow a backend process for one turn.
 
-        With a pool: acquire(chat_id) → yield → release(chat_id, proc).
+        With a pool: acquire(chat_id) → yield → release(chat_id, backend).
         Without one: yield self.backend; no release. Either way callers
         get the same context-managed shape so the dispatch sites don't
         re-implement try/finally.
@@ -79,11 +79,11 @@ class Router:
         if pool is None:
             yield self.backend
             return
-        proc = await pool.acquire(chat_id)
+        backend = await pool.acquire(chat_id)
         try:
-            yield proc
+            yield backend
         finally:
-            pool.release(chat_id, proc)
+            pool.release(chat_id, backend)
 
     async def handle_message(self, msg: IncomingMessage) -> None:
         try:
@@ -229,21 +229,21 @@ class Router:
         )
 
         # Acquire a process from the pool (or use the single backend) for the
-        # turn. Capture proc state inside the with-block before release clears
-        # it (proc.session_id is reset on release; pool keeps a copy though).
-        async with self._acquire_proc(chat_id) as proc:
+        # turn. Capture backend state inside the with-block before release clears
+        # it (backend.session_id is reset on release; pool keeps a copy though).
+        async with self._acquire_proc(chat_id) as backend:
             await callback.start_typing()
             try:
-                await proc.send(prompt, callback, model=model_override, chat_id=chat_id, append_system_prompt=append_system_prompt, env=env)
-                drain_output = getattr(proc, "drain_output", None)
+                await backend.send(prompt, callback, model=model_override, chat_id=chat_id, append_system_prompt=append_system_prompt, env=env)
+                drain_output = getattr(backend, "drain_output", None)
                 if drain_output is not None:
                     await drain_output()
             finally:
                 await callback.close()
-            turn_failed = getattr(proc, "last_turn_failed", False) is True
-            turn_error_raw = getattr(proc, "last_turn_error", "")
+            turn_failed = getattr(backend, "last_turn_failed", False) is True
+            turn_error_raw = getattr(backend, "last_turn_error", "")
             turn_error = turn_error_raw if isinstance(turn_error_raw, str) else ""
-            proc_sid = getattr(proc, "session_id", None)
+            proc_sid = getattr(backend, "session_id", None)
 
         if used_compact and not turn_failed:
             self._compact_summaries.pop(chat_id, None)

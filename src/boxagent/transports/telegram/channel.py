@@ -438,11 +438,11 @@ class TelegramChannel(Channel):
             try:
                 file = await self.bot.get_file(photo.file_id)
                 if file.file_path is not None:
-                    dest = Path(tempfile.mkdtemp()) / f"{photo.file_id}.jpg"
-                    await self.bot.download_file(file.file_path, dest)
+                    dest_path = Path(tempfile.mkdtemp()) / f"{photo.file_id}.jpg"
+                    await self.bot.download_file(file.file_path, dest_path)
                     attachments.append(Attachment(
                         type="image",
-                        file_path=str(dest),
+                        file_path=str(dest_path),
                         file_name=f"{photo.file_id}.jpg",
                         mime_type="image/jpeg",
                         size=photo.file_size or 0,
@@ -456,11 +456,11 @@ class TelegramChannel(Channel):
             try:
                 file = await self.bot.get_file(doc.file_id)
                 if file.file_path is not None:
-                    dest = Path(tempfile.mkdtemp()) / (doc.file_name or doc.file_id)
-                    await self.bot.download_file(file.file_path, dest)
+                    dest_path = Path(tempfile.mkdtemp()) / (doc.file_name or doc.file_id)
+                    await self.bot.download_file(file.file_path, dest_path)
                     attachments.append(Attachment(
                         type="file",
-                        file_path=str(dest),
+                        file_path=str(dest_path),
                         file_name=doc.file_name or doc.file_id,
                         mime_type=doc.mime_type or "application/octet-stream",
                         size=doc.file_size or 0,

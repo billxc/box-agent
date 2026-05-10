@@ -13,8 +13,8 @@ class TestProtocol:
 
     def test_real_backend_satisfies_protocol(self):
         from boxagent.agent.claude_process import ClaudeProcess
-        proc = ClaudeProcess(workspace="/tmp", bot_name="t")
-        assert isinstance(proc, AgentBackend)
+        backend = ClaudeProcess(workspace="/tmp", bot_name="t")
+        assert isinstance(backend, AgentBackend)
 
 
 class TestMockBackend:

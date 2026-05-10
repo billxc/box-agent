@@ -82,20 +82,20 @@ def test_admin_with_peer_gets_both(tmp_path):
 
 
 def test_codex_mcp_args_empty_without_env():
-    proc = CodexProcess(workspace="/tmp")
-    assert proc._mcp_args("chat-1") == []
+    backend = CodexProcess(workspace="/tmp")
+    assert backend._mcp_args("chat-1") == []
 
 
 def test_codex_mcp_args_empty_when_no_endpoints(tmp_path):
-    proc = CodexProcess(workspace="/tmp")
+    backend = CodexProcess(workspace="/tmp")
     env = _env(tmp_path, passthrough=True)
-    assert proc._mcp_args("chat-1", env=env) == []
+    assert backend._mcp_args("chat-1", env=env) == []
 
 
 def test_codex_mcp_args_emits_url_and_headers(tmp_path):
-    proc = CodexProcess(workspace="/tmp")
+    backend = CodexProcess(workspace="/tmp")
     env = _env(tmp_path)  # base only
-    args = proc._mcp_args("chat-1", env=env)
+    args = backend._mcp_args("chat-1", env=env)
     # 2 -c entries per endpoint (url + http_headers)
     assert args.count("-c") == 2
     joined = " ".join(args)
@@ -106,9 +106,9 @@ def test_codex_mcp_args_emits_url_and_headers(tmp_path):
 
 
 def test_codex_mcp_args_admin_emits_two_servers(tmp_path):
-    proc = CodexProcess(workspace="/tmp")
+    backend = CodexProcess(workspace="/tmp")
     env = _env(tmp_path, workgroup_role="admin")
-    args = proc._mcp_args("chat-1", env=env)
+    args = backend._mcp_args("chat-1", env=env)
     joined = " ".join(args)
     assert "mcp_servers.boxagent.url=" in joined
     assert "mcp_servers.boxagent-admin.url=" in joined
@@ -116,12 +116,12 @@ def test_codex_mcp_args_admin_emits_two_servers(tmp_path):
 
 
 def test_codex_mcp_args_full_admin(tmp_path):
-    proc = CodexProcess(workspace="/tmp")
+    backend = CodexProcess(workspace="/tmp")
     env = _env(
         tmp_path, workgroup_role="admin",
         telegram_token="t", has_peer_channel=True,
     )
-    args = proc._mcp_args("chat-1", env=env)
+    args = backend._mcp_args("chat-1", env=env)
     joined = " ".join(args)
     for name in ("boxagent", "boxagent-admin", "boxagent-telegram", "boxagent-peer"):
         assert f"mcp_servers.{name}.url=" in joined

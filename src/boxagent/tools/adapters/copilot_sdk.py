@@ -24,8 +24,8 @@ logger = logging.getLogger(__name__)
 
 def build_tools(*, ctx: ToolContext, env: Any) -> list[Tool]:
     """Build the ``tools`` list for ``CopilotClient.create_session``."""
-    caps = env_capabilities(env)
-    visible = tools_for(env_caps=caps)
+    capabilities = env_capabilities(env)
+    visible = tools_for(env_caps=capabilities)
     return [_convert(t, ctx) for t in visible]
 
 

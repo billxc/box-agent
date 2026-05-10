@@ -75,41 +75,41 @@ class RawSessionPool(BaseSessionPool):
             lock.release()
             raise
 
-    def _return(self, chat_id: str, proc: AgentBackend) -> None:
+    def _return(self, chat_id: str, backend: AgentBackend) -> None:
         lock = self._locks.get(chat_id)
         if lock and lock.locked():
             lock.release()
 
     async def _ensure_proc(self, chat_id: str) -> AgentBackend:
-        proc = self._procs.get(chat_id)
-        if proc is not None:
-            return proc
+        backend = self._procs.get(chat_id)
+        if backend is not None:
+            return backend
         if not self.backend_factory:
             raise RuntimeError("RawSessionPool: backend_factory not set")
         chat_state = self._get_state(chat_id)
         backend_kind = chat_state.backend or "claude-cli"
-        proc = self.backend_factory(
+        backend = self.backend_factory(
             backend=backend_kind,
             workspace=chat_state.workspace,
             model=chat_state.model,
             session_id=chat_state.session_id,
             bot_name=self.bot_name,
         )
-        proc.start()
-        self._procs[chat_id] = proc
+        backend.start()
+        self._procs[chat_id] = backend
         logger.info("RawSessionPool spawned %s for chat_id=%s", backend_kind, chat_id)
-        return proc
+        return backend
 
     @property
     def all_processes(self) -> list[AgentBackend]:
         return list(self._procs.values())
 
     async def stop(self) -> None:
-        for chat_id, proc in list(self._procs.items()):
+        for chat_id, backend in list(self._procs.items()):
             try:
-                await proc.stop()
+                await backend.stop()
             except Exception as e:
-                logger.warning("Error stopping raw proc for %s: %s", chat_id, e)
+                logger.warning("Error stopping raw backend for %s: %s", chat_id, e)
         self._procs.clear()
         self._active.clear()
         logger.info("RawSessionPool stopped")
@@ -117,13 +117,13 @@ class RawSessionPool(BaseSessionPool):
     async def restart_dead(self) -> int:
         """Drop dead per-chat processes; they'll respawn on next acquire."""
         restarted = 0
-        for chat_id, proc in list(self._procs.items()):
-            if getattr(proc, "state", "idle") == "dead":
+        for chat_id, backend in list(self._procs.items()):
+            if getattr(backend, "state", "idle") == "dead":
                 try:
-                    await proc.stop()
+                    await backend.stop()
                 except Exception:
                     pass
                 del self._procs[chat_id]
                 restarted += 1
-                logger.info("Dropped dead raw proc for chat_id=%s", chat_id)
+                logger.info("Dropped dead raw backend for chat_id=%s", chat_id)
         return restarted

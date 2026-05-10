@@ -74,8 +74,8 @@ def main():
     doc.set_defaults(func=lambda args: _run_doctor(args))
 
     # Top-level install (alias for doctor --fix)
-    inst = subparsers.add_parser("install", help="Install missing dependencies (alias for doctor --fix)")
-    inst.set_defaults(func=lambda args: _run_install(args))
+    install_parser = subparsers.add_parser("install", help="Install missing dependencies (alias for doctor --fix)")
+    install_parser.set_defaults(func=lambda args: _run_install(args))
 
     args = parser.parse_args()
 

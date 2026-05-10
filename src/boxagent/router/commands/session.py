@@ -307,8 +307,8 @@ async def cmd_compact(router: "Router", msg: "IncomingMessage", channel: "Channe
     await channel.show_typing(chat_id)
     try:
         env = router._build_env(msg)
-        async with router._acquire_proc(chat_id) as proc:
-            await proc.send(summary_prompt, collector, env=env)
+        async with router._acquire_proc(chat_id) as backend:
+            await backend.send(summary_prompt, collector, env=env)
     except Exception as e:
         await channel.send_text(chat_id, f"Failed to generate summary: {e}")
         return

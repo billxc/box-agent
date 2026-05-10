@@ -278,9 +278,9 @@ class WebHttpServer:
         machine = request.query.get("machine", "")
         if not bot or not machine:
             return web.json_response({"ok": False, "error": "missing bot/machine"}, status=400)
-        resp = await self.cluster_rpc.dispatch_machine_request(machine, "GET", "/api/sessions", request)
-        if resp is not None:
-            return resp
+        response = await self.cluster_rpc.dispatch_machine_request(machine, "GET", "/api/sessions", request)
+        if response is not None:
+            return response
         if bot not in self.web_channels:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
         if not self.storage:
@@ -404,11 +404,11 @@ class WebHttpServer:
         if not bot or not machine:
             return web.json_response({"ok": False, "error": "missing bot/machine"}, status=400)
         if machine != self.topology.local_machine_id():
-            resp = await self.cluster_rpc.dispatch_machine_request(
+            response = await self.cluster_rpc.dispatch_machine_request(
                 machine, "POST", "/api/sessions/set_main", request, body=data,
             )
-            if resp is not None:
-                return resp
+            if response is not None:
+                return response
         if self.storage is None:
             return web.json_response({"ok": False, "error": "no storage"}, status=500)
         self.storage.set_main_chat_id(bot, chat_id)
@@ -503,9 +503,9 @@ class WebHttpServer:
         if not bot or not chat_id or not machine:
             return web.json_response({"ok": False, "error": "missing bot/chat_id/machine"}, status=400)
         if machine != self.topology.local_machine_id():
-            resp = await self.cluster_rpc.dispatch_machine_request(machine, "GET", "/api/history", request)
-            if resp is not None:
-                return resp
+            response = await self.cluster_rpc.dispatch_machine_request(machine, "GET", "/api/history", request)
+            if response is not None:
+                return response
         if bot not in self.web_channels:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
 
@@ -531,8 +531,8 @@ class WebHttpServer:
                 # SDK can find a session without us knowing the project
                 # — pass empty project_id and let it search.
                 for sid in sids:
-                    msgs = await history_impl.read_messages(sid)
-                    history.extend(_message_to_dict(m) for m in msgs)
+                    messages = await history_impl.read_messages(sid)
+                    history.extend(_message_to_dict(m) for m in messages)
                 history.sort(key=lambda r: r.get("ts") or 0)
                 total = len(history)
                 limit = int(request.query.get("limit", 0) or 0)
@@ -589,9 +589,9 @@ class WebHttpServer:
         if not bot or not chat_id or not text or not machine:
             return web.json_response({"ok": False, "error": "missing bot/chat_id/text/machine"}, status=400)
         if machine != self.topology.local_machine_id():
-            resp = await self.cluster_rpc.dispatch_machine_request(machine, "POST", "/api/send", request, body=body)
-            if resp is not None:
-                return resp
+            response = await self.cluster_rpc.dispatch_machine_request(machine, "POST", "/api/send", request, body=body)
+            if response is not None:
+                return response
         ch = self.web_channels.get(bot)
         if ch is None:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
@@ -611,14 +611,14 @@ class WebHttpServer:
         if not bot or not chat_id or not machine:
             return web.json_response({"ok": False, "error": "missing bot/chat_id/machine"}, status=400)
         if machine != self.topology.local_machine_id():
-            resp = await self.cluster_rpc.dispatch_machine_stream(machine, "/api/stream", request)
-            if resp is not None:
-                return resp
+            response = await self.cluster_rpc.dispatch_machine_stream(machine, "/api/stream", request)
+            if response is not None:
+                return response
         ch = self.web_channels.get(bot)
         if ch is None:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
 
-        resp = web.StreamResponse(
+        response = web.StreamResponse(
             status=200,
             headers={
                 "Content-Type": "text/event-stream",
@@ -627,26 +627,26 @@ class WebHttpServer:
                 "X-Accel-Buffering": "no",
             },
         )
-        await resp.prepare(request)
+        await response.prepare(request)
         queue = ch.subscribe(chat_id)
-        await resp.write(b": connected\n\n")
+        await response.write(b": connected\n\n")
         import json as _json
         try:
             while True:
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=20.0)
                 except asyncio.TimeoutError:
-                    await resp.write(b": ping\n\n")
+                    await response.write(b": ping\n\n")
                     continue
                 if event.get("type") == "_close":
                     break
                 payload = _json.dumps(event, ensure_ascii=False)
-                await resp.write(f"data: {payload}\n\n".encode("utf-8"))
+                await response.write(f"data: {payload}\n\n".encode("utf-8"))
         except (ConnectionResetError, asyncio.CancelledError):
             pass
         finally:
             ch.unsubscribe(chat_id, queue)
-        return resp
+        return response
 
     # ── Claude native session picker ──
 
@@ -657,9 +657,9 @@ class WebHttpServer:
         if not machine:
             return web.json_response({"ok": False, "error": "missing machine"}, status=400)
         if machine != self.topology.local_machine_id():
-            resp = await self.cluster_rpc.dispatch_machine_request(machine, "GET", "/api/claude/projects", request)
-            if resp is not None:
-                return resp
+            response = await self.cluster_rpc.dispatch_machine_request(machine, "GET", "/api/claude/projects", request)
+            if response is not None:
+                return response
         from boxagent.history import get_history
         history = get_history("claude-cli")
         projects = await history.list_projects()
@@ -676,9 +676,9 @@ class WebHttpServer:
         if not encoded or not machine:
             return web.json_response({"ok": False, "error": "missing project/machine"}, status=400)
         if machine != self.topology.local_machine_id():
-            resp = await self.cluster_rpc.dispatch_machine_request(machine, "GET", "/api/claude/sessions", request)
-            if resp is not None:
-                return resp
+            response = await self.cluster_rpc.dispatch_machine_request(machine, "GET", "/api/claude/sessions", request)
+            if response is not None:
+                return response
         from boxagent.history import get_history
         history = get_history("claude-cli")
         sessions = await history.list_sessions(encoded)
@@ -696,9 +696,9 @@ class WebHttpServer:
         if not encoded or not sid or not machine:
             return web.json_response({"ok": False, "error": "missing project/session_id/machine"}, status=400)
         if machine != self.topology.local_machine_id():
-            resp = await self.cluster_rpc.dispatch_machine_request(machine, "GET", "/api/claude/transcript", request)
-            if resp is not None:
-                return resp
+            response = await self.cluster_rpc.dispatch_machine_request(machine, "GET", "/api/claude/transcript", request)
+            if response is not None:
+                return response
         from boxagent.history import get_history
         history = get_history("claude-cli")
         messages = await history.read_messages(sid, encoded)
@@ -722,9 +722,9 @@ class WebHttpServer:
         if not bot or not sid or not machine:
             return web.json_response({"ok": False, "error": "missing bot/session_id/machine"}, status=400)
         if machine != self.topology.local_machine_id():
-            resp = await self.cluster_rpc.dispatch_machine_request(machine, "POST", "/api/claude/resume", request, body=body)
-            if resp is not None:
-                return resp
+            response = await self.cluster_rpc.dispatch_machine_request(machine, "POST", "/api/claude/resume", request, body=body)
+            if response is not None:
+                return response
         if bot not in self.web_channels:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
 

@@ -46,11 +46,11 @@ def _build_heartbeat_prompt(
     uptime_str = ""
     if uptime_seconds > 0:
         hours, rem = divmod(int(uptime_seconds), 3600)
-        minutes, secs = divmod(rem, 60)
+        minutes, seconds = divmod(rem, 60)
         if hours > 0:
             uptime_str = f"{hours}h {minutes}m"
         else:
-            uptime_str = f"{minutes}m {secs}s"
+            uptime_str = f"{minutes}m {seconds}s"
 
     tasks_block = format_running_tasks(running_tasks)
 
@@ -248,27 +248,27 @@ class HeartbeatManager:
             workgroup_role="admin",
         )
 
-        proc = ClaudeProcess(
+        backend = ClaudeProcess(
             workspace=self.workspace,
             session_id=source_session_id,
             fork_session=bool(source_session_id),
             yolo=self.yolo,
         )
-        proc.start()
+        backend.start()
 
         try:
             collector = TextCollector()
-            await proc.send(prompt, collector, model=self.model, env=env)
+            await backend.send(prompt, collector, model=self.model, env=env)
             raw = collector.text.strip()
             action = _extract_action(raw)
             return action, {
                 "source_session_id": source_session_id or "",
-                "fork_session_id": proc.session_id or "",
+                "fork_session_id": backend.session_id or "",
                 "raw_response": raw,
                 "prompt": prompt,
             }
         finally:
-            await proc.stop()
+            await backend.stop()
 
     def _find_fork_session_id(self) -> str | None:
         """Find admin's main-session id to fork from.

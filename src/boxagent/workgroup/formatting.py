@@ -69,8 +69,8 @@ def format_running_tasks(running_tasks: list[dict] | None) -> str:
         elapsed = ""
         started = t.get("started_at", 0)
         if started:
-            secs = int(time.time() - started)
-            mins, s = divmod(secs, 60)
+            seconds = int(time.time() - started)
+            mins, s = divmod(seconds, 60)
             elapsed = f" (running {mins}m {s}s)"
         active = " [active]" if t.get("active") else " [queued]"
         lines.append(f"  - {t.get('task_id', '?')}: {t.get('target', '?')}{elapsed}{active}")

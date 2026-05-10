@@ -72,7 +72,7 @@ def command(
 
     Raises if ``name`` is already registered.
     """
-    def deco(fn: CommandFn) -> CommandFn:
+    def decorator(fn: CommandFn) -> CommandFn:
         if name in COMMAND_REGISTRY:
             raise RuntimeError(
                 f"command {name!r} already registered to {COMMAND_REGISTRY[name].fn.__name__}"
@@ -81,5 +81,5 @@ def command(
             name=name, fn=fn, help=help, category=category,
         )
         return fn
-    return deco
+    return decorator
 

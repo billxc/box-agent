@@ -31,7 +31,7 @@ class _FakeProc:
 class TestRespawn:
     @pytest.mark.asyncio
     async def test_monitor_respawns_when_host_dies(self):
-        """Spawn ↦ proc dies (rc=1) ↦ monitor task re-spawns a fresh host proc."""
+        """Spawn ↦ process dies (rc=1) ↦ monitor task re-spawns a fresh host process."""
         tunnel = ClusterTunnel(name="test-tun", port=9999)
         tunnel._respawn_backoff_seconds = 0.0
 
@@ -46,7 +46,7 @@ class TestRespawn:
             await tunnel._launch_supervised()
             assert len(spawned) == 1
 
-            # Kill the first proc — monitor should observe + respawn.
+            # Kill the first process — monitor should observe + respawn.
             spawned[0].die(rc=1)
             for _ in range(50):
                 if len(spawned) >= 2:
@@ -56,7 +56,7 @@ class TestRespawn:
         assert len(spawned) == 2, f"expected respawn after death; got {len(spawned)}"
         assert tunnel._host_proc is spawned[1]
 
-        # Cleanup: terminate the alive proc + cancel monitor.
+        # Cleanup: terminate the alive process + cancel monitor.
         spawned[1].die(rc=0)
         await tunnel.stop()
 
@@ -74,7 +74,7 @@ class TestRespawn:
             spawned.append(p)
             return p
 
-        # Make terminate() actually exit the proc so stop()'s wait_for resolves.
+        # Make terminate() actually exit the process so stop()'s wait_for resolves.
         async def real_spawn_and_wire():
             p = await fake_spawn()
 

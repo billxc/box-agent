@@ -27,7 +27,7 @@ def _default_codex_sessions_dir() -> Path:
 
 
 class CodexAgentHistory:
-    """``AgentHistory`` impl for Codex CLI's ``~/.codex/sessions/`` rollouts."""
+    """``AgentHistory`` implementation for Codex CLI's ``~/.codex/sessions/`` rollouts."""
 
     def __init__(self, codex_dir: Path | None = None) -> None:
         self._codex_dir = codex_dir or _default_codex_sessions_dir()
@@ -59,7 +59,7 @@ class CodexAgentHistory:
     async def get_session_path(self, session_id: str) -> Path | None:
         """Return the JSONL rollout file path for a session, or None.
 
-        Used by the ``sessions_list`` tool's ``grep:`` filter, which
+        Used by the ``sessions_list`` tool's ``grep_pattern:`` filter, which
         wants to greppable file paths. Other backends don't expose a
         single-file abstraction so this is codex-only.
         """

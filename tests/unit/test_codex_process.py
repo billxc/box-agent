@@ -109,12 +109,12 @@ async def test_simple_text_response(callback, process_factory):
     )
 
     with patch("asyncio.create_subprocess_exec", return_value=FakeProcess(data)):
-        proc = process_factory()
-        await proc.send("hi", callback)
-        await proc.stop()
+        backend = process_factory()
+        await backend.send("hi", callback)
+        await backend.stop()
 
     callback.on_stream.assert_called_once_with("hello world")
-    assert proc.session_id == "tid-abc"
+    assert backend.session_id == "tid-abc"
 
 
 # --- Multi-message turn ---
@@ -132,9 +132,9 @@ async def test_multi_message_turn(callback, process_factory):
     )
 
     with patch("asyncio.create_subprocess_exec", return_value=FakeProcess(data)):
-        proc = process_factory()
-        await proc.send("test", callback)
-        await proc.stop()
+        backend = process_factory()
+        await backend.send("test", callback)
+        await backend.stop()
 
     assert callback.on_stream.call_count == 2
     callback.on_stream.assert_any_call("first")
@@ -158,9 +158,9 @@ async def test_command_execution(callback, process_factory):
     )
 
     with patch("asyncio.create_subprocess_exec", return_value=FakeProcess(data)):
-        proc = process_factory()
-        await proc.send("read the file", callback)
-        await proc.stop()
+        backend = process_factory()
+        await backend.send("read the file", callback)
+        await backend.stop()
 
     # on_tool_update called for started
     callback.on_tool_update.assert_called_once()
@@ -208,12 +208,12 @@ async def test_session_resume_uses_thread_id(callback, process_factory):
         return FakeProcess(second_data)
 
     with patch("asyncio.create_subprocess_exec", side_effect=fake_exec) as mock_exec:
-        proc = process_factory()
-        await proc.send("hello", callback)
-        assert proc.session_id == "tid-resume"
+        backend = process_factory()
+        await backend.send("hello", callback)
+        assert backend.session_id == "tid-resume"
 
-        await proc.send("again", callback)
-        await proc.stop()
+        await backend.send("again", callback)
+        await backend.stop()
 
     # Second call should have "resume" in args
     second_call_args = mock_exec.call_args_list[1][0]
@@ -233,9 +233,9 @@ async def test_nonzero_exit_reports_error(callback, process_factory):
     fake.stderr.read = AsyncMock(return_value=b"something went wrong")
 
     with patch("asyncio.create_subprocess_exec", return_value=fake):
-        proc = process_factory()
-        await proc.send("fail", callback)
-        await proc.stop()
+        backend = process_factory()
+        await backend.send("fail", callback)
+        await backend.stop()
 
     callback.on_error.assert_called_once()
     error_msg = callback.on_error.call_args[0][0]
@@ -251,19 +251,19 @@ async def test_cancel_terminates_process(process_factory):
     """Cancel should terminate the running subprocess."""
     from boxagent.agent.codex_process import CodexProcess
 
-    proc = CodexProcess(workspace="/tmp/test")
+    backend = CodexProcess(workspace="/tmp/test")
 
     fake = FakeProcess(b"", returncode=-15)
     fake.returncode = None  # still running
 
-    proc._process = fake
-    proc.state = "busy"
-    proc._idle_event.clear()
+    backend._process = fake
+    backend.state = "busy"
+    backend._idle_event.clear()
 
-    await proc.cancel()
+    await backend.cancel()
 
     assert fake._terminated
-    assert proc.state == "idle"
+    assert backend.state == "idle"
 
 
 # --- Stdin pipe mode (codex exec -) ---
@@ -280,9 +280,9 @@ async def test_prompt_piped_via_stdin(callback, process_factory):
     )
 
     with patch("asyncio.create_subprocess_exec", return_value=FakeProcess(data)) as mock_exec:
-        proc = process_factory()
-        await proc.send("hello world", callback)
-        await proc.stop()
+        backend = process_factory()
+        await backend.send("hello world", callback)
+        await backend.stop()
 
     # Args should end with "-", not the message text
     args = mock_exec.call_args[0]
@@ -307,9 +307,9 @@ async def test_resume_also_uses_stdin_pipe(callback, process_factory):
     )
 
     with patch("asyncio.create_subprocess_exec", return_value=FakeProcess(data)) as mock_exec:
-        proc = process_factory(session_id="tid-resume2")
-        await proc.send("follow up", callback)
-        await proc.stop()
+        backend = process_factory(session_id="tid-resume2")
+        await backend.send("follow up", callback)
+        await backend.stop()
 
     args = mock_exec.call_args[0]
     assert "resume" in args
@@ -325,9 +325,9 @@ async def test_reset_session_clears_id(process_factory):
     """reset_session should clear session_id."""
     from boxagent.agent.codex_process import CodexProcess
 
-    proc = CodexProcess(workspace="/tmp/test", session_id="tid-old")
-    await proc.reset_session()
-    assert proc.session_id is None
+    backend = CodexProcess(workspace="/tmp/test", session_id="tid-old")
+    await backend.reset_session()
+    assert backend.session_id is None
 
 
 # --- Model override ---
@@ -344,9 +344,9 @@ async def test_model_override(callback, process_factory):
     )
 
     with patch("asyncio.create_subprocess_exec", return_value=FakeProcess(data)) as mock_exec:
-        proc = process_factory(model="gpt-5.4")
-        await proc.send("test", callback, model="gpt-5.4-mini")
-        await proc.stop()
+        backend = process_factory(model="gpt-5.4")
+        await backend.send("test", callback, model="gpt-5.4-mini")
+        await backend.stop()
 
     args = mock_exec.call_args[0]
     # Per-turn override should win

@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
         "Query syntax tokens (all optional, order-independent): "
         "'--all' to skip workspace filter; <keywords> for text search "
         "(multi-word AND); 'cwd:<substr>' fuzzy match path; "
-        "'grep:<substr>' full-text search inside JSONL; '<N>d' last N days; "
+        "'grep_pattern:<substr>' full-text search inside JSONL; '<N>d' last N days; "
         "'backend:<name>'; 'bot:<name>'; 'p<N>' page; "
         "'<hex-prefix>' lookup by id prefix (4+ hex chars). "
         "By default scoped to *workspace* arg (project dir)."

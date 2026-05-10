@@ -46,7 +46,7 @@ def _parse_iso_to_ts(iso_str: str) -> int:
 def _resolve_session_path(sid: str) -> Path | None:
     """Find the JSONL file for a Claude CLI session ID.
 
-    Used by /sessions grep filter to read transcript content. The history
+    Used by /sessions grep_pattern filter to read transcript content. The history
     layer doesn't expose paths, so we still scan ``~/.claude/projects/``
     here.
     """
@@ -155,7 +155,7 @@ def _load_all_unified_sessions(
         sid = s.session_id
         if not sid:
             continue
-        # Resolve the file path lazily (only used by grep filter); this
+        # Resolve the file path lazily (only used by grep_pattern filter); this
         # walks the rollout dir, but it's cached during this single call.
         path = ""
         if codex_history is not None:

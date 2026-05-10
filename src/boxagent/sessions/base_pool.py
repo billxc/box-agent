@@ -56,7 +56,7 @@ class BaseSessionPool(ABC):
 
     Concrete subclasses implement how a backend is borrowed and returned;
     this base handles everything else: state loading, get/set fan-out
-    (active proc + saved state), and the storage round-trip.
+    (active backend + saved state), and the storage round-trip.
     """
 
     def __init__(
@@ -98,19 +98,19 @@ class BaseSessionPool(ABC):
             self._chat_states[chat_id] = chat_state
         return chat_state
 
-    def _restore_to(self, proc: AgentBackend, chat_state: ChatState) -> None:
+    def _restore_to(self, backend: AgentBackend, chat_state: ChatState) -> None:
         """Apply a saved chat state onto a borrowed backend."""
-        proc.session_id = chat_state.session_id
-        proc.model = chat_state.model
-        proc.workspace = chat_state.workspace
+        backend.session_id = chat_state.session_id
+        backend.model = chat_state.model
+        backend.workspace = chat_state.workspace
 
-    def _capture_from(self, chat_state: ChatState, proc: AgentBackend) -> None:
+    def _capture_from(self, chat_state: ChatState, backend: AgentBackend) -> None:
         """Capture the post-turn state of a backend back into the chat record."""
-        chat_state.session_id = proc.session_id
-        chat_state.model = proc.model
-        chat_state.workspace = proc.workspace
+        chat_state.session_id = backend.session_id
+        chat_state.model = backend.model
+        chat_state.workspace = backend.workspace
 
-    # ── Get / set fan-out (active proc + saved state stay in sync) ──
+    # ── Get / set fan-out (active backend + saved state stay in sync) ──
 
     def get_active(self, chat_id: str) -> AgentBackend | None:
         return self._active.get(chat_id)
@@ -170,15 +170,15 @@ class BaseSessionPool(ABC):
     # ── acquire / release wrap subclass-specific borrow/return ──
 
     async def acquire(self, chat_id: str) -> AgentBackend:
-        proc = await self._borrow(chat_id)
-        self._restore_to(proc, self._get_state(chat_id))
-        self._active[chat_id] = proc
-        return proc
+        backend = await self._borrow(chat_id)
+        self._restore_to(backend, self._get_state(chat_id))
+        self._active[chat_id] = backend
+        return backend
 
-    def release(self, chat_id: str, proc: AgentBackend) -> None:
-        self._capture_from(self._get_state(chat_id), proc)
+    def release(self, chat_id: str, backend: AgentBackend) -> None:
+        self._capture_from(self._get_state(chat_id), backend)
         self._active.pop(chat_id, None)
-        self._return(chat_id, proc)
+        self._return(chat_id, backend)
 
     # ── Subclass hooks ──
 
@@ -191,7 +191,7 @@ class BaseSessionPool(ABC):
         """
 
     @abstractmethod
-    def _return(self, chat_id: str, proc: AgentBackend) -> None:
+    def _return(self, chat_id: str, backend: AgentBackend) -> None:
         """Return a backend after a turn — requeue, release lock, etc."""
 
     @property

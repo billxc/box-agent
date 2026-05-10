@@ -111,7 +111,7 @@ def _make_assistant_message(content: str = "ok") -> dict:
 class TestParseSessionTokens:
     def test_empty(self):
         r = parse_session_tokens("")
-        assert r == {"page": 1, "days": None, "backend": "", "bot": "", "cwd_search": "", "grep": "", "id_prefix": "", "query": "", "all": False}
+        assert r == {"page": 1, "days": None, "backend": "", "bot": "", "cwd_search": "", "grep_pattern": "", "id_prefix": "", "query": "", "all": False}
 
     def test_page_only(self):
         r = parse_session_tokens("p3")
@@ -156,13 +156,13 @@ class TestParseSessionTokens:
         assert r["query"] == "discord"
 
     def test_grep(self):
-        r = parse_session_tokens("grep:pineapple")
-        assert r["grep"] == "pineapple"
+        r = parse_session_tokens("grep_pattern:pineapple")
+        assert r["grep_pattern"] == "pineapple"
         assert r["query"] == ""
 
     def test_grep_with_filters(self):
-        r = parse_session_tokens("grep:TODO 7d backend:claude-cli")
-        assert r["grep"] == "TODO"
+        r = parse_session_tokens("grep_pattern:TODO 7d backend:claude-cli")
+        assert r["grep_pattern"] == "TODO"
         assert r["days"] == 7
         assert r["backend"] == "claude-cli"
 
@@ -521,7 +521,7 @@ class TestFormatSessionsList:
         assert "/resume id-1" not in result
 
     def test_grep_filter(self, tmp_path, monkeypatch):
-        """grep:xxx does full-text search on JSONL content."""
+        """grep_pattern:xxx does full-text search on JSONL content."""
         monkeypatch.setattr("boxagent.sessions.browser.loaders.CLAUDE_DIR", tmp_path)
         _mock_claude_sessions(monkeypatch, [
             _sample_entry("session-1", projectPath="/Users/test/proj-a"),
@@ -537,7 +537,7 @@ class TestFormatSessionsList:
             _make_user_message("update the readme"),
             _make_assistant_message("ok"),
         ])
-        result = format_sessions_list(query="grep:pineapple")
+        result = format_sessions_list(query="grep_pattern:pineapple")
         assert "/resume session-1" in result
         assert "/resume session-2" not in result
 
@@ -550,6 +550,6 @@ class TestFormatSessionsList:
         _write_jsonl(projects_dir, "proj-a", "session-1", [
             _make_user_message("hello world"),
         ])
-        result = format_sessions_list(query="grep:nonexistent")
+        result = format_sessions_list(query="grep_pattern:nonexistent")
         assert "No sessions" in result
 

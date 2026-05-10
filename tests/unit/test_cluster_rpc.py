@@ -41,15 +41,15 @@ class TestDispatchMachineRequest:
         reg = MagicMock()
         reg.get = MagicMock(return_value=None)
         rpc = _make(local_machine_id="me", guest_registry=reg)
-        resp = await rpc.dispatch_machine_request(
+        response = await rpc.dispatch_machine_request(
             "guest-x", "GET", "/api/x", _Req(),
         )
-        assert resp.status == 404
+        assert response.status == 404
 
     @pytest.mark.asyncio
     async def test_no_routing_returns_503(self):
         rpc = _make(local_machine_id="me")  # no registry, no client
-        resp = await rpc.dispatch_machine_request(
+        response = await rpc.dispatch_machine_request(
             "guest-x", "GET", "/api/x", _Req(),
         )
-        assert resp.status == 503
+        assert response.status == 503

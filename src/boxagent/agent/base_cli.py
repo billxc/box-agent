@@ -81,12 +81,12 @@ class BaseCLIProcess:
                 # leaving child processes (e.g. codex.exe under node.exe) alive.
                 # Use taskkill /T /F to kill the entire process tree.
                 try:
-                    proc = await asyncio.create_subprocess_exec(
+                    process = await asyncio.create_subprocess_exec(
                         "taskkill", "/PID", str(pid), "/T", "/F",
                         stdout=asyncio.subprocess.DEVNULL,
                         stderr=asyncio.subprocess.DEVNULL,
                     )
-                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                    await asyncio.wait_for(process.wait(), timeout=5.0)
                 except Exception:
                     # Fallback to regular kill
                     self._process.kill()

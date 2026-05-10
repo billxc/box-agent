@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class ClaudeAgentHistory:
-    """``AgentHistory`` impl built on top of ``claude_agent_sdk``."""
+    """``AgentHistory`` implementation built on top of ``claude_agent_sdk``."""
 
     # ── Public API ────────────────────────────────────────────────
 

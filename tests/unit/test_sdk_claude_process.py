@@ -55,12 +55,12 @@ class TestAgentSDKClaude:
             workspace="/tmp/work", model="sonnet",
             bot_name="t", session_id="s-1", yolo=True,
         )
-        opts = backend._build_options(model="opus", append_system_prompt="extra")
-        assert opts.cwd == "/tmp/work"
-        assert opts.model == "opus"
-        assert opts.resume == "s-1"
-        assert opts.permission_mode == "bypassPermissions"
-        assert opts.system_prompt == {
+        options = backend._build_options(model="opus", append_system_prompt="extra")
+        assert options.cwd == "/tmp/work"
+        assert options.model == "opus"
+        assert options.resume == "s-1"
+        assert options.permission_mode == "bypassPermissions"
+        assert options.system_prompt == {
             "type": "preset",
             "preset": "claude_code",
             "append": "extra",

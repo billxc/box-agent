@@ -263,8 +263,8 @@ class WorkgroupManager:
         self.procs[workgroup_name] = admin_backend
 
         def _admin_factory(cfg=admin_bot_cfg):
-            proc = self._make_backend(cfg)
-            return proc
+            backend = self._make_backend(cfg)
+            return backend
 
         admin_pool = SessionPool(
             size=3,
@@ -510,8 +510,8 @@ class WorkgroupManager:
         # Running state
         active = False
         if pool:
-            for proc in pool._active.values():
-                if getattr(proc, "state", "idle") == "busy":
+            for backend in pool._active.values():
+                if getattr(backend, "state", "idle") == "busy":
                     active = True
                     break
 
@@ -566,8 +566,8 @@ class WorkgroupManager:
         async def _cancel_specialist(target: str) -> None:
             pool = self.pools.get(target)
             if pool:
-                for proc in pool._active.values():
-                    await proc.cancel()
+                for backend in pool._active.values():
+                    await backend.cancel()
 
         return await self.tasks.cancel(task_id, cancel_specialist=_cancel_specialist)
 
@@ -585,8 +585,8 @@ class WorkgroupManager:
             pool = self.pools.get(target)
             active = False
             if pool:
-                for proc in pool._active.values():
-                    if getattr(proc, "state", "idle") == "busy":
+                for backend in pool._active.values():
+                    if getattr(backend, "state", "idle") == "busy":
                         active = True
                         break
             result.append({

@@ -101,7 +101,7 @@ class ClusterRpc:
         request: web.Request,
     ) -> web.StreamResponse:
         """Guest-side: forward an SSE GET to the host, relay frames to the browser."""
-        resp = web.StreamResponse(
+        response = web.StreamResponse(
             status=200,
             headers={
                 "Content-Type": "text/event-stream",
@@ -110,16 +110,16 @@ class ClusterRpc:
                 "X-Accel-Buffering": "no",
             },
         )
-        await resp.prepare(request)
-        await resp.write(b": connected\n\n")
+        await response.prepare(request)
+        await response.write(b": connected\n\n")
         try:
             async for data in guest_client.call_stream(
                 "GET", path, query=dict(request.query),
             ):
-                await resp.write(f"data: {data}\n\n".encode("utf-8"))
+                await response.write(f"data: {data}\n\n".encode("utf-8"))
         except (ConnectionResetError, asyncio.CancelledError):
             pass
-        return resp
+        return response
 
     async def _proxy_to_remote(
         self,
@@ -149,7 +149,7 @@ class ClusterRpc:
         request: web.Request,
     ) -> web.StreamResponse:
         """Forward an SSE GET to a guest, relay frames to the browser."""
-        resp = web.StreamResponse(
+        response = web.StreamResponse(
             status=200,
             headers={
                 "Content-Type": "text/event-stream",
@@ -158,14 +158,14 @@ class ClusterRpc:
                 "X-Accel-Buffering": "no",
             },
         )
-        await resp.prepare(request)
-        await resp.write(b": connected\n\n")
+        await response.prepare(request)
+        await response.write(b": connected\n\n")
         try:
             async for data in session.call_stream("GET", path, query=dict(request.query)):
-                await resp.write(f"data: {data}\n\n".encode("utf-8"))
+                await response.write(f"data: {data}\n\n".encode("utf-8"))
         except (ConnectionResetError, asyncio.CancelledError):
             pass
-        return resp
+        return response
 
     async def handle_guest_ws(self, request: web.Request) -> web.StreamResponse:
         """Permanent route — delegates to the GuestRegistry only when this

@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 class CopilotAgentHistory:
-    """``AgentHistory`` impl for the Copilot SDK's session store."""
+    """``AgentHistory`` implementation for the Copilot SDK's session store."""
 
     def __init__(self, client: "CopilotClient | None" = None) -> None:
         self._client: CopilotClient | None = client

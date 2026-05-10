@@ -280,10 +280,10 @@ class GuestRegistry:
             kwargs: dict = {"params": query, "headers": headers}
             if method != "GET" and body is not None:
                 kwargs["json"] = body
-            async with self._http_session.request(method, url, **kwargs) as resp:
-                if is_sse and resp.status == 200:
+            async with self._http_session.request(method, url, **kwargs) as response:
+                if is_sse and response.status == 200:
                     buf = b""
-                    async for chunk in resp.content.iter_any():
+                    async for chunk in response.content.iter_any():
                         buf += chunk
                         while b"\n\n" in buf:
                             event, buf = buf.split(b"\n\n", 1)
@@ -296,12 +296,12 @@ class GuestRegistry:
                     await session.ws.send_json({"type": "rpc_end", "id": rpc_id})
                     return
                 try:
-                    body_out = await resp.json(content_type=None)
+                    body_out = await response.json(content_type=None)
                 except Exception:
-                    body_out = {"raw": (await resp.text())[:4096]}
+                    body_out = {"raw": (await response.text())[:4096]}
                 await session.ws.send_json({
                     "type": "rpc_resp", "id": rpc_id,
-                    "status": resp.status, "body": body_out,
+                    "status": response.status, "body": body_out,
                 })
         except Exception as e:
             logger.warning("host: inbound rpc %s %s failed: %s", method, path, e)

@@ -106,7 +106,7 @@ class ClusterTunnel:
         )
 
     async def _launch_supervised(self) -> None:
-        """Spawn host proc + start monitor task that respawns on death.
+        """Spawn host process + start monitor task that respawns on death.
 
         Without supervision the devtunnel host process can die silently
         (macOS app nap, network drop, devtunnel internal error) and the
@@ -120,23 +120,23 @@ class ClusterTunnel:
         self._monitor_task = asyncio.create_task(self._monitor_host())
 
     async def _monitor_host(self) -> None:
-        """Watch the host proc; on unintended exit, log + respawn with backoff.
+        """Watch the host process; on unintended exit, log + respawn with backoff.
 
         Loop exits when ``stop()`` flips ``_stopping`` true.
         """
         while not self._stopping:
-            proc = self._host_proc
-            if proc is None:
+            process = self._host_proc
+            if process is None:
                 return
             try:
-                rc = await proc.wait()
+                rc = await process.wait()
             except asyncio.CancelledError:
                 return
             if self._stopping:
                 return
             logger.warning(
                 "Cluster tunnel '%s' host process (pid=%d) exited rc=%s; respawning in %.1fs",
-                self.name, proc.pid, rc, self._respawn_backoff_seconds,
+                self.name, process.pid, rc, self._respawn_backoff_seconds,
             )
             try:
                 await asyncio.sleep(self._respawn_backoff_seconds)
@@ -158,23 +158,23 @@ class ClusterTunnel:
 
     async def stop(self) -> None:
         self._stopping = True
-        proc = self._host_proc
+        process = self._host_proc
         self._host_proc = None
-        if proc is not None:
+        if process is not None:
             try:
-                proc.terminate()
+                process.terminate()
             except ProcessLookupError:
                 pass
             else:
                 try:
-                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                    await asyncio.wait_for(process.wait(), timeout=5.0)
                 except asyncio.TimeoutError:
                     try:
-                        proc.kill()
+                        process.kill()
                     except ProcessLookupError:
                         pass
-        # Cancel the monitor only after we've torn down the proc, so the
-        # monitor's `await proc.wait()` returns (clean exit, no respawn).
+        # Cancel the monitor only after we've torn down the process, so the
+        # monitor's `await process.wait()` returns (clean exit, no respawn).
         task = self._monitor_task
         self._monitor_task = None
         if task is not None and not task.done():
@@ -199,13 +199,13 @@ class ClusterTunnel:
         return task is not None and not task.done()
 
     async def _run(self, *args: str) -> tuple[int, str, str]:
-        proc = await asyncio.create_subprocess_exec(
+        process = await asyncio.create_subprocess_exec(
             "devtunnel", *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        out, err = await proc.communicate()
-        return proc.returncode or 0, out.decode("utf-8", "replace"), err.decode("utf-8", "replace")
+        out, err = await process.communicate()
+        return process.returncode or 0, out.decode("utf-8", "replace"), err.decode("utf-8", "replace")
 
     async def _show(self) -> dict | None:
         rc, out, err = await self._run("show", self.name, "-j")

@@ -24,11 +24,11 @@ logger = logging.getLogger(__name__)
 EXEC_DEFAULT_TIMEOUT = 30
 
 
-def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
+def _kill_process_tree(backend: asyncio.subprocess.Process) -> None:
     """Kill a subprocess and its children via process group (Unix) or taskkill (Windows)."""
-    if proc.returncode is not None:
+    if backend.returncode is not None:
         return
-    pid = proc.pid
+    pid = backend.pid
     if sys.platform == "win32":
         import subprocess
         try:
@@ -37,12 +37,12 @@ def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
                 capture_output=True, timeout=5,
             )
         except Exception:
-            proc.kill()
+            backend.kill()
     else:
         try:
             os.killpg(os.getpgid(pid), signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
-            proc.kill()
+            backend.kill()
 
 
 @command("/exec", help="Run a shell command (e.g. /exec ls -la)", category=CommandCategory.TOOLS)
@@ -92,7 +92,7 @@ async def cmd_exec(router: "Router", msg: "IncomingMessage", channel: "Channel")
 
     try:
         if shell_args:
-            proc = await asyncio.create_subprocess_exec(
+            backend = await asyncio.create_subprocess_exec(
                 *shell_args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
@@ -101,7 +101,7 @@ async def cmd_exec(router: "Router", msg: "IncomingMessage", channel: "Channel")
                 start_new_session=True,
             )
         else:
-            proc = await asyncio.create_subprocess_shell(
+            backend = await asyncio.create_subprocess_shell(
                 command_str,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
@@ -109,16 +109,16 @@ async def cmd_exec(router: "Router", msg: "IncomingMessage", channel: "Channel")
                 start_new_session=True,
             )
         try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            stdout, _ = await asyncio.wait_for(backend.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
-            _kill_process_tree(proc)
-            await proc.wait()
+            _kill_process_tree(backend)
+            await backend.wait()
             await channel.send_text(msg.chat_id, f"Command timed out after {timeout}s (killed).")
             return
 
         output = stdout.decode("utf-8", errors="replace").rstrip()
         output = re.sub(r"\x1b\[[0-9;]*m", "", output)
-        exit_code = proc.returncode
+        exit_code = backend.returncode
 
     except Exception as e:
         await channel.send_text(msg.chat_id, f"Exec failed: {e}")

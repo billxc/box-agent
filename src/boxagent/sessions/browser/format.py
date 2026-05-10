@@ -28,7 +28,7 @@ def _format_id_match(matches: list[dict]) -> str:
         sid = e.get("sessionId", "?")
         project = e.get("project", "")
         modified_ts = e.get("modified_ts") or 0
-        msgs = e.get("messageCount") or 0
+        messages = e.get("messageCount") or 0
         backend_str = e.get("backend") or ""
         rel_time = _relative_time(modified_ts)
 
@@ -37,8 +37,8 @@ def _format_id_match(matches: list[dict]) -> str:
             meta_parts.append(project)
         if rel_time:
             meta_parts.append(rel_time)
-        if msgs:
-            meta_parts.append(f"{msgs} msgs")
+        if messages:
+            meta_parts.append(f"{messages} messages")
         if backend_str:
             meta_parts.append(backend_str)
         lines.append(f"{' · '.join(meta_parts)}")
@@ -94,8 +94,8 @@ def format_sessions_list(
     )
 
     # Full-text search applied after metadata filters to limit I/O
-    if parsed["grep"]:
-        filtered = _grep_sessions(filtered, parsed["grep"])
+    if parsed["grep_pattern"]:
+        filtered = _grep_sessions(filtered, parsed["grep_pattern"])
 
     total = len(filtered)
     if total == 0:
@@ -110,8 +110,8 @@ def format_sessions_list(
             parts.append(f"bot:{parsed['bot']}")
         if parsed["cwd_search"]:
             parts.append(f"cwd:{parsed['cwd_search']}")
-        if parsed["grep"]:
-            parts.append(f"grep:{parsed['grep']}")
+        if parsed["grep_pattern"]:
+            parts.append(f"grep_pattern:{parsed['grep_pattern']}")
         if cwd_filter:
             parts.append(f"in {Path(cwd_filter).name}")
         if parts:
@@ -136,8 +136,8 @@ def format_sessions_list(
         header_parts.append(f"bot:{parsed['bot']}")
     if parsed["cwd_search"]:
         header_parts.append(f"cwd:{parsed['cwd_search']}")
-    if parsed["grep"]:
-        header_parts.append(f"grep:{parsed['grep']}")
+    if parsed["grep_pattern"]:
+        header_parts.append(f"grep_pattern:{parsed['grep_pattern']}")
 
     if cwd_filter:
         scope = f"in {Path(cwd_filter).name}"
@@ -157,7 +157,7 @@ def format_sessions_list(
         sid = e.get("sessionId", "?")
         project = e.get("project", "")
         modified_ts = e.get("modified_ts") or 0
-        msgs = e.get("messageCount") or 0
+        messages = e.get("messageCount") or 0
         backend_str = e.get("backend") or ""
         rel_time = _relative_time(modified_ts)
 
@@ -166,8 +166,8 @@ def format_sessions_list(
             meta_parts.append(project)
         if rel_time:
             meta_parts.append(rel_time)
-        if msgs:
-            meta_parts.append(f"{msgs} msgs")
+        if messages:
+            meta_parts.append(f"{messages} messages")
         if backend_str:
             meta_parts.append(backend_str)
         lines.append(f"{idx}. {' · '.join(meta_parts)}")
@@ -196,8 +196,8 @@ def format_sessions_list(
         base_args.append(f"bot:{parsed['bot']}")
     if parsed["cwd_search"]:
         base_args.append(f"cwd:{parsed['cwd_search']}")
-    if parsed["grep"]:
-        base_args.append(f"grep:{parsed['grep']}")
+    if parsed["grep_pattern"]:
+        base_args.append(f"grep_pattern:{parsed['grep_pattern']}")
     base = " ".join(base_args)
 
     hints = []

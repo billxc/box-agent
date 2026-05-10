@@ -1,4 +1,4 @@
-"""Pick an :class:`AgentHistory` impl by backend kind."""
+"""Pick an :class:`AgentHistory` implementation by backend kind."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from boxagent.history.copilot import CopilotAgentHistory
 from boxagent.history.protocol import AgentHistory
 
 
-# Map ai_backend kind → history impl. Both claude-cli and
-# agent-sdk-claude write to ~/.claude/projects, so they share one impl.
+# Map ai_backend kind → history implementation. Both claude-cli and
+# agent-sdk-claude write to ~/.claude/projects, so they share one implementation.
 _REGISTRY: dict[str, type[AgentHistory]] = {
     "claude-cli":         ClaudeAgentHistory,
     "agent-sdk-claude":   ClaudeAgentHistory,
@@ -25,12 +25,12 @@ def get_history(backend_kind: str) -> AgentHistory:
     want to ``await history.close()`` when done to release the spawned
     CLI subprocess.
     """
-    impl = _REGISTRY.get(backend_kind)
-    if impl is None:
+    implementation = _REGISTRY.get(backend_kind)
+    if implementation is None:
         raise ValueError(f"No AgentHistory registered for backend {backend_kind!r}")
-    return impl()
+    return implementation()
 
 
 def supported_backends() -> list[str]:
-    """List backend kinds with a registered history impl."""
+    """List backend kinds with a registered history implementation."""
     return list(_REGISTRY.keys())

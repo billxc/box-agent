@@ -344,8 +344,8 @@ def trigger_schedule_run(local_dir: str | Path, task_id: str, sync: bool = False
 
     try:
         with httpx.Client(timeout=timeout) as client:
-            resp = client.post(url, json=payload)
-        data = resp.json()
+            response = client.post(url, json=payload)
+        data = response.json()
         if data.get("ok"):
             if not sync:
                 return f"Schedule '{task_id}' triggered (async)."

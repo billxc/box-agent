@@ -1,6 +1,6 @@
 """Tests for CodexAgentHistory.get_session_path / sync escape hatches.
 
-The grep filter in the ``sessions_list`` tool needs the on-disk path of
+The grep_pattern filter in the ``sessions_list`` tool needs the on-disk path of
 a Codex session to walk its JSONL — that's a codex-only extension.
 """
 

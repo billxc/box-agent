@@ -426,11 +426,11 @@ class Scheduler:
         callback: "_SchedulerCallback",
     ) -> str:
         """Build the Telegram notification for an isolate task run."""
-        secs = elapsed.total_seconds()
-        if secs >= 60:
-            elapsed_str = f"{int(secs // 60)}m{int(secs % 60)}s"
+        seconds = elapsed.total_seconds()
+        if seconds >= 60:
+            elapsed_str = f"{int(seconds // 60)}m{int(seconds % 60)}s"
         else:
-            elapsed_str = f"{secs:.1f}s"
+            elapsed_str = f"{seconds:.1f}s"
 
         header = f"🤖【*Isolate*】{task.id}"
         meta_parts = [
@@ -466,7 +466,7 @@ class Scheduler:
         if backend == "claude-cli":
             from boxagent.agent.claude_process import ClaudeProcess
 
-            proc = ClaudeProcess(
+            backend = ClaudeProcess(
                 workspace=workspace,
                 model=task.model,
                 yolo=task.yolo,
@@ -474,7 +474,7 @@ class Scheduler:
         elif backend == "codex-cli":
             from boxagent.agent.codex_process import CodexProcess
 
-            proc = CodexProcess(
+            backend = CodexProcess(
                 workspace=workspace,
                 model=task.model,
                 yolo=task.yolo,
@@ -482,7 +482,7 @@ class Scheduler:
         elif backend == "agent-sdk-claude":
             from boxagent.agent.sdk_claude_process import AgentSDKClaude
 
-            proc = AgentSDKClaude(
+            backend = AgentSDKClaude(
                 workspace=workspace,
                 model=task.model,
                 yolo=task.yolo,
@@ -490,7 +490,7 @@ class Scheduler:
         elif backend == "agent-sdk-copilot":
             from boxagent.agent.sdk_copilot_process import AgentSDKCopilot
 
-            proc = AgentSDKCopilot(
+            backend = AgentSDKCopilot(
                 workspace=workspace,
                 model=task.model,
                 yolo=task.yolo,
@@ -498,11 +498,11 @@ class Scheduler:
         else:
             raise ValueError(f"Schedule '{task.id}': unsupported ai_backend '{backend}'")
 
-        proc.start()
+        backend.start()
         try:
             try:
                 await asyncio.wait_for(
-                    proc.send(
+                    backend.send(
                         prompt,
                         callback,
                         model=task.model,
@@ -519,7 +519,7 @@ class Scheduler:
                 raise RuntimeError(self._enrich_error(task, callback._error))
             return callback._text.strip(), callback
         finally:
-            await proc.stop()
+            await backend.stop()
 
     def _resolve_isolate_bot_token(self, task: ScheduleTask) -> str:
         """Resolve isolate task.bot strictly via telegram_bots.yaml."""

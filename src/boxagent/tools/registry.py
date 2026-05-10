@@ -111,7 +111,7 @@ def boxagent_tool(
 ) -> Callable[[ToolHandler], ToolHandler]:
     """Decorator that registers a tool in the global registry."""
 
-    def deco(fn: ToolHandler) -> ToolHandler:
+    def decorator(fn: ToolHandler) -> ToolHandler:
         if any(t.name == name for t in _TOOLS):
             raise ValueError(f"Duplicate boxagent_tool name: {name!r}")
         _TOOLS.append(ToolDef(
@@ -124,7 +124,7 @@ def boxagent_tool(
         ))
         return fn
 
-    return deco
+    return decorator
 
 
 def all_tools() -> list[ToolDef]:
@@ -154,16 +154,16 @@ def tools_for(*, group: str | None = None, env_caps: set[str] | None = None) -> 
 def env_capabilities(env: Any) -> set[str]:
     """Translate an :class:`AgentEnv` (or anything with the right attrs) to
     the capability flag set used by ``ToolDef.requires``."""
-    caps: set[str] = set()
+    capabilities: set[str] = set()
     if env is None:
-        return caps
+        return capabilities
     if getattr(env, "has_telegram", False):
-        caps.add("telegram")
+        capabilities.add("telegram")
     if getattr(env, "is_workgroup_admin", False):
-        caps.add("workgroup_admin")
+        capabilities.add("workgroup_admin")
     if getattr(env, "has_peer_channel", False):
-        caps.add("peer_channel")
-    return caps
+        capabilities.add("peer_channel")
+    return capabilities
 
 
 def _reset_for_tests() -> None:

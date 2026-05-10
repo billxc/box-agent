@@ -229,10 +229,10 @@ class HostElection:
                 f"{url.rstrip('/')}/api/version",
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=5.0),
-            ) as resp:
-                if resp.status != 200:
+            ) as response:
+                if response.status != 200:
                     return ""
-                data = await resp.json(content_type=None)
+                data = await response.json(content_type=None)
                 return str(data.get("machine_id") or "")
         except Exception as e:
             logger.debug("host election: probe /api/version failed: %s", e)

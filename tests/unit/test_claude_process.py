@@ -108,8 +108,8 @@ def make_backend():
     from boxagent.agent.claude_process import ClaudeProcess
 
     def _make(workspace: str = "/tmp/test"):
-        proc = ClaudeProcess(workspace=workspace)
-        return proc
+        backend = ClaudeProcess(workspace=workspace)
+        return backend
 
     return _make
 

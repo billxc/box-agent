@@ -38,8 +38,8 @@ def build_mcp_servers(*, ctx: ToolContext, env: Any) -> dict[str, Any]:
     / ``has_peer_channel``) and groups them into one in-process MCP server
     per ``ToolDef.group``.
     """
-    caps = env_capabilities(env)
-    visible = tools_for(env_caps=caps)
+    capabilities = env_capabilities(env)
+    visible = tools_for(env_caps=capabilities)
     if not visible:
         return {}
 
