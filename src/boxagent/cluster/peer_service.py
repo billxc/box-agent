@@ -57,7 +57,13 @@ class PeerService:
         ):
             await self._dispatch_local_peer(target, sender, message)
             return {"ok": True, "via": "local"}
+
+        # Host mode: registry visible, look for the target on a guest.
+        # Guest mode: registry is None, but guest_client lets us forward
+        # to the host so it can resolve. HostElection guarantees these
+        # are mutually exclusive — never both set, so an elif is correct.
         guest_registry = self.topology.guest_registry
+        guest_client = self.topology.guest_client
         if guest_registry is not None:
             for machine_id, bot in guest_registry.list_bots():
                 if bot.name != target or bot.kind != "workgroup":
@@ -85,11 +91,7 @@ class PeerService:
                     "ok": False, "via": "rpc", "machine": machine_id,
                     "error": f"guest returned status={status}: {err or body}",
                 }
-        # Guest mode: not host, can't see registry — forward to host's
-        # /api/peer/send and let host resolve. Without this, sats can only
-        # peer-message workgroups they host themselves.
-        guest_client = self.topology.guest_client
-        if guest_client is not None:
+        elif guest_client is not None:
             try:
                 result = await guest_client.fetch_host_json(
                     "/api/peer/send", method="POST",
