@@ -61,6 +61,7 @@ def _mock_pool():
     """Create a mock SessionPool."""
     pool = MagicMock()
     pool.clear_session = MagicMock()
+    pool.stop = AsyncMock()
     pool._active = {}
     pool._chat_states = {}
     return pool
@@ -551,4 +552,32 @@ class TestTemplateIntegration:
 
         result = await mgr.delete_specialist("dev-1")
         assert result["ok"] is True
+        assert not ws_path.exists()
+
+    async def test_delete_specialist_force_cleans_even_if_backend_stop_raises(self, tmp_path):
+        """Even when backend.stop() raises (e.g. SIGKILL syscall fails),
+        delete must still proceed — workspace gone, dicts cleared,
+        persistence updated. The user's whole point in calling delete is
+        to make the specialist disappear.
+
+        BaseCLIProcess.stop() already escalates SIGTERM → SIGKILL with
+        a 3s timeout; if even that fails, log + continue rather than
+        leaving zombie state half-deleted."""
+        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
+        ws_path = Path(workgroup_config.specialists["dev-1"].workspace)
+        ws_path.mkdir(parents=True, exist_ok=True)
+        (ws_path / "marker").write_text("x")
+
+        wedged_backend = AsyncMock()
+        wedged_backend.stop = AsyncMock(side_effect=RuntimeError("kill syscall failed"))
+        mgr.routers["dev-1"] = _mock_router()
+        mgr.pools["dev-1"] = _mock_pool()
+        mgr.procs["dev-1"] = wedged_backend
+
+        result = await mgr.delete_specialist("dev-1")
+        assert result["ok"] is True
+        # Specialist gone from in-memory state and disk regardless.
+        assert "dev-1" not in mgr.routers
+        assert "dev-1" not in mgr.pools
+        assert "dev-1" not in mgr.procs
         assert not ws_path.exists()

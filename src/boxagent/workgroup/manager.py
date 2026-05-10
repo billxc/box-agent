@@ -705,7 +705,9 @@ class WorkgroupManager:
             adapter = self.adapters.get(workgroup_name) or NullWorkgroupChannelAdapter()
             await adapter.cleanup_specialist(specialist_name, specialist_config)
 
-        # Stop process
+        # Stop process. BaseCLIProcess.stop() already escalates SIGTERM →
+        # SIGKILL after 3s, so by the time stop() returns the subprocess
+        # is dead (or its kill() syscall itself failed, which we surface).
         backend = self.procs.pop(specialist_name, None)
         if backend:
             try:
@@ -735,7 +737,8 @@ class WorkgroupManager:
             if admin_router:
                 admin_router.workgroup_agents = list(workgroup_config.specialists.keys())
 
-        # Remove workspace directory (after process stop, after persistence cleanup).
+        # Remove workspace directory. Process is force-killed by stop()
+        # above, so file handles are released — rmtree is safe.
         if specialist_workspace:
             ws_path = Path(specialist_workspace)
             if ws_path.is_dir():
