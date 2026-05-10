@@ -251,6 +251,27 @@ async def test_admin_env_carries_workgroup_role(tmp_path):
         assert env.is_workgroup_admin is True
 
 
+@pytest.mark.asyncio
+async def test_specialist_env_carries_workgroup_role(tmp_path):
+    """Symmetric to the admin regression: specialist Router must propagate
+    workgroup_role='specialist' so env.is_specialist works. Was previously
+    dead code because manager._create_specialist_agent never set the role."""
+    with _make_manager(tmp_path) as (manager, fakes):
+        await manager.start_workgroup("wg", manager.config["wg"])
+
+        # Find any specialist router built by the fixture.
+        spec_name = next(n for n in manager.routers if n != "wg")
+        spec_router = manager.routers[spec_name]
+        await spec_router.dispatch_sync("hello", f"wg:{spec_name}", from_bot="wg")
+
+        envs = [e for fp in fakes[spec_name] for e in fp.received_envs]
+        assert envs, "specialist backend.send was never called"
+        env = envs[0]
+        assert env.workgroup_role == "specialist", f"role lost: {env.workgroup_role!r}"
+        assert env.is_specialist is True
+        assert env.is_workgroup_admin is False
+
+
 # ---------------------------------------------------------------------------
 # Cleanup helper (manager has no async stop in some tests; ensure tasks die).
 # ---------------------------------------------------------------------------

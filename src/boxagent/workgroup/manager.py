@@ -210,6 +210,7 @@ class WorkgroupManager:
             workspace=bot_config.workspace,
             extra_skill_dirs=bot_config.extra_skill_dirs,
             ai_backend=bot_config.ai_backend,
+            workgroup_role="specialist",
         )
         # Adapter wires any inbound channel affordances on the specialist.
         await adapter.setup_specialist(specialist_name, specialist_config, workgroup_config, specialist_router)
