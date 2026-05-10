@@ -105,3 +105,44 @@ class TestAutoCreateDirs:
         storage.save_session("test", "sess")
 
         assert (local_dir / "sessions.yaml").exists()
+
+
+class TestLegacyWorkgroupPrefixMigration:
+    """Pre-2026-05-10 specialist chat_ids used the prefix ``wg:``; renamed to
+    ``workgroup:`` to drop the abbreviation. Storage migrates on init."""
+
+    def test_renames_legacy_keys(self, tmp_path):
+        import yaml as _yaml
+        local_dir = tmp_path / "local"
+        local_dir.mkdir()
+        (local_dir / "sessions.yaml").write_text(_yaml.safe_dump({
+            "alice:wg:dev-1:": {"backend": "claude-cli", "session_id": "s1"},
+            "bob:foo:": {"backend": "codex-cli", "session_id": "s2"},  # untouched
+        }))
+
+        Storage(local_dir=local_dir)  # triggers migration
+
+        data = _yaml.safe_load((local_dir / "sessions.yaml").read_text())
+        assert "alice:workgroup:dev-1:" in data
+        assert "alice:wg:dev-1:" not in data
+        assert "bob:foo:" in data  # non-wg keys preserved verbatim
+        assert data["alice:workgroup:dev-1:"]["session_id"] == "s1"
+
+    def test_idempotent_when_no_legacy_keys(self, tmp_path):
+        import yaml as _yaml
+        local_dir = tmp_path / "local"
+        local_dir.mkdir()
+        original = {"alice:workgroup:dev-1:": {"session_id": "s1"}}
+        (local_dir / "sessions.yaml").write_text(_yaml.safe_dump(original))
+        original_mtime = (local_dir / "sessions.yaml").stat().st_mtime
+
+        Storage(local_dir=local_dir)
+
+        # File should be untouched (no rewrite triggered).
+        assert (local_dir / "sessions.yaml").stat().st_mtime == original_mtime
+
+    def test_skips_when_no_sessions_yaml(self, tmp_path):
+        local_dir = tmp_path / "local"
+        local_dir.mkdir()
+        # Just instantiate — should not raise.
+        Storage(local_dir=local_dir)

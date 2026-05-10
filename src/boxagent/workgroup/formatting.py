@@ -14,17 +14,29 @@ import time
 # ── chat_id helpers ────────────────────────────────────────────────
 
 
+WORKGROUP_CHAT_PREFIX = "workgroup:"
+_LEGACY_WORKGROUP_CHAT_PREFIX = "wg:"  # pre-2026-05-10; migrated by Storage on startup
+
 _SPECIALIST_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,30}$")
 
 
 def specialist_chat_id(specialist_name: str) -> str:
     """The virtual chat_id under which a specialist's pool/transcripts live.
 
-    Single source of truth for the ``wg:<name>`` namespace; previously
-    duplicated in 6 places. Names are validated by ``validate_specialist_name``
-    at create time so the format is safe (no ``:`` collisions).
+    Single source of truth for the ``workgroup:<name>`` namespace. Names are
+    validated by ``validate_specialist_name`` at create time so the format
+    is safe (no ``:`` collisions in the suffix).
     """
-    return f"wg:{specialist_name}"
+    return f"{WORKGROUP_CHAT_PREFIX}{specialist_name}"
+
+
+def is_workgroup_chat_id(chat_id: str) -> bool:
+    """True for the current prefix or the legacy ``workgroup:`` prefix.
+
+    Legacy data is migrated on startup; this predicate exists so loaders /
+    UI can recognize both during the lifetime of a single migration cycle.
+    """
+    return chat_id.startswith(WORKGROUP_CHAT_PREFIX) or chat_id.startswith(_LEGACY_WORKGROUP_CHAT_PREFIX)
 
 
 def validate_specialist_name(name: str) -> str | None:
@@ -32,7 +44,7 @@ def validate_specialist_name(name: str) -> str | None:
 
     Allowed: 1–31 chars, lowercase letters / digits / underscores / hyphens,
     must start with a letter or digit. Rejects names that would collide with
-    the ``wg:`` chat_id namespace or contain reserved characters.
+    the ``workgroup:`` chat_id namespace or contain reserved characters.
     """
     if not isinstance(name, str) or not name:
         return "specialist name must be a non-empty string"

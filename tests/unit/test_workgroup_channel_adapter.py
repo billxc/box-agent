@@ -40,7 +40,7 @@ def test_null_adapter_protocol_compliance():
 
 def test_null_adapter_chat_id_falls_back_to_wg_prefix():
     a = NullWorkgroupChannelAdapter()
-    assert a.get_specialist_chat_id("alice", _make_specialist_config()) == "wg:alice"
+    assert a.get_specialist_chat_id("alice", _make_specialist_config()) == "workgroup:alice"
 
 
 def test_null_adapter_methods_are_noops():
@@ -82,7 +82,7 @@ def test_web_adapter_primary_channel_is_web_channel():
 def test_web_adapter_chat_id_is_virtual_wg_prefix():
     a = WebWorkgroupAdapter(web_channel=_make_web_channel())
     specialist = _make_specialist_config()
-    assert a.get_specialist_chat_id("alice", specialist) == "wg:alice"
+    assert a.get_specialist_chat_id("alice", specialist) == "workgroup:alice"
 
 
 def test_web_adapter_setup_specialist_wires_inbound_channel():
@@ -114,7 +114,7 @@ def test_web_adapter_post_task_publishes_user_message_to_specialist_chat():
     asyncio.run(a.post_task("alice", _make_specialist_config(), "do thing", "admin"))
     wc._publish.assert_called_once()
     chat_id, event = wc._publish.call_args.args
-    assert chat_id == "wg:alice"
+    assert chat_id == "workgroup:alice"
     assert event["type"] == "message"
     assert event["role"] == "user"
     assert event["text"] == "[admin] do thing"

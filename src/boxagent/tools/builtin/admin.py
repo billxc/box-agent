@@ -167,7 +167,7 @@ async def send_to_agent(args: dict, ctx: ToolContext) -> str:
     description=(
         "Dynamically create a new specialist agent in your workgroup. "
         "Spawns a new AI backend in its own isolated workspace. The "
-        "specialist is reachable at chat_id 'wg:<name>'. Pass 'template' "
+        "specialist is reachable at chat_id 'workgroup:<name>'. Pass 'template' "
         "(see list_templates) to inherit a pre-configured role."
     ),
     schema={

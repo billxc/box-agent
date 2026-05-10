@@ -155,7 +155,7 @@ async def test_admin_dispatch_to_specialist_e2e(tmp_path):
         # Subscribe to the specialist's virtual chat_id BEFORE dispatch so we can
         # assert the streaming events the admin's web UI would see.
         web = manager.web_channels["wg"]
-        sp_queue = web.subscribe("wg:sp1")
+        sp_queue = web.subscribe("workgroup:sp1")
         admin_queue = web.subscribe("admin-chat")
 
         await manager.start_workgroup("wg", manager.config["wg"])
@@ -262,7 +262,7 @@ async def test_specialist_env_carries_workgroup_role(tmp_path):
         # Find any specialist router built by the fixture.
         spec_name = next(n for n in manager.routers if n != "wg")
         spec_router = manager.routers[spec_name]
-        await spec_router.dispatch_sync("hello", f"wg:{spec_name}", from_bot="wg")
+        await spec_router.dispatch_sync("hello", f"workgroup:{spec_name}", from_bot="wg")
 
         envs = [e for fp in fakes[spec_name] for e in fp.received_envs]
         assert envs, "specialist backend.send was never called"

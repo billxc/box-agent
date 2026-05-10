@@ -85,7 +85,7 @@ class WorkgroupChannelAdapter(Protocol):
 class NullWorkgroupChannelAdapter:
     """Adapter for workgroups with no external channel — pure in-process orchestration.
 
-    All operations are no-ops; chat_id falls back to ``wg:<specialist_name>``.
+    All operations are no-ops; chat_id falls back to ``workgroup:<specialist_name>``.
     """
 
     @property
@@ -120,7 +120,7 @@ class NullWorkgroupChannelAdapter:
 class WebWorkgroupAdapter:
     """Publishes workgroup events into the host's WebChannel.
 
-    Specialist visibility is achieved by using a virtual chat_id ``wg:<specialist_name>``
+    Specialist visibility is achieved by using a virtual chat_id ``workgroup:<specialist_name>``
     on the SAME WebChannel as the admin — the admin web UI subscribes to that
     chat_id in addition to its own and renders the specialist's stream alongside.
     """

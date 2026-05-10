@@ -621,7 +621,7 @@ class WorkgroupManager:
         """Dynamically create a specialist agent in a workgroup."""
         # Validate name first — it'll be used as a chat_id namespace key
         # (specialist_chat_id) and a YAML key, so reject anything that
-        # could collide or break the wg:<name> contract.
+        # could collide or break the workgroup:<name> contract.
         name_err = validate_specialist_name(specialist_name)
         if name_err:
             return {"ok": False, "error": name_err}

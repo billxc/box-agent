@@ -19,6 +19,40 @@ class Storage:
         import threading
         self._main_lock = threading.Lock()
         self._main_cache: dict | None = None
+        # One-time legacy migration: pre-2026-05-10 specialist chat_ids used
+        # the prefix "wg:". Rewrite any sessions.yaml entries to "workgroup:"
+        # so loaders can use a single prefix everywhere.
+        self._migrate_legacy_workgroup_prefix()
+
+    def _migrate_legacy_workgroup_prefix(self) -> None:
+        """Rewrite sessions.yaml keys ``{bot}:wg:{name}`` → ``{bot}:workgroup:{name}``.
+
+        Idempotent — runs every Storage init but only writes if there's
+        actually something to rename.
+        """
+        path = self._local_dir / "sessions.yaml"
+        if not path.exists():
+            return
+        try:
+            with open(path) as f:
+                data = yaml.safe_load(f) or {}
+        except Exception as e:
+            logger.warning("sessions.yaml legacy-migration read failed (%s); skipping", e)
+            return
+        rewrites = {k: k.replace(":wg:", ":workgroup:", 1) for k in data if ":wg:" in k}
+        if not rewrites:
+            return
+        for old, new in rewrites.items():
+            data[new] = data.pop(old)
+        try:
+            with open(path, "w") as f:
+                yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
+            logger.info(
+                "Migrated %d sessions.yaml entries from 'wg:' to 'workgroup:' prefix",
+                len(rewrites),
+            )
+        except Exception as e:
+            logger.warning("sessions.yaml legacy-migration write failed (%s)", e)
 
     @property
     def local_dir(self) -> Path:

@@ -635,9 +635,11 @@
     }
   }
 
-  // Marker: chat ids of the form "wg:<sp_name>" are specialist sub-chats.
+  // Marker: chat ids of the form "workgroup:<sp_name>" are specialist sub-chats.
+  // ("wg:" is the legacy prefix; both honored during migration window.)
   function isSpecialistChat(chatId) {
-    return typeof chatId === "string" && chatId.startsWith("wg:");
+    return typeof chatId === "string"
+      && (chatId.startsWith("workgroup:") || chatId.startsWith("wg:"));
   }
 
   // Populate `<ul>` with one <li> per specialist of the given workgroup.
@@ -658,7 +660,7 @@
     for (const sp of cached) {
       const li = document.createElement("li");
       li.className = "specialist";
-      const chatId = `wg:${sp.name}`;
+      const chatId = `workgroup:${sp.name}`;
       if (state.bot === wgName && state.botMachine === machineId && state.chatId === chatId) {
         li.classList.add("active");
       }
@@ -672,10 +674,10 @@
   }
 
   // Open a specialist's chat. Same bot (the workgroup admin) but chat_id
-  // points at the specialist's virtual `wg:<name>` stream so the SSE
+  // points at the specialist's virtual `workgroup:<name>` stream so the SSE
   // subscription receives that specialist's events.
   async function selectSpecialist(machineId, wgName, sp) {
-    const chatId = `wg:${sp.name}`;
+    const chatId = `workgroup:${sp.name}`;
     // Make sure the target bot is loaded as the active bot first.
     if (state.bot !== wgName || state.botMachine !== machineId) {
       $("messages-mask").classList.remove("hidden");

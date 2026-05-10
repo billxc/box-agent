@@ -239,9 +239,9 @@ class TestCreateSpecialist:
         assert "not found" in result["error"]
 
     async def test_rejects_invalid_name_with_colon(self, tmp_path):
-        """Names with ':' would collide with the wg:<name> chat_id namespace."""
+        """Names with ':' would collide with the workgroup:<name> chat_id namespace."""
         mgr, _ = _make_manager(tmp_path)
-        result = await mgr.create_specialist("test-wg", "wg:foo")
+        result = await mgr.create_specialist("test-wg", "workgroup:foo")
         assert result["ok"] is False
         assert "invalid" in result["error"]
 
