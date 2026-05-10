@@ -1,8 +1,8 @@
 /* BoxAgent Web Chat — vanilla JS, no build step */
 (() => {
-  const qs = new URLSearchParams(location.search);
-  const TOKEN = qs.get("token") || localStorage.getItem("ba.token") || "";
-  if (qs.get("token")) localStorage.setItem("ba.token", TOKEN);
+  const params = new URLSearchParams(location.search);
+  const TOKEN = params.get("token") || localStorage.getItem("ba.token") || "";
+  if (params.get("token")) localStorage.setItem("ba.token", TOKEN);
 
   const $ = (id) => document.getElementById(id);
   const messagesEl = $("messages");
@@ -231,7 +231,7 @@
     requestAnimationFrame(() => { messagesEl.scrollTop = messagesEl.scrollHeight; });
   }
 
-  function renderMd(text) {
+  function renderMarkdown(text) {
     try {
       return window.marked
         ? window.marked.parse(text, { breaks: true, gfm: true })
@@ -245,10 +245,10 @@
   function buildMessage(role, text, opts = {}) {
     const el = document.createElement("div");
     el.className = "msg " + role;
-    const md = document.createElement("div");
-    md.className = "md";
-    md.innerHTML = role === "user" ? escapeHtml(text).replace(/\n/g, "<br>") : renderMd(text);
-    el.appendChild(md);
+    const markdown_el = document.createElement("div");
+    markdown_el.className = "markdown";
+    markdown_el.innerHTML = role === "user" ? escapeHtml(text).replace(/\n/g, "<br>") : renderMarkdown(text);
+    el.appendChild(markdown_el);
     // Per-message timestamp. ts is epoch seconds (server-assigned via WebChannel
     // _publish, or stored in transcript). Falls back to "now" for safety.
     const tsSec = (opts.ts && opts.ts > 0) ? opts.ts : (Date.now() / 1000);
@@ -271,9 +271,9 @@
       && d.getMonth() === now.getMonth()
       && d.getDate() === now.getDate();
     const pad = (n) => String(n).padStart(2, "0");
-    const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    if (sameDay) return hm;
-    return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}`;
+    const time_str = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    if (sameDay) return time_str;
+    return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${time_str}`;
   }
 
   function addMessage(role, text, opts = {}) {
@@ -432,14 +432,14 @@
   function touchSession(preview) {
     const key = curKey();
     const sessions = state.sessions[key] || {};
-    const cur = sessions[state.chatId] || { title: "Chat " + new Date().toLocaleString() };
-    cur.preview = preview.slice(0, 60);
-    cur.ts = Date.now();
-    sessions[state.chatId] = cur;
+    const current = sessions[state.chatId] || { title: "Chat " + new Date().toLocaleString() };
+    current.preview = preview.slice(0, 60);
+    current.ts = Date.now();
+    sessions[state.chatId] = current;
     state.sessions[key] = sessions;
     saveSessions(state.botMachine, state.bot, sessions);
     refreshSessionList();
-    chatTitle.textContent = cur.title;
+    chatTitle.textContent = current.title;
     // Bump global recents too — keeps the cross-bot Recent panel fresh.
     const botInfo = (state.machines || [])
       .find(m => m.machine_id === state.botMachine)?.bots
@@ -448,8 +448,8 @@
       machine: state.botMachine,
       bot: state.bot,
       chat_id: state.chatId,
-      title: cur.title,
-      preview: cur.preview,
+      title: current.title,
+      preview: current.preview,
       platform: state.chatId.startsWith("web-") ? "web"
         : state.chatId.startsWith("workgroup:") ? "workgroup"
         : "other",
@@ -568,14 +568,14 @@
         const s = state.streamMsgs[ev.message_id];
         if (!s) return;
         s.text = ev.text != null ? ev.text : s.text + (ev.delta || "");
-        s.el.querySelector(".md").innerHTML = renderMd(s.text);
+        s.el.querySelector(".markdown").innerHTML = renderMarkdown(s.text);
         scrollDown();
         break;
       }
       case "stream_end": {
         const s = state.streamMsgs[ev.message_id];
         if (s) {
-          if (ev.text) s.el.querySelector(".md").innerHTML = renderMd(ev.text);
+          if (ev.text) s.el.querySelector(".markdown").innerHTML = renderMarkdown(ev.text);
           touchSession(ev.text || s.text);
           delete state.streamMsgs[ev.message_id];
         }
@@ -616,8 +616,8 @@
   }
 
   function _buildToolCard(toolId, name, args) {
-    const det = document.createElement("details");
-    det.className = "tool-card";
+    const details_el = document.createElement("details");
+    details_el.className = "tool-card";
     const summary = document.createElement("summary");
     summary.className = "tool-card-header";
     summary.textContent = `▶ ${name}(${_argSummary(args)})`;
@@ -626,10 +626,10 @@
     try { body.textContent = JSON.stringify(args, null, 2); } catch { body.textContent = String(args); }
     const result = document.createElement("div");
     result.className = "tool-card-result hidden";
-    det.appendChild(summary);
-    det.appendChild(body);
-    det.appendChild(result);
-    return { el: det, headerEl: summary, bodyEl: body, resultEl: result, name, args, toolId };
+    details_el.appendChild(summary);
+    details_el.appendChild(body);
+    details_el.appendChild(result);
+    return { el: details_el, headerEl: summary, bodyEl: body, resultEl: result, name, args, toolId };
   }
 
   function _applyToolResult(toolId, ok, summary, error) {
@@ -779,17 +779,17 @@
       const bots = document.createElement("ul");
       bots.className = "machine-bots";
       for (const b of (m.bots || [])) {
-        const bli = document.createElement("li");
+        const bot_li = document.createElement("li");
         if (state.bot === b.name && state.botMachine === m.machine_id && !isSpecialistChat(state.chatId)) {
-          bli.classList.add("active");
+          bot_li.classList.add("active");
         }
-        bli.innerHTML = `<span>${escapeHtml(b.display_name || b.name)}</span><span class="kind">${b.kind || "bot"}</span>`;
-        bli.onclick = (e) => {
+        bot_li.innerHTML = `<span>${escapeHtml(b.display_name || b.name)}</span><span class="kind">${b.kind || "bot"}</span>`;
+        bot_li.onclick = (e) => {
           e.stopPropagation();
           if (!m.online) { alert(`Machine ${m.machine_id} is offline`); return; }
           selectBot(b.name, m.machine_id);
         };
-        bots.appendChild(bli);
+        bots.appendChild(bot_li);
 
         // For local workgroup admins, render specialists as collapsible
         // children so users can open each specialist's stream directly.
@@ -797,7 +797,7 @@
         if (b.kind === "workgroup" && m.self) {
           const subUl = document.createElement("ul");
           subUl.className = "machine-bots specialist-sublist";
-          bli.appendChild(subUl);
+          bot_li.appendChild(subUl);
           renderSpecialistsInto(subUl, m.machine_id, b.name);
         }
       }
@@ -1015,8 +1015,8 @@
     const key = curKey();
     const server = (state.serverSessions[key] || []).find(s => s.chat_id === state.chatId);
     const sessions = state.sessions[key] || {};
-    const cur = sessions[state.chatId] || {};
-    const currentTitle = (server && (server.custom_title || server.summary)) || cur.title || "";
+    const current = sessions[state.chatId] || {};
+    const currentTitle = (server && (server.custom_title || server.summary)) || current.title || "";
     const t = prompt("Rename session:", currentTitle);
     if (t == null) return;
     const newTitle = t.trim();
@@ -1047,8 +1047,8 @@
       }
     } else {
       // No backend session yet (brand-new web chat) — fall back to local rename.
-      cur.title = newTitle;
-      sessions[state.chatId] = cur;
+      current.title = newTitle;
+      sessions[state.chatId] = current;
       state.sessions[key] = sessions;
       saveSessions(state.botMachine, state.bot, sessions);
     }
