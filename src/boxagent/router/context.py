@@ -79,7 +79,7 @@ def build_session_context(
 
     # Workgroup agent delegation info
     if workgroup_agents:
-        from boxagent.workgroup.manager import format_running_tasks
+        from boxagent.workgroup.formatting import format_running_tasks
 
         lines.append("")
         lines.append("[Workgroup]")

@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,6 +19,7 @@ from boxagent.workgroup.channel_adapter import (
     WebWorkgroupAdapter,
     WorkgroupChannelAdapter,
 )
+from boxagent.workgroup.formatting import extract_specialist_response
 from boxagent.workgroup.heartbeat import HeartbeatManager
 from boxagent.workgroup.persistence import (
     load_saved_specialists,
@@ -57,31 +57,6 @@ BUILTIN_TEMPLATES_DIR = Path(__file__).parent / "templates" / "builtin_templates
 
 def _workgroup_templates_dir(workgroup_config: WorkgroupConfig) -> Path:
     return Path(workgroup_config.workgroup_dir) / "templates" if workgroup_config.workgroup_dir else Path()
-
-
-def format_running_tasks(running_tasks: list[dict] | None) -> str:
-    """Format running tasks into a display block. Used by context and heartbeat."""
-    if not running_tasks:
-        return "No specialist tasks currently running."
-    lines = ["Currently running specialist tasks:"]
-    for t in running_tasks:
-        elapsed = ""
-        started = t.get("started_at", 0)
-        if started:
-            secs = int(time.time() - started)
-            mins, s = divmod(secs, 60)
-            elapsed = f" (running {mins}m {s}s)"
-        active = " [active]" if t.get("active") else " [queued]"
-        lines.append(f"  - {t.get('task_id', '?')}: {t.get('target', '?')}{elapsed}{active}")
-    return "\n".join(lines)
-
-
-def _extract_specialist_response(text: str) -> str:
-    """Extract content from <specialist_response> tags. Falls back to raw text."""
-    m = re.search(r"<specialist_response>(.*?)</specialist_response>", text, re.DOTALL)
-    if m:
-        return m.group(1).strip()
-    return text.strip()
 
 
 @dataclass
@@ -429,7 +404,7 @@ class WorkgroupManager:
                     await adapter.post_task(target, specialist_config, text, workgroup_display)
 
                 raw_result = await router.dispatch_sync(wrapped_text, chat_id, from_bot=from_bot)
-                result = _extract_specialist_response(raw_result)
+                result = extract_specialist_response(raw_result)
                 self.tasks.finish(task_id, result)
                 logger.info("Task %s completed (%d chars)", task_id, len(result))
             except Exception as e:

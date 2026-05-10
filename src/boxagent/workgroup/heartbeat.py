@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from boxagent.workgroup.formatting import format_running_tasks
+
 if TYPE_CHECKING:
     from boxagent.router import Router
     from boxagent.sessions import SessionPool
@@ -38,8 +40,6 @@ def _build_heartbeat_prompt(
     uptime_seconds: float = 0,
     running_tasks: list[dict] | None = None,
 ) -> str:
-    from boxagent.workgroup.manager import format_running_tasks
-
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
     # Format uptime

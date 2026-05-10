@@ -1,15 +1,12 @@
 """Unit tests for workgroup package — manager, heartbeat, templates."""
 
 import time
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
-from boxagent.workgroup.manager import (
-    WorkgroupManager,
+from boxagent.workgroup.manager import WorkgroupManager
+from boxagent.workgroup.formatting import (
     format_running_tasks,
-    _extract_specialist_response,
+    extract_specialist_response,
 )
 from boxagent.workgroup.heartbeat import (
     HeartbeatManager,
@@ -67,30 +64,30 @@ class TestFormatRunningTasks:
 
 
 # ---------------------------------------------------------------------------
-# _extract_specialist_response
+# extract_specialist_response
 # ---------------------------------------------------------------------------
 
 
 class TestExtractSpecialistResponse:
     def test_with_tags(self):
         text = "Thinking...\n<specialist_response>\nDone. Fixed the bug.\n</specialist_response>"
-        assert _extract_specialist_response(text) == "Done. Fixed the bug."
+        assert extract_specialist_response(text) == "Done. Fixed the bug."
 
     def test_without_tags_fallback(self):
         text = "Just a plain response"
-        assert _extract_specialist_response(text) == "Just a plain response"
+        assert extract_specialist_response(text) == "Just a plain response"
 
     def test_extra_content_after_tags(self):
         text = "<specialist_response>Result here</specialist_response>\ntrailing"
-        assert _extract_specialist_response(text) == "Result here"
+        assert extract_specialist_response(text) == "Result here"
 
     def test_multiline_content(self):
         text = "<specialist_response>\nLine 1\nLine 2\nLine 3\n</specialist_response>"
-        assert _extract_specialist_response(text) == "Line 1\nLine 2\nLine 3"
+        assert extract_specialist_response(text) == "Line 1\nLine 2\nLine 3"
 
     def test_empty_tags(self):
         text = "<specialist_response></specialist_response>"
-        assert _extract_specialist_response(text) == ""
+        assert extract_specialist_response(text) == ""
 
 
 # ---------------------------------------------------------------------------
