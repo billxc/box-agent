@@ -70,6 +70,25 @@ uv run pytest tests/unit/test_xxx.py::TestNewClass -x -q
 uv run pytest tests/unit/test_xxx.py -x -q
 ```
 
+#### 测试 backend / channel 用 MockBackend / MockChannel，**不要手搓 AsyncMock**
+
+```python
+from boxagent.testing.mocks import MockBackend, MockChannel
+
+backend = MockBackend(session_id="sess_x", supports_session_persistence=True)
+backend.script(["chunk1", "chunk2"])      # 脚本化 stream chunks
+backend.script_handler(custom_async_fn)   # 复杂行为：raise / event 同步
+backend.fail_next_turn("error msg")       # 模拟 turn 失败
+
+channel = MockChannel()
+# ... router 跑一轮 ...
+assert backend.sends[-1].message == "..."          # 看 backend 收到啥
+assert channel.sent_texts[-1] == ("chat_id", "...")
+assert channel.streams[-1].chunks == ["chunk1", "chunk2"]
+```
+
+**黑盒 e2e 测试**：`tests/unit/test_router_e2e.py` 是范本——所有断言只看 MockBackend.sends + MockChannel.sent_texts/streams，从不 peek `router._compact_summaries` 之类的私有状态。新写整链路测试时照这个模板。
+
 ### Step 4: 实现
 
 - 改动尽量小，能 30 行解决的不要写 100 行
@@ -143,7 +162,7 @@ Step 1 可以简化，但 Step 3（写测试）和 Step 5（验证）不能省�
 ## 架构概览（当前真实的）
 
 ```
-Telegram → TelegramChannel → Router → ClaudeProcess / CodexProcess / ACPProcess
+Telegram → TelegramChannel → Router → ClaudeProcess / CodexProcess / SDKClaude / SDKCopilot
                                   ↓
                               Gateway（装配所有组件）
                               Storage（session 持久化）
@@ -222,35 +241,53 @@ Telegram → TelegramChannel → Router → ClaudeProcess / CodexProcess / ACPPr
 
 | 路径 | 干什么的 |
 |------|----------|
-| `src/boxagent/gateway.py` | 组件装配、启停、HTTP API |
-| `src/boxagent/router.py` | 消息分发、命令、typing、transcript |
-| `src/boxagent/router_callback.py` | ChannelCallback 实现、TextCollector、日志 |
-| `src/boxagent/router_commands.py` | 系统命令处理器（/status, /new, /cancel 等） |
-| `src/boxagent/context.py` | 用户/chat 上下文数据类 |
+| `src/boxagent/gateway.py` | Gateway 装配 + InternalApiServer + 内部 HTTP API |
+| `src/boxagent/router/core.py` | Router：消息分发、命令、typing、transcript |
+| `src/boxagent/router/callback.py` | ChannelCallback、TextCollector、log_turn |
+| `src/boxagent/router/commands/` | slash 命令（@command 装饰器自动发现） |
+| `src/boxagent/router/context.py` | 首条消息的 system prompt context 拼接 |
+| `src/boxagent/agent/protocol.py` | AgentBackend Protocol + BACKEND_KINDS |
+| `src/boxagent/agent/backend_factory.py` | create_backend() 按 ai_backend 分发 |
+| `src/boxagent/agent/agent_manager.py` | AgentManager：per-bot 生命周期、watchdog |
 | `src/boxagent/agent/base_cli.py` | CLI backend 共享基类 |
 | `src/boxagent/agent/claude_process.py` | Claude CLI backend |
 | `src/boxagent/agent/codex_process.py` | Codex CLI backend |
-| `src/boxagent/agent/acp_process.py` | Codex ACP backend |
-| `src/boxagent/channels/telegram.py` | Telegram 输入输出、流式编辑 |
-| `src/boxagent/channels/web.py` | Web UI channel（per-chat SSE 队列，stream_start/update/end） |
-| `src/boxagent/web/static/` | Web UI 前端（vanilla HTML/CSS/JS，markdown 流式渲染、Claude session picker） |
-| `src/boxagent/cluster/registry.py` | Host 端：satellite WS 接入 + RemoteBot 注册表 + RPC 路由 |
-| `src/boxagent/cluster/sat_client.py` | Satellite 端：dial host、auto-reconnect、把入站 RPC 重发到本机 web 服务器 |
-| `src/boxagent/cluster/tunnel.py` | Host 自动 `devtunnel create + host`（不带 -a，认证 tunnel） |
-| `src/boxagent/sessions/claude_native.py` | 解析 ~/.claude/projects 下的原生 JSONL（项目列举、transcript 抽取） |
-| `src/boxagent/channels/splitter.py` | 长消息拆分 |
-| `src/boxagent/channels/md_format.py` | Markdown 格式转换（Telegram MarkdownV2） |
-| `src/boxagent/scheduler.py` | 定时任务 |
-| `src/boxagent/schedule_cli.py` | schedule 子命令（add/list/show 等） |
-| `src/boxagent/config.py` | 配置解析 |
-| `src/boxagent/storage.py` | Session 持久化 |
+| `src/boxagent/agent/sdk_claude_process.py` | claude_agent_sdk in-process backend |
+| `src/boxagent/agent/sdk_copilot_process.py` | GitHub Copilot SDK in-process backend |
+| `src/boxagent/agent/mcp_endpoints.py` | pick_mcp_endpoints() 共享 helper |
+| `src/boxagent/transports/telegram/channel.py` | Telegram 输入输出、流式编辑 |
+| `src/boxagent/transports/web/channel.py` | Web UI channel（per-chat SSE 队列） |
+| `src/boxagent/transports/web/server.py` | Web UI HTTP server |
+| `src/boxagent/transports/web/static/` | Web UI 前端（vanilla HTML/CSS/JS，markdown 流式渲染） |
+| `src/boxagent/transports/mcp/server.py` | MCP HTTP server (create_mcp_app + McpHttpServer) |
+| `src/boxagent/transports/telegram/splitter.py` | 长消息拆分 |
+| `src/boxagent/transports/telegram/md_format.py` | Markdown 格式转换（Telegram MarkdownV2） |
+| `src/boxagent/cluster/registry.py` | Host：guest WS 接入 + GuestRegistry + wire protocol |
+| `src/boxagent/cluster/guest_client.py` | Guest：dial host + auto-reconnect + RPC 转发 |
+| `src/boxagent/cluster/host_election.py` | host vs guest 选举 + failover |
+| `src/boxagent/cluster/peer_service.py` | send_to_peer 跨机投递 |
+| `src/boxagent/cluster/topology_service.py` | peer/machine 描述符 |
+| `src/boxagent/cluster/tunnel.py` | host 自动管理 devtunnel 进程 |
+| `src/boxagent/sessions/storage.py` | Session 持久化（session_history.yaml + transcripts） |
+| `src/boxagent/sessions/browser/` | /sessions + /resume 浏览器（合并 history + Storage） |
+| `src/boxagent/history/` | Read-only adapters：Claude/Codex/Copilot 原生 transcript |
+| `src/boxagent/tools/registry.py` | @boxagent_tool 装饰器 + tools_for() |
+| `src/boxagent/tools/builtin/` | 内置 MCP 工具（admin/peer/schedule/sessions/telegram_media） |
+| `src/boxagent/tools/adapters/` | backend-specific MCP 包装（mcp_http / claude_sdk / copilot_sdk） |
+| `src/boxagent/scheduler/engine.py` | Scheduler 主循环 |
+| `src/boxagent/scheduler/cli.py` | `boxagent schedule` 子命令 |
+| `src/boxagent/workgroup/manager.py` | WorkgroupManager：admin + specialist 编排 |
+| `src/boxagent/workgroup/heartbeat.py` | HeartbeatManager：admin 周期性自驱动 |
+| `src/boxagent/testing/mocks.py` | **MockBackend / MockChannel — 写测试时用这个，别手搓 AsyncMock** |
+| `src/boxagent/config.py` | AppConfig / BotConfig / WorkgroupConfig / SpecialistConfig |
+| `src/boxagent/agent_env.py` | AgentEnv / ChannelInfo（每条消息的 env 快照） |
 | `src/boxagent/watchdog.py` | 自动重启 |
-| `src/boxagent/paths.py` | 路径解析 |
 | `src/boxagent/doctor.py` | doctor --fix 依赖检查 |
-| `src/boxagent/mcp_server.py` | Telegram 媒体 MCP 工具 |
 | `docs/codebase-guide.md` | **当前架构的真实描述** |
+| `docs/current-architecture.md` | 4 层结构 + 3 条信息流时序图 + 数据类污染分析 |
 | `docs/vision.md` | 远景（参考，不要当指令） |
 | `docs/decisions.md` | 决策记录 |
+| `docs/archive/` | 已实现 / 未采纳的旧设计提案 |
 
 ## 快速命令
 
