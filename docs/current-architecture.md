@@ -319,9 +319,9 @@ class ChannelCallback:
 
 - `""` → 普通 bot
 - `"admin"` → workgroup 管理员
-- `"specialist"` → **从来没人写这个值**
+- `"specialist"` → **代码里从未真正赋值**
 
-`WorkgroupManager._create_specialist_agent` 创建 specialist router 时**没设** `workgroup_role`。所以 `is_specialist` property 永远返回 False。代码里看似有 specialist 概念但 router 自己不知道。
+`WorkgroupManager._create_specialist_agent` 创建 specialist router 时只让 `workgroup_role` 留默认 `""`——**这是有意的**，specialist Router 跟普通 Router 在路由层不区分。区分依据是 `IncomingMessage.via_workgroup`（派活时设 True），不是 router 角色字段。所以 `AgentEnv.is_specialist` property 永远返回 False，是 dead code，可以删。
 
 ### c) `via_workgroup` 在 peer message 上是 False
 
@@ -358,7 +358,7 @@ class ChannelCallback:
 | 入口 channel | telegram/web | web | "internal"（dispatch_sync） | "internal" |
 | `IncomingMessage.via_workgroup` | False | False（用户来时）/ True（specialist 回调时） | True | **False** ⚠️ |
 | `IncomingMessage.trusted` | False | False / True（回调时） | True | True |
-| `Router.workgroup_role` | `""` | `"admin"` | **`""`** ⚠️（没设） |  |
+| `Router.workgroup_role` | `""` | `"admin"` | **`""`**（有意，详见 5(b)） |  |
 | `AgentEnv.is_workgroup_admin` | False | True | False | True（admin 在收 peer msg） |
 | backend MCP servers | base + (telegram?) | base + admin + (telegram?) + peer | base | base + admin + peer |
 | chat_id 形态 | telegram int / web uuid | web uuid + main-chat-id | `wg:<name>` | main-chat-id |
@@ -368,7 +368,7 @@ class ChannelCallback:
 ## 已识别的疑似 bug 风险点（不是确证 bug）
 
 1. **peer message 上 `via_workgroup` 没设**——见 5(c)
-2. **specialist 的 `workgroup_role` 没设**——见 5(b)，`is_specialist` 是 dead code
+2. **`AgentEnv.is_specialist` 是 dead code**——见 5(b)，specialist Router 故意不设 `workgroup_role`，property 永远 False，可以删
 3. **`from_bot` / `sender` 跨机投递无验证**——见 5(f)
 4. **三条入口（user / specialist callback / peer / heartbeat）都打 admin router 同一 chat_id**，pending message buffer 行为复杂——见流 B + 流 C 都用 `main_chat_id_provider`
 5. **`_compact_summaries` / `_resume_contexts` 是内存 dict**，admin router 跨进程重启丢失（你之前提过）

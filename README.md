@@ -254,7 +254,7 @@ The agents themselves get a built-in MCP server exposing BoxAgent tools (send me
 | `send_audio` | Send an audio file (mp3, ogg, etc.) |
 | `send_animation` | Send a GIF animation |
 | `sessions_list` | Browse unified sessions with search and filters |
-| `send_to_specialist` | Workgroup admin → specialist task delegation |
+| `send_to_agent` | Workgroup admin → specialist task delegation |
 | `send_to_peer` | Workgroup admin → another admin (cross-node OK) |
 
 These tools are injected automatically when a chat-backed turn is running. Isolate schedules do not currently receive Telegram media MCP injection.
@@ -293,7 +293,7 @@ Guests do not need their own public exposure (NAT-friendly outbound WS).
 
 ## Workgroup (multi-agent)
 
-A workgroup is one **admin** agent plus zero or more **specialist** agents. The user only talks to the admin; the admin delegates tasks to specialists via the `send_to_specialist` MCP tool, specialists return results, the admin replies. Specialists can live on the same machine or on another cluster node.
+A workgroup is one **admin** agent plus zero or more **specialist** agents. The user only talks to the admin; the admin delegates tasks to specialists via the `send_to_agent` MCP tool, specialists return results, the admin replies. Specialists can live on the same machine or on another cluster node.
 
 Add to `config.yaml` alongside `bots:`:
 
@@ -469,72 +469,99 @@ BOXAGENT_TEST_BOT_TOKEN="..." BOXAGENT_TEST_CHAT_ID="..." uv run pytest -m integ
 
 ```
 src/boxagent/
-├── main.py                 # Entry point, CLI args, signal handling
-├── config.py               # YAML config loading + validation
-├── paths.py                # Path resolution (config dir, local dir, workspace)
-├── doctor.py               # `doctor --fix` env check + dep installer
-├── watchdog.py             # Per-bot process liveness monitor
-├── agent_env.py            # AgentEnv (per-turn agent context)
-├── utils.py                # Shared helpers (deep_merge, infer_platform, ...)
+├── main.py                  # Entry point, CLI args, signal handling
+├── gateway.py               # Gateway composition root + InternalApiServer
+├── config.py                # YAML config loading + validation
+├── doctor.py                # `doctor --fix` env check + dep installer
+├── watchdog.py              # Per-bot process liveness monitor
+├── agent_env.py             # AgentEnv (per-turn agent context)
+├── utils.py                 # Shared helpers
 │
-├── agent/                  # Backend CLI adapters + per-bot orchestration
-│   ├── manager.py            # BotManager: per-bot startup/restart, helpers
-│   ├── base_cli.py           # Shared subprocess-per-turn base class
-│   ├── claude_process.py     # Claude CLI backend
-│   ├── codex_process.py      # Codex CLI backend
-│   └── callback.py           # AgentCallback protocol
+├── agent/                   # Backend adapters + per-bot orchestration
+│   ├── protocol.py            # AgentBackend Protocol + BACKEND_KINDS
+│   ├── backend_factory.py     # create_backend() dispatches by ai_backend
+│   ├── agent_manager.py       # AgentManager: per-bot startup/restart
+│   ├── workspace.py           # ensure_git_repo / sync_skills
+│   ├── base_cli.py            # Shared subprocess-per-turn base
+│   ├── claude_process.py      # Claude CLI backend
+│   ├── codex_process.py       # Codex CLI backend
+│   ├── sdk_claude_process.py  # claude_agent_sdk (in-process)
+│   ├── sdk_copilot_process.py # GitHub Copilot SDK (in-process)
+│   ├── callback.py            # AgentCallback Protocol
+│   └── mcp_endpoints.py       # pick_mcp_endpoints() — shared MCP wiring
 │
-├── transports/             # External interaction (channels)
-│   ├── base.py               # Channel protocol + IncomingMessage / Attachment
-│   ├── telegram/             # Telegram bot (aiogram 3) + markdown / splitter
-│   ├── web/                  # Web UI: SSE channel + HTTP server + handlers
-│   └── mcp/                  # MCP HTTP server (tools exposed to agents)
+├── transports/              # External interaction (channels)
+│   ├── base.py                # Channel Protocol + IncomingMessage / Attachment
+│   ├── telegram/              # Telegram bot (aiogram 3) + markdown / splitter
+│   ├── web/                   # Web UI: SSE channel + HTTP server + static/
+│   └── mcp/                   # MCP HTTP server (create_mcp_app + McpHttpServer)
 │
-├── router/                 # Per-bot session control (auth, /-cmds, dispatch)
-│   ├── core.py               # Router class
-│   ├── commands.py           # /-command handlers (status, new, exec, ...)
-│   ├── context.py            # First-message session context builder
-│   ├── env_builder.py        # AgentEnv assembly
-│   └── callback.py           # ChannelCallback adapting agent → channel
+├── router/                  # Per-bot session control (auth, /-cmds, dispatch)
+│   ├── core.py                # Router class
+│   ├── callback.py            # ChannelCallback adapting agent → channel
+│   ├── context.py             # First-message session context builder
+│   ├── env_builder.py         # IncomingMessage → AgentEnv
+│   └── commands/              # /-command handlers (auto-discovered)
+│       ├── registry.py          # @command decorator + COMMAND_REGISTRY
+│       ├── info.py              # /status /help /version /verbose
+│       ├── session.py           # /new /cancel /resume /compact /model /cd /backend
+│       ├── tools.py             # /exec /schedule
+│       └── workspace.py         # /sessions /trust_workspace /sync_skills
 │
-├── sessions/               # Persistence + per-chat backend pool
-│   ├── ...                   # Storage, SessionPool, RawSessionPool, claude_native
-│   └── browser/              # /sessions slash command + MCP `sessions` tool helpers
+├── sessions/                # chat ↔ session_id binding + browse
+│   ├── storage.py             # session_history.yaml + transcripts
+│   ├── base_pool.py           # BaseSessionPool (chat ↔ backend mapping)
+│   ├── pool.py                # SessionPool (pre-warmed, shared)
+│   ├── raw_pool.py            # RawSessionPool (per-chat lazy)
+│   └── browser/               # /sessions + /resume helpers (merges history + Storage)
 │
-├── scheduler/              # Cron-based task scheduler
-│   ├── engine.py             # Scheduler loop + catch-up
-│   └── cli.py                # `boxagent schedule` subcommands + business fns
+├── history/                 # Read-only adapters over backends' native session storage
+│   ├── protocol.py            # AgentHistory Protocol
+│   ├── claude.py              # Reads ~/.claude/projects/
+│   ├── codex.py               # Reads ~/.codex/sessions/
+│   ├── copilot.py             # Copilot SDK sessions
+│   └── factory.py             # get_history(backend)
 │
-├── cluster/                # Multi-machine networking (hub-and-spoke)
-│   ├── tunnel.py             # Devtunnel lifecycle (host)
-│   ├── devtunnel.py
-│   ├── host_election.py      # Cluster role manager (host vs guest)
-│   ├── registry.py           # Host-side guest registry
-│   ├── guest_client.py       # Guest-side dial + RPC forwarding
-│   ├── peer.py               # Cross-admin peer messaging
-│   ├── rpc.py                # Host↔guest HTTP/SSE proxy
-│   ├── routes.py             # Cluster HTTP routes (peer/send, guest/ws)
-│   └── topology.py           # Peer descriptors + machine snapshots
+├── tools/                   # Unified MCP tool registry
+│   ├── registry.py            # @boxagent_tool + tools_for() / env_capabilities()
+│   ├── builtin/               # Tool definitions (admin/peer/schedule/sessions/telegram_media)
+│   └── adapters/              # Backend-specific MCP wrappers
+│       ├── mcp_http.py          # registry → FastMCP HTTP (claude-cli / codex-cli)
+│       ├── claude_sdk.py        # registry → SdkMcpServer (agent-sdk-claude)
+│       └── copilot_sdk.py       # registry → native Tool list (agent-sdk-copilot)
 │
-├── workgroup/              # Multi-agent collaboration (admin + specialists)
-│   ├── manager.py            # WorkgroupManager: admin + specialist orchestration
-│   ├── routes.py             # Workgroup HTTP routes (specialist CRUD, send)
-│   ├── channel_adapter.py    # Bridge specialist → admin channel
-│   ├── heartbeat.py          # Periodic specialist self-check
-│   ├── task_queue.py
-│   ├── persistence.py
-│   ├── specialist_skills.py
-│   ├── template_loader.py
-│   ├── workspace_templates.py
-│   └── templates/
+├── scheduler/               # Cron-based task scheduler
+│   ├── engine.py              # Scheduler loop + catch-up
+│   ├── cli.py                 # `boxagent schedule` subcommands
+│   └── http_routes.py         # POST /api/schedule/run handler
 │
-├── gateway/                # Local control plane (composes everything above)
-│   ├── core.py               # _GatewayCore state + Gateway class + start/stop
-│   └── http_api.py           # Internal API server + MCP server lifecycle
+├── cluster/                 # Multi-machine networking (hub-and-spoke)
+│   ├── tunnel.py              # Host-side devtunnel lifecycle
+│   ├── devtunnel.py           # Devtunnel CLI helpers
+│   ├── host_election.py       # Host vs guest election + failover
+│   ├── registry.py            # Host: GuestRegistry + GuestSession (wire protocol)
+│   ├── guest_client.py        # Guest: dial + RPC forwarding
+│   ├── peer_service.py        # send_to_peer cross-admin messaging
+│   ├── rpc.py                 # Host↔guest HTTP/SSE proxy
+│   ├── http_routes.py         # Cluster HTTP routes (peer/send, guest/ws)
+│   └── topology_service.py    # Peer descriptors + machine snapshots
 │
-└── web/static/             # Web UI frontend (vanilla HTML/CSS/JS)
+├── workgroup/               # Multi-agent collaboration (admin + specialists)
+│   ├── manager.py             # WorkgroupManager: admin + specialist orchestration
+│   ├── http_routes.py         # Workgroup HTTP routes (specialist CRUD, send)
+│   ├── channel_adapter.py     # Workgroup transport adapter (Web + Null)
+│   ├── heartbeat.py           # HeartbeatManager (admin self-driver)
+│   ├── task_queue.py          # SpecialistTaskQueue
+│   ├── persistence.py         # workgroup_specialists.yaml
+│   ├── specialist_skills.py   # Template-driven skill linking
+│   ├── template_loader.py     # Template discovery + loading
+│   ├── workspace_templates.py # admin/specialist workspace seeding
+│   └── templates/             # Built-in admin / specialist templates
+│
+└── testing/
+    └── mocks.py             # MockBackend / MockChannel — canonical test doubles
 
-ios/BoxAgent/               # Native iOS client (SwiftUI, separate target)
+ios/BoxAgent/                # Native iOS client (SwiftUI, separate target)
 ```
 
 Tests live under `tests/unit/` (run by default) and `tests/integration/` (opt-in with `-m integration`). For deeper module-level docs see `docs/codebase-guide.md`.
