@@ -108,6 +108,11 @@ class Message:
     ok: bool | None = None
     summary: str = ""
     error: str = ""
+    # Per-record context (populated by ClaudeAgentHistory; other backends
+    # may leave blank). cwd is the working directory at the time of the
+    # turn; git_branch is the branch name from the JSONL transcript.
+    cwd: str = ""
+    git_branch: str = ""
 
 
 @runtime_checkable

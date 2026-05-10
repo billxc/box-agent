@@ -298,3 +298,15 @@ src/ 净 -37 行（核心收益在 core.py：-127/+45 = 净 -82）。Gateway.sto
 **额外发现**：Telegram channel 的 `_bot: Bot | None` + 17 处 `self._bot.X` 早就有 hidden race，重构成 `@property bot` 后干净了。
 
 **测试**: 826 passed（无回归）。`uv run pyright src/` 现在 0 errors。
+
+## 2026-05-10 — Monkey patch SDK 透出 timestamp / cwd / gitBranch
+
+`/api/history` 在 Claude 路径下 `ts` 始终是 `0.0`（commit 2ff486d 引入的回归）。根因：`claude_agent_sdk.SessionMessage` 只暴露 `type/uuid/session_id/message/parent_tool_use_id`，把 JSONL 顶层的 `timestamp/cwd/gitBranch` 全吞了；我们的 `_msg_timestamp` 还往 `msg.message`（内层 API dict）里掏，永远拿不到。
+
+**方案**：monkey patch SDK 唯一构造点 `_internal.sessions._to_session_message`，把 `entry["timestamp"/"cwd"/"gitBranch"]` 作为属性塞回 `SessionMessage`（普通 dataclass，无 slots/frozen，可 setattr）。
+
+**位置**：`src/boxagent/history/_sdk_patch.py`，由 `boxagent/history/__init__.py` 导入时 `apply()`。失败回落（SDK API 改名）记 warning + 走旧 `ts=0.0` 行为。
+
+**协议变化**：`Message` dataclass 加 `cwd: str = ""` / `git_branch: str = ""`；`/api/history` 的 record 里非空时才带这俩字段。
+
+**测试**：`tests/unit/test_sdk_patch.py` 直接调 `_to_session_message` 喂合成 entry 验证 patch；SDK 升级改了名 / 改了字段会立刻挂掉提醒。

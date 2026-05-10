@@ -160,10 +160,15 @@ class ClaudeAgentHistory:
             return []
         content = raw.get("content")
         role = msg.type
-        ts = self._msg_timestamp(raw)
+        ts = self._msg_timestamp(msg, raw)
+        cwd = getattr(msg, "cwd", None) or ""
+        git_branch = getattr(msg, "git_branch", None) or ""
+
+        def _new(role_: str, **kwargs) -> Message:
+            return Message(role=role_, ts=ts, cwd=cwd, git_branch=git_branch, **kwargs)
 
         if isinstance(content, str):
-            return [Message(role=role, text=content, ts=ts)] if content else []
+            return [_new(role, text=content)] if content else []
         if not isinstance(content, list):
             return []
 
@@ -174,7 +179,7 @@ class ClaudeAgentHistory:
             if text_buf:
                 joined = "\n".join(p for p in text_buf if p)
                 if joined:
-                    out.append(Message(role=role, text=joined, ts=ts))
+                    out.append(_new(role, text=joined))
                 text_buf.clear()
 
         for item in content:
@@ -188,30 +193,40 @@ class ClaudeAgentHistory:
             elif block_type == "tool_use":
                 _flush_text()
                 args = item.get("input") if isinstance(item.get("input"), dict) else {}
-                out.append(Message(
-                    role="tool_call",
+                out.append(_new(
+                    "tool_call",
                     tool_id=item.get("id", "") or "",
                     name=item.get("name", "") or "",
                     args=args or {},
-                    ts=ts,
                 ))
             elif block_type == "tool_result":
                 _flush_text()
                 summary, error = self._stringify_tool_result(item.get("content"))
                 is_error = bool(item.get("is_error"))
-                out.append(Message(
-                    role="tool_result",
+                out.append(_new(
+                    "tool_result",
                     tool_id=item.get("tool_use_id", "") or "",
                     ok=not is_error,
                     summary="" if is_error else summary,
                     error=(error or summary) if is_error else "",
-                    ts=ts,
                 ))
         _flush_text()
         return out
 
     @staticmethod
-    def _msg_timestamp(raw: dict) -> float:
+    def _msg_timestamp(msg: SessionMessage, raw: dict) -> float:
+        # Preferred path: monkey patch in boxagent.history._sdk_patch attaches
+        # entry["timestamp"] (ISO 8601 string) onto the SessionMessage.
+        patched = getattr(msg, "timestamp", None)
+        if isinstance(patched, str) and patched:
+            try:
+                return datetime.fromisoformat(patched.replace("Z", "+00:00")).timestamp()
+            except Exception:
+                pass
+        elif isinstance(patched, (int, float)):
+            return float(patched)
+        # Fallback: try the inner API message dict (older SDK versions or
+        # patch failure). Keys vary; check the common ones.
         for key in ("timestamp", "created_at", "ts"):
             v = raw.get(key)
             if v is None:

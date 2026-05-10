@@ -58,6 +58,10 @@ def _message_to_dict(m) -> dict:
     """Serialise a ``boxagent.history.Message`` to the legacy record shape
     consumed by the web UI's transcript replay."""
     base = {"role": m.role, "ts": m.ts}
+    if m.cwd:
+        base["cwd"] = m.cwd
+    if m.git_branch:
+        base["git_branch"] = m.git_branch
     if m.role in ("user", "assistant", "skill_output"):
         base["text"] = m.text
     elif m.role == "tool_call":
