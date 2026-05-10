@@ -102,7 +102,7 @@ class TestAutoCreateDirs:
         """Local directory tree auto-created."""
         local_dir = tmp_path / "boxagent-local"
         storage = Storage(local_dir=local_dir)
-        storage.save_session("test", "sess")
+        storage.save_session("test", "session")
 
         assert (local_dir / "sessions.yaml").exists()
 

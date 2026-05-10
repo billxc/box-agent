@@ -348,32 +348,32 @@ class TestGrepSessions:
     def test_match_in_content(self, tmp_path, monkeypatch):
         monkeypatch.setattr("boxagent.sessions.browser.loaders.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
-        _write_jsonl(projects_dir, "proj", "sess-1", [
+        _write_jsonl(projects_dir, "proj", "session-1", [
             _make_user_message("please fix the pineapple bug"),
             _make_assistant_message("done"),
         ])
-        entries = [{"sessionId": "sess-1", "project": "proj"}]
+        entries = [{"sessionId": "session-1", "project": "proj"}]
         result = _grep_sessions(entries, "pineapple")
         assert len(result) == 1
 
     def test_no_match_in_content(self, tmp_path, monkeypatch):
         monkeypatch.setattr("boxagent.sessions.browser.loaders.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
-        _write_jsonl(projects_dir, "proj", "sess-1", [
+        _write_jsonl(projects_dir, "proj", "session-1", [
             _make_user_message("hello world"),
             _make_assistant_message("hi"),
         ])
-        entries = [{"sessionId": "sess-1", "project": "proj"}]
+        entries = [{"sessionId": "session-1", "project": "proj"}]
         result = _grep_sessions(entries, "pineapple")
         assert len(result) == 0
 
     def test_case_insensitive(self, tmp_path, monkeypatch):
         monkeypatch.setattr("boxagent.sessions.browser.loaders.CLAUDE_DIR", tmp_path)
         projects_dir = tmp_path / "projects"
-        _write_jsonl(projects_dir, "proj", "sess-1", [
+        _write_jsonl(projects_dir, "proj", "session-1", [
             _make_user_message("Fix the Discord bot"),
         ])
-        entries = [{"sessionId": "sess-1", "project": "proj"}]
+        entries = [{"sessionId": "session-1", "project": "proj"}]
         assert len(_grep_sessions(entries, "discord")) == 1
         assert len(_grep_sessions(entries, "DISCORD")) == 1
 
@@ -524,30 +524,30 @@ class TestFormatSessionsList:
         """grep:xxx does full-text search on JSONL content."""
         monkeypatch.setattr("boxagent.sessions.browser.loaders.CLAUDE_DIR", tmp_path)
         _mock_claude_sessions(monkeypatch, [
-            _sample_entry("sess-1", projectPath="/Users/test/proj-a"),
-            _sample_entry("sess-2", projectPath="/Users/test/proj-a",
+            _sample_entry("session-1", projectPath="/Users/test/proj-a"),
+            _sample_entry("session-2", projectPath="/Users/test/proj-a",
                           modified="2026-04-02T11:00:00.000Z"),
         ])
         projects_dir = tmp_path / "projects"
-        _write_jsonl(projects_dir, "proj-a", "sess-1", [
+        _write_jsonl(projects_dir, "proj-a", "session-1", [
             _make_user_message("fix the pineapple bug"),
             _make_assistant_message("done"),
         ])
-        _write_jsonl(projects_dir, "proj-a", "sess-2", [
+        _write_jsonl(projects_dir, "proj-a", "session-2", [
             _make_user_message("update the readme"),
             _make_assistant_message("ok"),
         ])
         result = format_sessions_list(query="grep:pineapple")
-        assert "/resume sess-1" in result
-        assert "/resume sess-2" not in result
+        assert "/resume session-1" in result
+        assert "/resume session-2" not in result
 
     def test_grep_no_match(self, tmp_path, monkeypatch):
         monkeypatch.setattr("boxagent.sessions.browser.loaders.CLAUDE_DIR", tmp_path)
         _mock_claude_sessions(monkeypatch, [
-            _sample_entry("sess-1", projectPath="/Users/test/proj-a"),
+            _sample_entry("session-1", projectPath="/Users/test/proj-a"),
         ])
         projects_dir = tmp_path / "projects"
-        _write_jsonl(projects_dir, "proj-a", "sess-1", [
+        _write_jsonl(projects_dir, "proj-a", "session-1", [
             _make_user_message("hello world"),
         ])
         result = format_sessions_list(query="grep:nonexistent")

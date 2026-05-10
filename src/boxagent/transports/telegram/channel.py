@@ -194,24 +194,24 @@ class TelegramChannel(Channel):
 
         Auto-splits into a new message when buffer approaches 4096 chars.
         """
-        mid = handle.message_id
-        self._stream_buffers[mid] = self._stream_buffers.get(mid, "") + text
+        message_id = handle.message_id
+        self._stream_buffers[message_id] = self._stream_buffers.get(message_id, "") + text
 
         # Auto-split: buffer approaching Telegram limit
-        if len(self._stream_buffers[mid]) >= STREAM_SPLIT_THRESHOLD:
-            self._cancel_stream_timer(mid)
+        if len(self._stream_buffers[message_id]) >= STREAM_SPLIT_THRESHOLD:
+            self._cancel_stream_timer(message_id)
             await self._split_stream(handle)
             return
 
-        last_sent = self._stream_last_sent.get(mid, "")
-        new_chars = len(self._stream_buffers[mid]) - len(last_sent)
+        last_sent = self._stream_last_sent.get(message_id, "")
+        new_chars = len(self._stream_buffers[message_id]) - len(last_sent)
 
         if new_chars >= FLUSH_CHAR_THRESHOLD:
-            self._cancel_stream_timer(mid)
+            self._cancel_stream_timer(message_id)
             await self._flush_stream(handle)
-        elif mid not in self._stream_timers:
+        elif message_id not in self._stream_timers:
             loop = asyncio.get_running_loop()
-            self._stream_timers[mid] = loop.call_later(
+            self._stream_timers[message_id] = loop.call_later(
                 THROTTLE_MS / 1000.0,
                 lambda h=handle: asyncio.ensure_future(
                     self._flush_stream(h)
@@ -220,12 +220,12 @@ class TelegramChannel(Channel):
 
     async def stream_end(self, handle: StreamHandle) -> str:
         """Cancel pending timer and send final edit with Markdown."""
-        mid = handle.message_id
-        self._cancel_stream_timer(mid)
+        message_id = handle.message_id
+        self._cancel_stream_timer(message_id)
         await self._flush_stream(handle, final=True)
-        self._stream_buffers.pop(mid, None)
-        self._stream_last_sent.pop(mid, None)
-        return mid
+        self._stream_buffers.pop(message_id, None)
+        self._stream_last_sent.pop(message_id, None)
+        return message_id
 
     async def show_typing(self, chat_id: str) -> None:
         """Send typing indicator."""
@@ -344,43 +344,43 @@ class TelegramChannel(Channel):
             timer.cancel()
 
     async def _flush_stream(self, handle: StreamHandle, *, final: bool = False) -> None:
-        mid = handle.message_id
-        text = self._stream_buffers.get(mid, "")
-        last = self._stream_last_sent.get(mid, "")
+        message_id = handle.message_id
+        text = self._stream_buffers.get(message_id, "")
+        last = self._stream_last_sent.get(message_id, "")
         if text and (text != last or final):
             try:
                 send_text = md_to_telegram(text) if final else text
                 if final:
-                    logger.debug("Final flush mid=%s, mdv2 len=%d", mid, len(send_text))
+                    logger.debug("Final flush message_id=%s, mdv2 len=%d", message_id, len(send_text))
                 if final:
                     await self.bot.edit_message_text(
                         chat_id=handle.chat_id,
-                        message_id=int(mid),
+                        message_id=int(message_id),
                         text=send_text,
                         parse_mode="MarkdownV2",
                     )
                 else:
                     await self.bot.edit_message_text(
                         chat_id=handle.chat_id,
-                        message_id=int(mid),
+                        message_id=int(message_id),
                         text=send_text,
                     )
-                self._stream_last_sent[mid] = text
+                self._stream_last_sent[message_id] = text
             except Exception as e:
                 if final:
                     # MarkdownV2 failed, retry plain text
                     try:
                         await self.bot.edit_message_text(
                             chat_id=handle.chat_id,
-                            message_id=int(mid),
+                            message_id=int(message_id),
                             text=text,
                         )
-                        self._stream_last_sent[mid] = text
+                        self._stream_last_sent[message_id] = text
                     except Exception as e2:
                         logger.warning("Failed to edit stream message: %s", e2)
                 else:
                     logger.warning("Failed to edit stream message: %s", e)
-        self._stream_timers.pop(mid, None)
+        self._stream_timers.pop(message_id, None)
 
     async def _split_stream(self, handle: StreamHandle) -> None:
         """Finalize current message at a safe split point and start a new one."""

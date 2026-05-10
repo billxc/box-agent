@@ -24,11 +24,11 @@ def mock_channel():
 
 @pytest.fixture
 def mock_storage():
-    st = MagicMock()
-    st.clear_session = MagicMock()
-    st.save_session = MagicMock()
-    st.list_session_history = MagicMock(return_value=[])
-    return st
+    chat_state = MagicMock()
+    chat_state.clear_session = MagicMock()
+    chat_state.save_session = MagicMock()
+    chat_state.list_session_history = MagicMock(return_value=[])
+    return chat_state
 
 
 @pytest.fixture

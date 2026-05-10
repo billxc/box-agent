@@ -77,38 +77,38 @@ class BaseSessionPool(ABC):
     # ── State access (lazy load from storage) ──
 
     def _get_state(self, chat_id: str) -> ChatState:
-        st = self._chat_states.get(chat_id)
-        if st is None:
-            st = ChatState(
+        chat_state = self._chat_states.get(chat_id)
+        if chat_state is None:
+            chat_state = ChatState(
                 model=self.default_model,
                 workspace=self.default_workspace,
             )
             if self.storage and self.bot_name:
                 saved = self.storage.load_session(self.bot_name, chat_id=chat_id)
                 if isinstance(saved, dict):
-                    st.session_id = saved.get("session_id")
+                    chat_state.session_id = saved.get("session_id")
                     if saved.get("model"):
-                        st.model = saved["model"]
+                        chat_state.model = saved["model"]
                     if saved.get("workspace"):
-                        st.workspace = saved["workspace"]
+                        chat_state.workspace = saved["workspace"]
                     if saved.get("backend"):
-                        st.backend = saved["backend"]
+                        chat_state.backend = saved["backend"]
                 elif isinstance(saved, str):
-                    st.session_id = saved
-            self._chat_states[chat_id] = st
-        return st
+                    chat_state.session_id = saved
+            self._chat_states[chat_id] = chat_state
+        return chat_state
 
-    def _restore_to(self, proc: AgentBackend, st: ChatState) -> None:
+    def _restore_to(self, proc: AgentBackend, chat_state: ChatState) -> None:
         """Apply a saved chat state onto a borrowed backend."""
-        proc.session_id = st.session_id
-        proc.model = st.model
-        proc.workspace = st.workspace
+        proc.session_id = chat_state.session_id
+        proc.model = chat_state.model
+        proc.workspace = chat_state.workspace
 
-    def _capture_from(self, st: ChatState, proc: AgentBackend) -> None:
+    def _capture_from(self, chat_state: ChatState, proc: AgentBackend) -> None:
         """Capture the post-turn state of a backend back into the chat record."""
-        st.session_id = proc.session_id
-        st.model = proc.model
-        st.workspace = proc.workspace
+        chat_state.session_id = proc.session_id
+        chat_state.model = proc.model
+        chat_state.workspace = proc.workspace
 
     # ── Get / set fan-out (active proc + saved state stay in sync) ──
 
@@ -119,8 +119,8 @@ class BaseSessionPool(ABC):
         active = self._active.get(chat_id)
         if active:
             return active.session_id
-        st = self._chat_states.get(chat_id)
-        return st.session_id if st else None
+        chat_state = self._chat_states.get(chat_id)
+        return chat_state.session_id if chat_state else None
 
     def set_session_id(self, chat_id: str, session_id: str | None) -> None:
         active = self._active.get(chat_id)
@@ -132,8 +132,8 @@ class BaseSessionPool(ABC):
         active = self._active.get(chat_id)
         if active:
             return active.model
-        st = self._chat_states.get(chat_id)
-        return st.model if st else self.default_model
+        chat_state = self._chat_states.get(chat_id)
+        return chat_state.model if chat_state else self.default_model
 
     def set_model(self, chat_id: str, model: str) -> None:
         active = self._active.get(chat_id)
@@ -145,8 +145,8 @@ class BaseSessionPool(ABC):
         active = self._active.get(chat_id)
         if active:
             return active.workspace
-        st = self._chat_states.get(chat_id)
-        return st.workspace if st else self.default_workspace
+        chat_state = self._chat_states.get(chat_id)
+        return chat_state.workspace if chat_state else self.default_workspace
 
     def set_workspace(self, chat_id: str, workspace: str) -> None:
         active = self._active.get(chat_id)
@@ -156,16 +156,16 @@ class BaseSessionPool(ABC):
 
     def clear_session(self, chat_id: str) -> None:
         """Drop session continuity (keeps model/workspace)."""
-        st = self._chat_states.get(chat_id)
-        if st:
-            st.session_id = None
+        chat_state = self._chat_states.get(chat_id)
+        if chat_state:
+            chat_state.session_id = None
         active = self._active.get(chat_id)
         if active:
             active.session_id = None
 
     def has_session(self, chat_id: str) -> bool:
-        st = self._chat_states.get(chat_id)
-        return bool(st and st.session_id)
+        chat_state = self._chat_states.get(chat_id)
+        return bool(chat_state and chat_state.session_id)
 
     # ── acquire / release wrap subclass-specific borrow/return ──
 

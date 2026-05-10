@@ -147,9 +147,9 @@ async def test_send_to_peer_round_trip_via_cluster_rpc(
     guest.start()
     try:
         await _wait_until(lambda: "guest-1" in registry.sessions, timeout=3.0)
-        sess = registry.sessions["guest-1"]
+        session = registry.sessions["guest-1"]
 
-        result = await sess.call(
+        result = await session.call(
             "POST", "/api/wg/peer/recv",
             body={
                 "target_workgroup": "remote-wg",
@@ -207,15 +207,15 @@ async def test_host_send_peer_falls_through_to_sat_when_target_not_local(
         message = "hello peer"
 
         match = None
-        for mid, bot in registry.list_bots():
+        for machine_id, bot in registry.list_bots():
             if bot.name == target and bot.kind == "workgroup":
-                match = (mid, bot)
+                match = (machine_id, bot)
                 break
         assert match is not None, "registry didn't surface the workgroup-kind bot"
 
-        sess = registry.get(match[0])
-        assert sess is not None
-        await sess.call(
+        session = registry.get(match[0])
+        assert session is not None
+        await session.call(
             "POST", "/api/wg/peer/recv",
             body={"target_workgroup": target, "sender": sender, "body": message},
             timeout=3.0,
@@ -302,8 +302,8 @@ async def test_send_peer_surfaces_404_from_sat_recv():
             from boxagent.cluster.registry import RemoteBot
             return [("guest-x", RemoteBot(name="remote-wg", kind="workgroup"))]
 
-        def get(self, mid):
-            return _FakeSession() if mid == "guest-x" else None
+        def get(self, machine_id):
+            return _FakeSession() if machine_id == "guest-x" else None
 
     cfg = MagicMock()
     cfg.machine_id = ""
@@ -345,11 +345,11 @@ def test_build_peer_descriptors_combines_local_and_remote():
 
     reg = GuestRegistry()
     # Online guest with one workgroup + one regular bot (regular must be excluded)
-    sess = type("S", (), {"bots": [
+    session = type("S", (), {"bots": [
         RemoteBot(name="mac-mini-wg", display_name="MM Admin", kind="workgroup"),
         RemoteBot(name="claude", display_name="Claude bot", kind="bot"),
     ]})()
-    reg.sessions["macmini"] = sess
+    reg.sessions["macmini"] = session
     # Offline guest (history only)
     reg.history["old-mbp"] = {
         "bots": [{"name": "old-mbp-wg", "display_name": "Old", "kind": "workgroup"}],

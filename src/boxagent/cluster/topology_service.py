@@ -161,9 +161,9 @@ class TopologyService:
     async def push_peers_snapshot_to_sats(self, changed_machine_id: str | None) -> None:
         if self.guest_registry is None:
             return
-        for machine_id, sess in list(self.guest_registry.sessions.items()):
+        for machine_id, session in list(self.guest_registry.sessions.items()):
             self_workgroup_names = {
-                b.name for b in sess.bots if b.kind == "workgroup"
+                b.name for b in session.bots if b.kind == "workgroup"
             }
             peers: list[dict] = []
             if self.workgroup_mgr is not None:
@@ -195,7 +195,7 @@ class TopologyService:
                     "description": other_bot.display_name or "",
                 })
             try:
-                await sess.ws.send_json({"type": "peers_snapshot", "peers": peers})
+                await session.ws.send_json({"type": "peers_snapshot", "peers": peers})
             except Exception as e:
                 logger.warning("peers_snapshot push to %s failed: %s", machine_id, e)
 
@@ -204,10 +204,10 @@ class TopologyService:
         await self.push_machines_snapshot_to_sats(changed_machine_id)
 
     def collect_machines(self) -> list[dict]:
-        local_mid = self.local_machine_id()
+        local_machine_id = self.local_machine_id()
         local_role = self.local_role()
         machines: list[dict] = [{
-            "machine_id": local_mid,
+            "machine_id": local_machine_id,
             "online": True,
             "role": local_role,
             "self": True,
@@ -219,8 +219,8 @@ class TopologyService:
             for m in self.guest_registry.list_machines():
                 m["role"] = "guest"
                 m["self"] = False
-                mid = m.get("machine_id") or ""
-                m["host_index"] = self.config.host_priority.index(mid) if mid in self.config.host_priority else -1
+                machine_id = m.get("machine_id") or ""
+                m["host_index"] = self.config.host_priority.index(machine_id) if machine_id in self.config.host_priority else -1
                 machines.append(m)
         return machines
 
@@ -228,10 +228,10 @@ class TopologyService:
         if self.guest_registry is None:
             return
         all_machines = self.collect_machines()
-        for machine_id, sess in list(self.guest_registry.sessions.items()):
+        for machine_id, session in list(self.guest_registry.sessions.items()):
             filtered = [m for m in all_machines if m.get("machine_id") != machine_id]
             try:
-                await sess.ws.send_json({"type": "machines_snapshot", "machines": filtered})
+                await session.ws.send_json({"type": "machines_snapshot", "machines": filtered})
             except Exception as e:
                 logger.warning("machines_snapshot push to %s failed: %s", machine_id, e)
 

@@ -41,12 +41,12 @@ class TestSubscribe:
 class TestStream:
     async def test_send_text_emits_event(self, channel):
         q = channel.subscribe("c1")
-        mid = await channel.send_text("c1", "hello")
+        message_id = await channel.send_text("c1", "hello")
         ev = await asyncio.wait_for(q.get(), timeout=0.5)
         assert ev["type"] == "message"
         assert ev["role"] == "assistant"
         assert ev["text"] == "hello"
-        assert ev["message_id"] == mid
+        assert ev["message_id"] == message_id
 
     async def test_stream_lifecycle_emits_events(self, channel):
         q = channel.subscribe("c1")

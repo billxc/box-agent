@@ -282,8 +282,8 @@
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
       const lines = ["Cluster restart scheduled:"];
-      for (const [mid, info] of Object.entries(data.results || {})) {
-        lines.push(`  ${mid}: ${JSON.stringify(info)}`);
+      for (const [machine_id, info] of Object.entries(data.results || {})) {
+        lines.push(`  ${machine_id}: ${JSON.stringify(info)}`);
       }
       alert(lines.join("\n"));
     } catch (e) {
@@ -462,7 +462,7 @@
   function _applyToolResult(toolId, ok, summary, error) {
     const card = state.toolCards[toolId];
     if (!card) {
-      // Result without preceding call (rare; e.g. history mid-truncated).
+      // Result without preceding call (rare; e.g. history machine_id-truncated).
       const synth = _buildToolCard(toolId || "?", "tool", {});
       document.getElementById("messages").appendChild(synth.el);
       state.toolCards[toolId || "?"] = synth;
@@ -708,9 +708,9 @@
     await switchChat(chatId);
   }
 
-  function toggleMachine(mid) {
-    if (state.collapsed.has(mid)) state.collapsed.delete(mid);
-    else state.collapsed.add(mid);
+  function toggleMachine(machine_id) {
+    if (state.collapsed.has(machine_id)) state.collapsed.delete(machine_id);
+    else state.collapsed.add(machine_id);
     localStorage.setItem("ba.collapsedMachines", JSON.stringify([...state.collapsed]));
     renderMachines();
   }

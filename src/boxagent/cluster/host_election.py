@@ -24,7 +24,7 @@ State transitions:
 The "higher-priority displaces lower" path needs no new protocol: when a
 recovering primary boots, its first probe sees the lower-priority host
 hosting the tunnel and joins it as a guest. The lower-priority host's next
-tick spots the higher-priority sess in its registry and voluntarily demotes.
+tick spots the higher-priority session in its registry and voluntarily demotes.
 The recovering primary's next tick then finds no host and promotes itself.
 
 Ownership: this object owns ``tunnel`` / ``registry`` / ``client`` for the
@@ -178,13 +178,13 @@ class HostElection:
             # guest and we should yield.
             registry = self.registry
             if registry is not None and my_idx > 0:
-                for sess_mid in list(registry.sessions.keys()):
-                    if sess_mid in priority and priority.index(sess_mid) < my_idx:
+                for sess_machine_id in list(registry.sessions.keys()):
+                    if sess_machine_id in priority and priority.index(sess_machine_id) < my_idx:
                         logger.info(
                             "host election: demoting; higher-priority candidate '%s' is here",
-                            sess_mid,
+                            sess_machine_id,
                         )
-                        await self._become_guest(sess_mid)
+                        await self._become_guest(sess_machine_id)
                         return
             return
 
@@ -282,11 +282,11 @@ class HostElection:
             await self._teardown_host()
 
         if self.client is None:
-            mid = self.config.machine_id or self.config.node_id or "guest"
+            machine_id = self.config.machine_id or self.config.node_id or "guest"
             self.client = GuestClient(
                 host_url="",
                 host_token=self.config.host_token,
-                machine_id=mid,
+                machine_id=machine_id,
                 local_web_port=self.config.web_port or 9292,
                 local_web_token=self.config.web_token or "",
                 tunnel_name=self.config.cluster_tunnel,

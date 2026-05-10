@@ -429,7 +429,7 @@ class TestHeartbeatTick:
         from boxagent.sessions.base_pool import ChatState
 
         pool = MagicMock(spec=SessionPool)
-        ctx = ChatState(session_id="sess-main")
+        ctx = ChatState(session_id="session-main")
         pool._get_state = MagicMock(return_value=ctx)
         pool._chat_states = {}
 
@@ -439,7 +439,7 @@ class TestHeartbeatTick:
             main_chat_id_provider=lambda: "main-wg-1",
         )
 
-        assert hb._find_fork_session_id() == "sess-main"
+        assert hb._find_fork_session_id() == "session-main"
         pool._get_state.assert_called_once_with("main-wg-1")
 
     async def test_find_fork_session_no_provider_does_not_scan_pool(self, tmp_path):

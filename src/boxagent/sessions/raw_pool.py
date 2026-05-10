@@ -61,8 +61,8 @@ class RawSessionPool(BaseSessionPool):
         self._get_state(chat_id).backend = backend
 
     def get_backend(self, chat_id: str) -> str:
-        st = self._chat_states.get(chat_id)
-        return st.backend if st else ""
+        chat_state = self._chat_states.get(chat_id)
+        return chat_state.backend if chat_state else ""
 
     # ── BaseSessionPool hooks ──
 
@@ -86,13 +86,13 @@ class RawSessionPool(BaseSessionPool):
             return proc
         if not self.backend_factory:
             raise RuntimeError("RawSessionPool: backend_factory not set")
-        st = self._get_state(chat_id)
-        backend_kind = st.backend or "claude-cli"
+        chat_state = self._get_state(chat_id)
+        backend_kind = chat_state.backend or "claude-cli"
         proc = self.backend_factory(
             backend=backend_kind,
-            workspace=st.workspace,
-            model=st.model,
-            session_id=st.session_id,
+            workspace=chat_state.workspace,
+            model=chat_state.model,
+            session_id=chat_state.session_id,
             bot_name=self.bot_name,
         )
         proc.start()

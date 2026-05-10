@@ -16,7 +16,7 @@ from boxagent.testing.mocks import MockChannel
 class _FakeLateChunkBackend:
     """Backend that returns before all stream callbacks finish."""
 
-    session_id: str = "sess-late"
+    session_id: str = "session-late"
     state: str = "idle"
     supports_session_persistence: bool = False
     late_task: asyncio.Task | None = field(default=None, init=False)
@@ -110,7 +110,7 @@ async def test_router_should_not_truncate_late_stream_chunks(tmp_path: Path, cap
         assert backend.late_task is not None
         await backend.late_task
 
-    transcript = tmp_path / "transcripts" / "sess-late.jsonl"
+    transcript = tmp_path / "transcripts" / "session-late.jsonl"
     rows = [json.loads(line) for line in transcript.read_text(encoding="utf-8").splitlines()]
     assert rows[-1]["event"] == "assistant"
     assert rows[-1]["text"] == expected

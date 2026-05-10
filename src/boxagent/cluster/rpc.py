@@ -46,10 +46,10 @@ class ClusterRpc:
             return None
         guest_registry = self.topology.guest_registry
         if guest_registry is not None:
-            sess = guest_registry.get(machine)
-            if sess is None:
+            session = guest_registry.get(machine)
+            if session is None:
                 return web.json_response({"ok": False, "error": "unknown machine"}, status=404)
-            return await self._proxy_to_remote(sess, method, path, request, body=body)
+            return await self._proxy_to_remote(session, method, path, request, body=body)
         guest_client = self.topology.guest_client
         if guest_client is not None:
             return await self._proxy_via_host(guest_client, method, path, request, body=body)
@@ -66,10 +66,10 @@ class ClusterRpc:
             return None
         guest_registry = self.topology.guest_registry
         if guest_registry is not None:
-            sess = guest_registry.get(machine)
-            if sess is None:
+            session = guest_registry.get(machine)
+            if session is None:
                 return web.json_response({"ok": False, "error": "unknown machine"}, status=404)
-            return await self._proxy_stream_to_remote(sess, path, request)
+            return await self._proxy_stream_to_remote(session, path, request)
         guest_client = self.topology.guest_client
         if guest_client is not None:
             return await self._proxy_via_host_stream(guest_client, path, request)
@@ -123,7 +123,7 @@ class ClusterRpc:
 
     async def _proxy_to_remote(
         self,
-        sess,
+        session,
         method: str,
         path: str,
         request: web.Request,
@@ -131,7 +131,7 @@ class ClusterRpc:
     ) -> web.Response:
         """Forward an HTTP request to a guest over WS RPC and return its response."""
         try:
-            result = await sess.call(
+            result = await session.call(
                 method, path,
                 query=dict(request.query),
                 body=body,
@@ -144,7 +144,7 @@ class ClusterRpc:
 
     async def _proxy_stream_to_remote(
         self,
-        sess,
+        session,
         path: str,
         request: web.Request,
     ) -> web.StreamResponse:
@@ -161,7 +161,7 @@ class ClusterRpc:
         await resp.prepare(request)
         await resp.write(b": connected\n\n")
         try:
-            async for data in sess.call_stream("GET", path, query=dict(request.query)):
+            async for data in session.call_stream("GET", path, query=dict(request.query)):
                 await resp.write(f"data: {data}\n\n".encode("utf-8"))
         except (ConnectionResetError, asyncio.CancelledError):
             pass

@@ -182,23 +182,23 @@ class GuestRegistry:
         out: list[dict] = []
         seen: set[str] = set()
         now = time.time()
-        for mid, sess in self.sessions.items():
-            seen.add(mid)
+        for machine_id, session in self.sessions.items():
+            seen.add(machine_id)
             out.append({
-                "machine_id": mid,
+                "machine_id": machine_id,
                 "online": True,
                 "bots": [
                     {"name": b.name, "display_name": b.display_name,
                      "backend": b.backend, "model": b.model, "kind": b.kind}
-                    for b in sess.bots
+                    for b in session.bots
                 ],
                 "last_seen": now,
             })
-        for mid, info in self.history.items():
-            if mid in seen:
+        for machine_id, info in self.history.items():
+            if machine_id in seen:
                 continue
             out.append({
-                "machine_id": mid,
+                "machine_id": machine_id,
                 "online": False,
                 "bots": info.get("bots") or [],
                 "last_seen": info.get("last_seen") or 0,
@@ -208,17 +208,17 @@ class GuestRegistry:
     def list_bots(self) -> list[tuple[str, RemoteBot]]:
         """Yield (machine_id, RemoteBot) for every registered remote bot."""
         out: list[tuple[str, RemoteBot]] = []
-        for mid, sess in self.sessions.items():
-            for b in sess.bots:
-                out.append((mid, b))
+        for machine_id, session in self.sessions.items():
+            for b in session.bots:
+                out.append((machine_id, b))
         return out
 
     def get_bot(self, machine_id: str, name: str) -> RemoteBot | None:
         """Return the RemoteBot named `name` on guest `machine_id`, or None."""
-        sess = self.sessions.get(machine_id)
-        if sess is None:
+        session = self.sessions.get(machine_id)
+        if session is None:
             return None
-        for b in sess.bots:
+        for b in session.bots:
             if b.name == name:
                 return b
         return None
@@ -235,15 +235,15 @@ class GuestRegistry:
         """Force-close every connected guest WS. Used by HostElection
         during demote so guests immediately reconnect to the new active host
         instead of dangling on a soon-to-be-stopped tunnel."""
-        for sess in list(self.sessions.values()):
-            sess._closed = True
+        for session in list(self.sessions.values()):
+            session._closed = True
             try:
-                await sess.ws.close()
+                await session.ws.close()
             except Exception:
                 pass
         self.sessions.clear()
 
-    async def _serve_inbound_rpc(self, sess: GuestSession, req: dict) -> None:
+    async def _serve_inbound_rpc(self, session: GuestSession, req: dict) -> None:
         """Handle an `rpc` frame coming *from* a guest.
 
         Mirrors `GuestClient._handle_rpc`: re-issue the request against the
@@ -260,7 +260,7 @@ class GuestRegistry:
 
         if not self.local_web_port:
             try:
-                await sess.ws.send_json({
+                await session.ws.send_json({
                     "type": "rpc_resp", "id": rpc_id, "status": 503,
                     "body": {"ok": False, "error": "host loopback not configured"},
                 })
@@ -290,23 +290,23 @@ class GuestRegistry:
                             for line in event.splitlines():
                                 if line.startswith(b"data: "):
                                     data = line[6:].decode("utf-8", errors="replace")
-                                    await sess.ws.send_json({
+                                    await session.ws.send_json({
                                         "type": "rpc_stream", "id": rpc_id, "data": data,
                                     })
-                    await sess.ws.send_json({"type": "rpc_end", "id": rpc_id})
+                    await session.ws.send_json({"type": "rpc_end", "id": rpc_id})
                     return
                 try:
                     body_out = await resp.json(content_type=None)
                 except Exception:
                     body_out = {"raw": (await resp.text())[:4096]}
-                await sess.ws.send_json({
+                await session.ws.send_json({
                     "type": "rpc_resp", "id": rpc_id,
                     "status": resp.status, "body": body_out,
                 })
         except Exception as e:
             logger.warning("host: inbound rpc %s %s failed: %s", method, path, e)
             try:
-                await sess.ws.send_json({
+                await session.ws.send_json({
                     "type": "rpc_resp", "id": rpc_id, "status": 502,
                     "body": {"ok": False, "error": str(e)},
                 })
@@ -319,7 +319,7 @@ class GuestRegistry:
         await ws.prepare(request)
 
         # Expect hello
-        sess: GuestSession | None = None
+        session: GuestSession | None = None
         try:
             async for msg in ws:
                 if msg.type != web.WSMsgType.TEXT:
@@ -331,7 +331,7 @@ class GuestRegistry:
                     continue
                 t = payload.get("type")
 
-                if sess is None:
+                if session is None:
                     if t != "hello":
                         await ws.close(code=4001, message=b"expected hello")
                         return ws
@@ -354,7 +354,7 @@ class GuestRegistry:
                         for b in bots_raw
                         if isinstance(b, dict) and b.get("name")
                     ]
-                    sess = GuestSession(machine_id=machine_id, ws=ws, bots=bots)
+                    session = GuestSession(machine_id=machine_id, ws=ws, bots=bots)
                     # If a previous session with this machine_id is still around,
                     # evict it (a guest reconnect).
                     old = self.sessions.get(machine_id)
@@ -364,7 +364,7 @@ class GuestRegistry:
                             await old.ws.close()
                         except Exception:
                             pass
-                    self.sessions[machine_id] = sess
+                    self.sessions[machine_id] = session
                     logger.info("guest '%s' connected with %d bot(s)", machine_id, len(bots))
                     await ws.send_json({"type": "welcome"})
                     if self.on_topology_change is not None:
@@ -380,24 +380,24 @@ class GuestRegistry:
                     # Guest → host reverse RPC: serve via localhost loopback so
                     # we reuse all of host's existing _handle_web_* logic
                     # (incl. host→guest proxy if the target is yet another guest).
-                    asyncio.create_task(self._serve_inbound_rpc(sess, payload))
+                    asyncio.create_task(self._serve_inbound_rpc(session, payload))
                 elif t == "rpc_resp":
-                    sess._resolve(
+                    session._resolve(
                         str(payload.get("id") or ""),
                         int(payload.get("status") or 0),
                         payload.get("body") or {},
                     )
                 elif t == "rpc_stream":
-                    sess._push_stream(
+                    session._push_stream(
                         str(payload.get("id") or ""),
                         str(payload.get("data") or ""),
                     )
                 elif t == "rpc_end":
-                    sess._end_stream(str(payload.get("id") or ""))
+                    session._end_stream(str(payload.get("id") or ""))
                 elif t == "bots_update":
                     # Guest re-announces its bot list (e.g. after dynamic create)
                     bots_raw = payload.get("bots") or []
-                    sess.bots = [
+                    session.bots = [
                         RemoteBot(
                             name=str(b.get("name") or ""),
                             display_name=str(b.get("display_name") or ""),
@@ -410,22 +410,22 @@ class GuestRegistry:
                     ]
                     if self.on_topology_change is not None:
                         try:
-                            await self.on_topology_change(sess.machine_id)
+                            await self.on_topology_change(session.machine_id)
                         except Exception as e:
                             logger.warning("on_topology_change(bots_update) failed: %s", e)
         finally:
-            if sess is not None and not sess._closed:
-                self.sessions.pop(sess.machine_id, None)
+            if session is not None and not session._closed:
+                self.sessions.pop(session.machine_id, None)
                 # Remember bots so the UI keeps showing the row as "offline"
-                self.history[sess.machine_id] = {
+                self.history[session.machine_id] = {
                     "bots": [
                         {"name": b.name, "display_name": b.display_name,
                          "backend": b.backend, "model": b.model, "kind": b.kind}
-                        for b in sess.bots
+                        for b in session.bots
                     ],
                     "last_seen": time.time(),
                 }
-                logger.info("guest '%s' disconnected", sess.machine_id)
+                logger.info("guest '%s' disconnected", session.machine_id)
                 if self.on_topology_change is not None:
                     try:
                         await self.on_topology_change(None)

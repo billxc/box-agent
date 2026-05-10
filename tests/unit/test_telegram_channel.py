@@ -156,9 +156,9 @@ def _collect_final_texts(mock_bot) -> list[str]:
     """Extract the final edit_message_text content per message_id."""
     finals: dict[str, str] = {}
     for call in mock_bot.edit_message_text.call_args_list:
-        mid = str(call.kwargs.get("message_id", ""))
+        message_id = str(call.kwargs.get("message_id", ""))
         text = call.kwargs.get("text", "")
-        finals[mid] = text
+        finals[message_id] = text
     return list(finals.values())
 
 

@@ -73,24 +73,24 @@ class WebChannel(Channel):
     async def send_text(
         self, chat_id: str, text: str, parse_mode: str = "Markdown", **kwargs,
     ) -> str:
-        mid = self._allocate_id()
+        message_id = self._allocate_id()
         self._publish(chat_id, {
             "type": "message",
-            "message_id": mid,
+            "message_id": message_id,
             "role": "assistant",
             "text": text,
         })
-        return mid
+        return message_id
 
     async def stream_start(self, chat_id: str, **kwargs) -> StreamHandle:
-        mid = self._allocate_id()
-        self._stream_buffers[mid] = ""
+        message_id = self._allocate_id()
+        self._stream_buffers[message_id] = ""
         self._publish(chat_id, {
             "type": "stream_start",
-            "message_id": mid,
+            "message_id": message_id,
             "role": "assistant",
         })
-        return StreamHandle(message_id=mid, chat_id=chat_id)
+        return StreamHandle(message_id=message_id, chat_id=chat_id)
 
     async def stream_update(self, handle: StreamHandle, text: str) -> None:
         """Append `text` to the message buffer and emit a delta event.
@@ -98,28 +98,28 @@ class WebChannel(Channel):
         Router callback passes incremental chunks (matching Telegram's
         contract), not the full accumulated message — so we accumulate here.
         """
-        mid = handle.message_id
+        message_id = handle.message_id
         if not text:
             return
-        prev = self._stream_buffers.get(mid, "")
+        prev = self._stream_buffers.get(message_id, "")
         new_full = prev + text
-        self._stream_buffers[mid] = new_full
+        self._stream_buffers[message_id] = new_full
         self._publish(handle.chat_id, {
             "type": "stream_delta",
-            "message_id": mid,
+            "message_id": message_id,
             "delta": text,
             "text": new_full,
         })
 
     async def stream_end(self, handle: StreamHandle) -> str:
-        mid = handle.message_id
-        text = self._stream_buffers.pop(mid, "")
+        message_id = handle.message_id
+        text = self._stream_buffers.pop(message_id, "")
         self._publish(handle.chat_id, {
             "type": "stream_end",
-            "message_id": mid,
+            "message_id": message_id,
             "text": text,
         })
-        return mid
+        return message_id
 
     async def show_typing(self, chat_id: str) -> None:
         self._publish(chat_id, {"type": "typing"})

@@ -12,9 +12,9 @@ class _Req:
         self.query = query or {}
 
 
-def _make(*, local_mid="local", guest_registry=None, guest_client=None):
+def _make(*, local_machine_id="local", guest_registry=None, guest_client=None):
     topo = MagicMock()
-    topo.local_machine_id = MagicMock(return_value=local_mid)
+    topo.local_machine_id = MagicMock(return_value=local_machine_id)
     topo.guest_registry = guest_registry
     topo.guest_client = guest_client
     return ClusterRpc(topology=topo)
@@ -30,7 +30,7 @@ class TestClusterRpcConstruction:
 class TestDispatchMachineRequest:
     @pytest.mark.asyncio
     async def test_local_returns_none(self):
-        rpc = _make(local_mid="me")
+        rpc = _make(local_machine_id="me")
         result = await rpc.dispatch_machine_request(
             "me", "GET", "/api/x", _Req(),
         )
@@ -40,7 +40,7 @@ class TestDispatchMachineRequest:
     async def test_remote_unknown_machine_404(self):
         reg = MagicMock()
         reg.get = MagicMock(return_value=None)
-        rpc = _make(local_mid="me", guest_registry=reg)
+        rpc = _make(local_machine_id="me", guest_registry=reg)
         resp = await rpc.dispatch_machine_request(
             "guest-x", "GET", "/api/x", _Req(),
         )
@@ -48,7 +48,7 @@ class TestDispatchMachineRequest:
 
     @pytest.mark.asyncio
     async def test_no_routing_returns_503(self):
-        rpc = _make(local_mid="me")  # no registry, no client
+        rpc = _make(local_machine_id="me")  # no registry, no client
         resp = await rpc.dispatch_machine_request(
             "guest-x", "GET", "/api/x", _Req(),
         )

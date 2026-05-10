@@ -198,7 +198,7 @@ class WebHttpServer:
         if not self._authorized(request):
             return self._unauthorized()
         bots = []
-        local_mid = self.topology.local_machine_id()
+        local_machine_id = self.topology.local_machine_id()
         for name, ch in self.web_channels.items():
             cfg = self.config.bots.get(name)
             workgroup = self.config.workgroups.get(name)
@@ -209,7 +209,7 @@ class WebHttpServer:
                     "backend": cfg.ai_backend,
                     "model": cfg.model,
                     "kind": "bot",
-                    "machine": local_mid,
+                    "machine": local_machine_id,
                 })
             elif workgroup is not None:
                 bots.append({
@@ -218,31 +218,31 @@ class WebHttpServer:
                     "backend": workgroup.ai_backend,
                     "model": workgroup.model,
                     "kind": "workgroup",
-                    "machine": local_mid,
+                    "machine": local_machine_id,
                 })
         if self.topology.guest_registry is not None:
-            for mid, b in self.topology.guest_registry.list_bots():
+            for machine_id, b in self.topology.guest_registry.list_bots():
                 bots.append({
                     "name": b.name,
-                    "display_name": (b.display_name or b.name) + f"  @{mid}",
+                    "display_name": (b.display_name or b.name) + f"  @{machine_id}",
                     "backend": b.backend,
                     "model": b.model,
                     "kind": b.kind,
-                    "machine": mid,
+                    "machine": machine_id,
                 })
         elif self.topology.guest_client is not None:
             for m in self.topology.guest_client.remote_machines:
-                mid = m.get("machine_id") or ""
-                if not mid or mid == local_mid:
+                machine_id = m.get("machine_id") or ""
+                if not machine_id or machine_id == local_machine_id:
                     continue
                 for b in m.get("bots") or []:
                     bots.append({
                         "name": b.get("name") or "",
-                        "display_name": (b.get("display_name") or b.get("name") or "") + f"  @{mid}",
+                        "display_name": (b.get("display_name") or b.get("name") or "") + f"  @{machine_id}",
                         "backend": b.get("backend") or "",
                         "model": b.get("model") or "",
                         "kind": b.get("kind") or "bot",
-                        "machine": mid,
+                        "machine": machine_id,
                     })
         return web.json_response({"bots": bots})
 
@@ -251,10 +251,10 @@ class WebHttpServer:
             return self._unauthorized()
         if self.topology.guest_registry is not None:
             return web.json_response({"machines": self.topology.collect_machines()})
-        local_mid = self.topology.local_machine_id()
+        local_machine_id = self.topology.local_machine_id()
         local_role = self.topology.local_role()
         machines: list[dict] = [{
-            "machine_id": local_mid,
+            "machine_id": local_machine_id,
             "online": True,
             "role": local_role,
             "self": True,
@@ -263,7 +263,7 @@ class WebHttpServer:
         }]
         if self.topology.guest_client is not None:
             for m in self.topology.guest_client.remote_machines:
-                if m.get("machine_id") == local_mid:
+                if m.get("machine_id") == local_machine_id:
                     continue
                 m = dict(m)
                 m["self"] = False
@@ -429,9 +429,9 @@ class WebHttpServer:
             return web.json_response({"ok": True, **local})
         if self.topology.guest_registry is not None:
             sats: dict[str, object] = {}
-            for machine_id, sess in list(self.topology.guest_registry.sessions.items()):
+            for machine_id, session in list(self.topology.guest_registry.sessions.items()):
                 try:
-                    result = await sess.call("GET", "/api/version", timeout=5.0)
+                    result = await session.call("GET", "/api/version", timeout=5.0)
                     sats[machine_id] = result.get("body") or {"error": "no body"}
                 except Exception as e:
                     sats[machine_id] = {"error": str(e)}
@@ -475,11 +475,11 @@ class WebHttpServer:
         except Exception:
             pass
         results: dict[str, object] = {}
-        for machine_id, sess in list(self.topology.guest_registry.sessions.items()):
+        for machine_id, session in list(self.topology.guest_registry.sessions.items()):
             if target_filter is not None and machine_id not in target_filter:
                 continue
             try:
-                rpc = await sess.call("POST", "/api/admin/restart", timeout=5.0)
+                rpc = await session.call("POST", "/api/admin/restart", timeout=5.0)
                 results[machine_id] = rpc.get("body") or {"status": rpc.get("status")}
             except Exception as e:
                 results[machine_id] = {"error": str(e)}

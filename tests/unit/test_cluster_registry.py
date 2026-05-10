@@ -35,9 +35,9 @@ def session():
 class TestGuestRegistry:
     def test_get_bot_returns_owner(self):
         reg = GuestRegistry()
-        sess = GuestSession(machine_id="pc", ws=_FakeWS(),
+        session = GuestSession(machine_id="pc", ws=_FakeWS(),
                                 bots=[RemoteBot(name="bot1")])
-        reg.sessions["pc"] = sess
+        reg.sessions["pc"] = session
         hit = reg.get_bot("pc", "bot1")
         assert hit is not None
         assert hit.name == "bot1"

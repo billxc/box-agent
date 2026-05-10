@@ -68,11 +68,11 @@ class PeerService:
             for machine_id, bot in guest_registry.list_bots():
                 if bot.name != target or bot.kind != "workgroup":
                     continue
-                sess = guest_registry.get(machine_id)
-                if sess is None:
+                session = guest_registry.get(machine_id)
+                if session is None:
                     continue
                 try:
-                    rpc_result = await sess.call(
+                    rpc_result = await session.call(
                         "POST", "/api/wg/peer/recv",
                         body={"target_workgroup": target, "sender": sender, "body": message},
                     )
