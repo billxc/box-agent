@@ -43,6 +43,9 @@ class BaseCLIProcess:
     supports_session_persistence: bool = field(
         default=True, init=False, repr=False
     )
+    supports_fork: bool = field(
+        default=False, init=False, repr=False
+    )
     _process: asyncio.subprocess.Process | None = field(
         default=None, repr=False
     )
@@ -113,6 +116,16 @@ class BaseCLIProcess:
         """Cancel any active turn and drop session continuity."""
         await self.cancel()
         self.session_id = None
+
+    async def fork_and_send(
+        self, source_session_id, message, callback,
+        *, model="", env=None,
+    ) -> str:
+        """Default: backends without fork raise. Override in subclass."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support session fork "
+            f"(supports_fork={self.supports_fork})"
+        )
 
     async def stop(self):
         """Graceful shutdown."""

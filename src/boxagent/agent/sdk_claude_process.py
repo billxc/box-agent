@@ -53,8 +53,10 @@ class AgentSDKClaude(AgentBackend):
     yolo: bool = False
     state: Literal["idle", "busy", "dead"] = "idle"
     supports_session_persistence: bool = field(default=True, init=False, repr=False)
+    supports_fork: bool = field(default=True, init=False, repr=False)
     last_turn_failed: bool = field(default=False, init=False)
     last_turn_error: str = field(default="", init=False)
+    _fork_session: bool = field(default=False, init=False, repr=False)
 
     _idle_event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
     _current_task: asyncio.Task | None = field(default=None, init=False, repr=False)
@@ -188,6 +190,31 @@ class AgentSDKClaude(AgentBackend):
     async def wait_idle(self) -> None:
         await self._idle_event.wait()
 
+    async def fork_and_send(
+        self, source_session_id: str, message: str, callback: AgentCallback,
+        *, model: str = "", env: "AgentEnv | None" = None,
+    ) -> str:
+        """Run one query() forked off ``source_session_id``; do not mutate self.
+
+        Uses a fresh AgentSDKClaude instance so this Claude's session_id and
+        state stay untouched. The fork inherits source's transcript but its
+        turn doesn't write back into source.
+        """
+        fork = AgentSDKClaude(
+            workspace=self.workspace,
+            session_id=source_session_id,
+            model=self.model,
+            agent=self.agent,
+            bot_name=self.bot_name,
+            yolo=self.yolo,
+        )
+        fork._fork_session = True
+        try:
+            await fork.send(message, callback, model=model, env=env)
+            return fork.session_id or ""
+        finally:
+            await fork.stop()
+
     # ── Helpers ──
 
     def _build_options(
@@ -211,6 +238,7 @@ class AgentSDKClaude(AgentBackend):
             model=model,
             resume=self.session_id,
             mcp_servers=mcp_servers,
+            fork_session=self._fork_session,
         )
         if self.yolo:
             options.permission_mode = "bypassPermissions"

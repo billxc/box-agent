@@ -116,6 +116,7 @@ class AgentSDKCopilot(AgentBackend):
     yolo: bool = False
     state: Literal["idle", "busy", "dead"] = "idle"
     supports_session_persistence: bool = field(default=True, init=False, repr=False)
+    supports_fork: bool = field(default=True, init=False, repr=False)
     last_turn_failed: bool = field(default=False, init=False)
     last_turn_error: str = field(default="", init=False)
 
@@ -244,6 +245,40 @@ class AgentSDKCopilot(AgentBackend):
 
     async def wait_idle(self) -> None:
         await self._idle_event.wait()
+
+    async def fork_and_send(
+        self, source_session_id: str, message: str, callback: AgentCallback,
+        *, model: str = "", env: "AgentEnv | None" = None,
+    ) -> str:
+        """Fork ``source_session_id`` via Copilot SDK's ``sessions.fork`` RPC,
+        then run ``message`` in the new session. Doesn't mutate self.
+
+        Two-step (RPC fork → run): the RPC returns a new session_id that
+        inherits the source's transcript, then we attach to it via a fresh
+        AgentSDKCopilot instance (whose ``send`` does ``resume_session``).
+        """
+        from copilot.generated.rpc import SessionsForkRequest
+        await self._ensure_started()
+        assert self._client is not None
+        result = await self._client.rpc.sessions.fork(
+            SessionsForkRequest(session_id=source_session_id, to_event_id=None),
+        )
+        new_sid = result.session_id
+
+        fork = AgentSDKCopilot(
+            workspace=self.workspace,
+            session_id=new_sid,
+            model=self.model,
+            agent=self.agent,
+            bot_name=self.bot_name,
+            yolo=self.yolo,
+        )
+        fork.start()
+        try:
+            await fork.send(message, callback, model=model, env=env)
+            return fork.session_id or new_sid
+        finally:
+            await fork.stop()
 
     # ── Internal ──
 

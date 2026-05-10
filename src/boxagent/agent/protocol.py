@@ -66,10 +66,15 @@ class AgentBackend(Protocol):
     # ── Capability flags ──
     # ``supports_session_persistence``: backend can resume the same
     #   conversation after process restart by re-using ``session_id``.
+    # ``supports_fork``: backend can spin off a sibling session that
+    #   inherits the source session's transcript but doesn't pollute it
+    #   on subsequent turns. Used by HeartbeatManager to wake the admin
+    #   without writing into its main chat history.
     # ``yolo``: skip permission prompts (where the backend supports such
     #   a notion). Read by env_builder; defaults to False on backends
     #   that don't expose it.
     supports_session_persistence: bool
+    supports_fork: bool
     yolo: bool
 
     # ── Per-turn diagnostics (set by send, read by callers) ──
@@ -130,4 +135,23 @@ class AgentBackend(Protocol):
 
     async def wait_idle(self) -> None:
         """Block until the backend is back to idle (no turn in flight)."""
+        ...
+
+    async def fork_and_send(
+        self,
+        source_session_id: str,
+        message: str,
+        callback: "AgentCallback",
+        *,
+        model: str = "",
+        env: "AgentEnv | None" = None,
+    ) -> str:
+        """Run ``message`` against a fork of ``source_session_id``; stream
+        output through ``callback``; return the new fork's session id.
+
+        The fork inherits the source session's transcript but its own
+        turns do **not** mutate the source — the source stays clean.
+        Used by HeartbeatManager to wake the admin without polluting
+        its main chat. Raises ``NotImplementedError`` on backends with
+        ``supports_fork=False``."""
         ...

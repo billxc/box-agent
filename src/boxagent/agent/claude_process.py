@@ -33,6 +33,34 @@ class ClaudeProcess(BaseCLIProcess):
     _tool_names: dict[int, str] = field(default_factory=dict, repr=False)
     _tool_ids: dict[int, str] = field(default_factory=dict, repr=False)
     fork_session: bool = False
+    supports_fork: bool = field(default=True, init=False, repr=False)
+
+    async def fork_and_send(
+        self, source_session_id, message, callback,
+        *, model="", env=None,
+    ) -> str:
+        """Spawn a one-shot Claude subprocess that forks ``source_session_id``.
+
+        Uses a separate ClaudeProcess instance so this Claude's session_id
+        isn't mutated by the fork's --fork-session result. The fork inherits
+        the source's transcript but its turn doesn't write back into the
+        source.
+        """
+        fork_proc = ClaudeProcess(
+            workspace=self.workspace,
+            session_id=source_session_id,
+            model=self.model,
+            agent=self.agent,
+            bot_name=self.bot_name,
+            yolo=self.yolo,
+            fork_session=True,
+        )
+        fork_proc.start()
+        try:
+            await fork_proc.send(message, callback, model=model, env=env)
+            return fork_proc.session_id or ""
+        finally:
+            await fork_proc.stop()
 
     def _format_result_error(self, event: dict) -> str:
         parts: list[str] = []

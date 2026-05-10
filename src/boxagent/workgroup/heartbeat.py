@@ -119,6 +119,7 @@ class HeartbeatManager:
     main_chat_id_provider: Callable[[], str] | None = None
     _running: bool = field(default=False, repr=False)
     _is_ticking: bool = field(default=False, repr=False)
+    _warned_no_fork: bool = field(default=False, repr=False)
     _task: asyncio.Task | None = field(default=None, repr=False)
 
     def start(self) -> None:
@@ -224,12 +225,18 @@ class HeartbeatManager:
 
         Returns (extracted_action, metadata) where metadata contains
         session IDs and raw response for logging.
+
+        Skips backends that don't support fork (e.g. codex-cli) — heartbeat
+        is opt-in and the alternative would be polluting the main session.
         """
-        from boxagent.agent.claude_process import ClaudeProcess
+        from boxagent.agent.backend_factory import create_backend
         from boxagent.agent_env import AgentEnv
+        from boxagent.config import BotConfig
         from boxagent.router.callback import TextCollector
 
         source_session_id = self._find_fork_session_id()
+        if not source_session_id:
+            return "NO_REPLY", {"reason": "no source session to fork from"}
 
         uptime = time.time() - self.start_time if self.start_time else 0
         running_tasks = self.get_running_tasks() if self.get_running_tasks is not None else []
@@ -248,22 +255,38 @@ class HeartbeatManager:
             workgroup_role="admin",
         )
 
-        backend = ClaudeProcess(
+        # Build a backend that matches admin's ai_backend rather than
+        # hard-wiring ClaudeProcess. fork_and_send dispatches to the
+        # right per-backend fork mechanism.
+        bot_cfg = BotConfig(
+            name=self.workgroup_name,
+            ai_backend=self.ai_backend,
             workspace=self.workspace,
-            session_id=source_session_id,
-            fork_session=bool(source_session_id),
+            model=self.model,
             yolo=self.yolo,
         )
+        backend = create_backend(bot_cfg, session_id=None)
+        if not backend.supports_fork:
+            if not self._warned_no_fork:
+                logger.warning(
+                    "Heartbeat for '%s' skipped: backend %r does not support fork",
+                    self.workgroup_name, self.ai_backend,
+                )
+                self._warned_no_fork = True
+            return "NO_REPLY", {"reason": f"{self.ai_backend} doesn't support fork"}
         backend.start()
 
         try:
             collector = TextCollector()
-            await backend.send(prompt, collector, model=self.model, env=env)
+            new_session_id = await backend.fork_and_send(
+                source_session_id, prompt, collector,
+                model=self.model, env=env,
+            )
             raw = collector.text.strip()
             action = _extract_action(raw)
             return action, {
-                "source_session_id": source_session_id or "",
-                "fork_session_id": backend.session_id or "",
+                "source_session_id": source_session_id,
+                "fork_session_id": new_session_id,
                 "raw_response": raw,
                 "prompt": prompt,
             }

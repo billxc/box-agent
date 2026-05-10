@@ -464,3 +464,68 @@ class TestHeartbeatLog:
         hb._write_heartbeat_log("Do something", meta)
         log = (tmp_path / "heartbeat.log").read_text()
         assert log.count("===") == 4  # 2 entries × 2 separators each
+
+
+# ---------------------------------------------------------------------------
+# Backend supports_fork capability flag
+# ---------------------------------------------------------------------------
+
+
+class TestBackendForkCapability:
+    """Heartbeat fork dispatches via backend.supports_fork + fork_and_send.
+    Lock the per-backend capability so heartbeat behavior stays predictable."""
+
+    def test_claude_supports_fork(self):
+        from boxagent.agent.claude_process import ClaudeProcess
+        backend = ClaudeProcess(workspace="/tmp")
+        assert backend.supports_fork is True
+
+    def test_codex_does_not_support_fork(self):
+        """codex CLI's `codex fork` is interactive-only (no --json), so we
+        intentionally don't implement programmatic fork — heartbeat skips."""
+        from boxagent.agent.codex_process import CodexProcess
+        backend = CodexProcess(workspace="/tmp")
+        assert backend.supports_fork is False
+
+    def test_codex_fork_and_send_raises(self):
+        from boxagent.agent.codex_process import CodexProcess
+        import asyncio
+        import pytest
+        backend = CodexProcess(workspace="/tmp")
+        with pytest.raises(NotImplementedError):
+            asyncio.run(backend.fork_and_send("sid", "msg", None))
+
+    def test_sdk_claude_supports_fork(self):
+        from boxagent.agent.sdk_claude_process import AgentSDKClaude
+        backend = AgentSDKClaude(workspace="/tmp")
+        assert backend.supports_fork is True
+
+    def test_sdk_copilot_supports_fork(self):
+        from boxagent.agent.sdk_copilot_process import AgentSDKCopilot
+        backend = AgentSDKCopilot(workspace="/tmp")
+        assert backend.supports_fork is True
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat skips when backend doesn't support fork
+# ---------------------------------------------------------------------------
+
+
+class TestHeartbeatSkipsUnsupportedFork:
+    async def test_codex_admin_skips_fork(self, tmp_path):
+        """A codex-cli admin's heartbeat tick should NO_REPLY rather than
+        spawn a Claude process (the previous hard-coded behaviour)."""
+        from unittest.mock import MagicMock
+        pool = MagicMock()
+        pool._get_state = MagicMock(return_value=MagicMock(session_id="some-sid"))
+
+        hb = HeartbeatManager(
+            workgroup_name="wg", admin_pool=pool, admin_router=None,
+            workspace=str(tmp_path), interval_seconds=60,
+            ai_backend="codex-cli", model="", yolo=False,
+            main_chat_id_provider=lambda: "main-chat",
+        )
+        action, meta = await hb._fork_and_decide("ping")
+        assert action == "NO_REPLY"
+        reason = meta.get("reason", "")
+        assert "codex-cli" in reason or "fork" in reason.lower()
