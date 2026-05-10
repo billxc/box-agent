@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "boxagent"
 version = "0.1.0"
 description = "BoxAgent (BA): self-hosted AI agent gateway for Telegram and Web/iOS"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = {text = "MIT"}
 readme = "README.md"
 keywords = ["ai", "agent", "telegram", "gateway", "claude", "codex"]
@@ -17,7 +17,6 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Communications",
 ]
@@ -30,6 +29,7 @@ dependencies = [
     "croniter>=2.0",
     "claude-agent-sdk>=0.1.77",
     "github-copilot-sdk>=0.3.0",
+    "dowhen>=0.1.0",
 ]
 
 [project.scripts]
@@ -45,7 +45,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 src = ["src"]
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 # Default (E + F) — pyflakes catches dead imports / unused locals; pycodestyle
@@ -57,7 +57,7 @@ ignore = ["E501"]
 
 [tool.pyright]
 include = ["src"]
-pythonVersion = "3.11"
+pythonVersion = "3.12"
 typeCheckingMode = "basic"
 
 [dependency-groups]

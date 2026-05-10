@@ -51,6 +51,7 @@ def _session_info_to_dict(s) -> dict:
         "git_branch": s.git_branch,
         "tag": s.tag,
         "created_at": s.created_at,
+        "recap": s.recap,
     }
 
 
@@ -319,6 +320,7 @@ class WebHttpServer:
             s["message_count"] = 0
             s["summary"] = ""
             s["custom_title"] = None
+            s["recap"] = ""
             if not sid:
                 continue
 
@@ -332,6 +334,7 @@ class WebHttpServer:
                     s["message_count"] = cached.get("message_count", 0)
                     s["summary"] = cached.get("summary", "")
                     s["custom_title"] = cached.get("custom_title")
+                    s["recap"] = cached.get("recap", "")
                     continue
                 info = await _claude_history.get_session_info(sid)
                 if info is not None:
@@ -341,6 +344,7 @@ class WebHttpServer:
                     s["message_count"] = info.message_count
                     s["summary"] = info.summary or ""
                     s["custom_title"] = info.custom_title
+                    s["recap"] = info.recap or ""
                     self.session_meta_cache[sid] = {
                         "mtime": info.last_ts,
                         "preview": s["preview"],
@@ -348,6 +352,7 @@ class WebHttpServer:
                         "message_count": s["message_count"],
                         "summary": s["summary"],
                         "custom_title": s["custom_title"],
+                        "recap": s["recap"],
                     }
                     continue
 

@@ -310,3 +310,24 @@ src/ 净 -37 行（核心收益在 core.py：-127/+45 = 净 -82）。Gateway.sto
 **协议变化**：`Message` dataclass 加 `cwd: str = ""` / `git_branch: str = ""`；`/api/history` 的 record 里非空时才带这俩字段。
 
 **测试**：`tests/unit/test_sdk_patch.py` 直接调 `_to_session_message` 喂合成 entry 验证 patch；SDK 升级改了名 / 改了字段会立刻挂掉提醒。
+
+## 2026-05-11 — SDK patch 切到 dowhen，新增 recap 字段
+
+之前的 `_sdk_patch.py` 是手写 wrapper（`original = X; X = patched_wrapper(original)`）。同模式的第二个 patch（`_parse_session_info_from_lite` 透出 `subtype:"away_summary"` 作为 `SDKSessionInfo.recap`）触发了一次 review：手写 wrapper 每加一个就要复制十几行模板，且没有"SDK 改了我们要的字段名"这种语义级保护——只能靠 import 时 getattr 兜底，运行时跑了一段才挂。
+
+**方案**：换成 [`dowhen`](https://github.com/gaogaotiantian/dowhen) 做 `<return>` 触发的 instrumentation。每个 patch 现在是 `do(callback).when(target, "<return>")`，callback 拿 `_retval` 直接 mutate 返回对象。所有 SDK 内部逻辑原封不动跑完，我们只追加属性。
+
+**代价**：
+- `requires-python` 从 3.11 升到 3.12（dowhen 用 `sys.monitoring`）
+- 新增依赖 `dowhen>=0.1.0`
+
+**为什么值**：
+- 单 patch 从 ~10 行降到 ~5 行
+- `<return>` callback 无法访问到的 frame 结构（比如 SDK 改了内部 helper 拆分）不影响我们——只要 `<return>` 时仍然返回对应类型的对象，patch 还能跑
+- 后面若加 `source_hash` 校验（SDK 升级版本），可在 import 时 fail-fast，比目前 getattr 兜底更靠谱
+- 调试 / 临时 instrumentation 顺手（一行注 `do("print(...)").when(fn, "+1")` 就能跟一段执行）
+
+**recap 字段**：`SessionInfo.recap` / `/api/sessions` 响应都带上；前端可后续用作"上次离开时的 recap"显示。
+
+**测试**：`tests/unit/test_sdk_patch.py` 加了 3 个 case 覆盖 recap 抽取（tail 命中 / 多条取最新 / 没有时返回空）。共 862 passed。
+

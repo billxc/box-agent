@@ -76,6 +76,7 @@ class SessionInfo:
     custom_title: str | None = None
     git_branch: str | None = None
     tag: str | None = None
+    recap: str = ""
 
 
 @dataclass

@@ -61,3 +61,44 @@ def test_missing_optional_fields_fall_back_cleanly():
     assert recs[0].ts == 0.0
     assert recs[0].cwd == ""
     assert recs[0].git_branch == ""
+
+
+# ── recap patch (away_summary → SDKSessionInfo.recap) ─────────────
+
+
+def _make_lite(head: str = "", tail: str = ""):
+    return sdk_sessions._LiteSessionFile(
+        mtime=1700000000000, size=len(head) + len(tail), head=head, tail=tail,
+    )
+
+
+_HEAD = (
+    '{"type":"user","message":{"role":"user","content":"hi"},'
+    '"timestamp":"2026-05-10T00:00:00.000Z","cwd":"/x","sessionId":"s","uuid":"u1"}\n'
+)
+
+
+def test_recap_extracted_from_away_summary_in_tail():
+    tail = _HEAD + (
+        '{"type":"system","subtype":"away_summary",'
+        '"content":"left off mid-refactor; next: run tests"}\n'
+    )
+    info = sdk_sessions._parse_session_info_from_lite("s", _make_lite(_HEAD, tail))
+    assert info is not None
+    assert getattr(info, "recap", "") == "left off mid-refactor; next: run tests"
+
+
+def test_recap_picks_latest_when_multiple_away_summaries():
+    tail = _HEAD + (
+        '{"type":"system","subtype":"away_summary","content":"earlier recap"}\n'
+        '{"type":"system","subtype":"away_summary","content":"latest recap"}\n'
+    )
+    info = sdk_sessions._parse_session_info_from_lite("s", _make_lite(_HEAD, tail))
+    assert info is not None
+    assert getattr(info, "recap", "") == "latest recap"
+
+
+def test_recap_empty_when_no_away_summary():
+    info = sdk_sessions._parse_session_info_from_lite("s", _make_lite(_HEAD, _HEAD))
+    assert info is not None
+    assert getattr(info, "recap", "") == ""

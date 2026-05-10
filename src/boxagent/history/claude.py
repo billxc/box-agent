@@ -142,6 +142,7 @@ class ClaudeAgentHistory:
             custom_title=info.custom_title,
             git_branch=info.git_branch,
             tag=info.tag,
+            recap=getattr(info, "recap", "") or "",
         )
 
     # ── Message conversion ───────────────────────────────────────
