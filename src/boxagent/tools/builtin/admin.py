@@ -130,7 +130,7 @@ async def get_specialist_status(args: dict, ctx: ToolContext) -> str:
 
 
 @boxagent_tool(
-    name="send_to_specialist",
+    name="send_to_agent",
     group="admin",
     description=(
         "Dispatch a task to a specialist agent in your workgroup. "
@@ -142,7 +142,7 @@ async def get_specialist_status(args: dict, ctx: ToolContext) -> str:
     schema={"agent_name": str, "message": str},
     requires=["workgroup_admin"],
 )
-async def send_to_specialist(args: dict, ctx: ToolContext) -> str:
+async def send_to_agent(args: dict, ctx: ToolContext) -> str:
     mgr, err = _wg(ctx)
     if mgr is None:
         return err
