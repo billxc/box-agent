@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 @command("/sync_skills", help="Re-sync linked skill directories", category=CommandCategory.WORKSPACE)
 async def cmd_sync_skills(router: "Router", msg: "IncomingMessage", channel: "Channel") -> None:
-    from boxagent.agent import sync_skills
+    from boxagent.agent.workspace import sync_skills
     linked = sync_skills(router.workspace, router.extra_skill_dirs, router.ai_backend)
     if linked:
         text = f"Synced {len(linked)} skill(s):\n" + "\n".join(f"• {s}" for s in sorted(linked))

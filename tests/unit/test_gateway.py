@@ -276,7 +276,7 @@ class TestGateway:
         assert MockCodex.call_args_list[0].kwargs["session_id"] == "saved-codex-session"
 
     def test_sync_skills_uses_agents_dir_for_codex_cli(self, tmp_path):
-        from boxagent.agent import sync_skills
+        from boxagent.agent.workspace import sync_skills
 
         workspace = tmp_path / "workspace"
         source_root = tmp_path / "skills-src"
