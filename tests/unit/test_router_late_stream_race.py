@@ -4,13 +4,12 @@ import asyncio
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
 from boxagent.transports.base import IncomingMessage
 from boxagent.router import Router
+from boxagent.testing.mocks import MockChannel
 
 
 @dataclass
@@ -86,16 +85,12 @@ def _msg(text: str) -> IncomingMessage:
 
 @pytest.mark.asyncio
 async def test_router_should_not_truncate_late_stream_chunks(tmp_path: Path, caplog):
+    # Backend stays a custom dataclass — it deliberately returns from
+    # send() before its scripted late chunks finish, which is the exact
+    # race we're regression-testing. MockBackend's scripting waits for
+    # all chunks before returning, so it can't reproduce this.
     backend = _FakeLateChunkBackend()
-    channel = AsyncMock()
-    channel.send_text = AsyncMock()
-    channel.show_typing = AsyncMock()
-    channel.stream_start = AsyncMock(
-        return_value=SimpleNamespace(message_id="m1", chat_id="123")
-    )
-    channel.stream_update = AsyncMock()
-    channel.stream_end = AsyncMock()
-    channel.format_tool_call = lambda name, inp: ""
+    channel = MockChannel()
 
     router = Router(
         backend=backend,

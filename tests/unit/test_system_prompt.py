@@ -2,14 +2,13 @@
 is separated from user messages and passed correctly through each backend."""
 
 import json
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from boxagent.transports.base import IncomingMessage
 from boxagent.router import Router
-from boxagent.router import ChannelCallback
+from boxagent.testing.mocks import MockBackend, MockChannel
 from tests.unit.helpers import FakeProcess
 
 
@@ -130,28 +129,16 @@ class TestCodexSystemPrompt:
 
 @pytest.fixture
 def mock_cli():
-    proc = AsyncMock()
-    proc.send = AsyncMock()
-    proc.cancel = AsyncMock()
-    proc.state = "idle"
-    proc.session_id = "sess_123"
-    proc.supports_session_persistence = True
-    proc.model = "opus"
-    proc.reset_session = AsyncMock(
-        side_effect=lambda: setattr(proc, "session_id", None)
+    return MockBackend(
+        session_id="sess_123",
+        supports_session_persistence=True,
+        model="opus",
     )
-    return proc
 
 
 @pytest.fixture
 def mock_channel():
-    ch = AsyncMock()
-    ch.send_text = AsyncMock()
-    ch.stream_start = AsyncMock()
-    ch.stream_update = AsyncMock()
-    ch.stream_end = AsyncMock()
-    ch.format_tool_call = lambda name, inp: f"tool:{name}"
-    return ch
+    return MockChannel()
 
 
 class TestRouterPromptSplit:
@@ -165,10 +152,8 @@ class TestRouterPromptSplit:
 
         await router.handle_message(make_msg("explain this code"))
 
-        mock_cli.send.assert_called_once()
-        call_kwargs = mock_cli.send.call_args
-        # append_system_prompt should contain [BoxAgent Context]
-        append_system_prompt = call_kwargs.kwargs.get("append_system_prompt", "")
+        assert len(mock_cli.sends) == 1
+        append_system_prompt = mock_cli.sends[-1].append_system_prompt
         assert "[BoxAgent Context]" in append_system_prompt
         assert "bot: test-bot" in append_system_prompt
 
@@ -181,9 +166,7 @@ class TestRouterPromptSplit:
 
         await router.handle_message(make_msg("explain this code"))
 
-        call_args = mock_cli.send.call_args[0]
-        user_message = call_args[0]
-        assert "explain this code" in user_message
+        assert "explain this code" in mock_cli.sends[-1].message
 
     async def test_session_context_not_in_user_message(self, mock_cli, mock_channel):
         router = Router(
@@ -195,8 +178,7 @@ class TestRouterPromptSplit:
 
         await router.handle_message(make_msg("hello"))
 
-        user_message = mock_cli.send.call_args[0][0]
-        assert "[BoxAgent Context]" not in user_message
+        assert "[BoxAgent Context]" not in mock_cli.sends[-1].message
 
     async def test_resume_context_goes_to_append_system_prompt(self, mock_cli, mock_channel):
         router = Router(
@@ -208,10 +190,9 @@ class TestRouterPromptSplit:
 
         await router.handle_message(make_msg("continue"))
 
-        append_system_prompt = mock_cli.send.call_args.kwargs.get("append_system_prompt", "")
-        assert "[Recovered previous session]" in append_system_prompt
-        user_message = mock_cli.send.call_args[0][0]
-        assert "[Recovered previous session]" not in user_message
+        send = mock_cli.sends[-1]
+        assert "[Recovered previous session]" in send.append_system_prompt
+        assert "[Recovered previous session]" not in send.message
         # On success the resume_ctx is consumed so the next turn doesn't
         # double-inject it.
         assert router._resume_contexts.get("123456", "") == ""
@@ -225,7 +206,11 @@ class TestRouterPromptSplit:
             allowed_users=[123456],
         )
         router._resume_contexts["123456"] = "[Recovered previous session]\nUser: hi\n[End recovered session]"
-        mock_cli.send.side_effect = RuntimeError("backend down")
+
+        async def boom(message, callback, **kwargs):
+            raise RuntimeError("backend down")
+
+        mock_cli.script_handler(boom)
 
         try:
             await router.handle_message(make_msg("continue"))
@@ -246,11 +231,10 @@ class TestRouterPromptSplit:
 
         await router.handle_message(make_msg("what's next"))
 
-        append_system_prompt = mock_cli.send.call_args.kwargs.get("append_system_prompt", "")
-        assert "[Previous conversation summary]" in append_system_prompt
-        assert "discussed topic A" in append_system_prompt
-        user_message = mock_cli.send.call_args[0][0]
-        assert "[Previous conversation summary]" not in user_message
+        send = mock_cli.sends[-1]
+        assert "[Previous conversation summary]" in send.append_system_prompt
+        assert "discussed topic A" in send.append_system_prompt
+        assert "[Previous conversation summary]" not in send.message
 
     async def test_attachments_stay_in_message(self, mock_cli, mock_channel):
         from boxagent.transports.base import Attachment
@@ -271,8 +255,7 @@ class TestRouterPromptSplit:
 
         await router.handle_message(msg)
 
-        user_message = mock_cli.send.call_args[0][0]
-        assert "[Attached file: /tmp/doc.pdf]" in user_message
+        assert "[Attached file: /tmp/doc.pdf]" in mock_cli.sends[-1].message
 
     async def test_model_override_still_works(self, mock_cli, mock_channel):
         router = Router(
@@ -283,11 +266,10 @@ class TestRouterPromptSplit:
 
         await router.handle_message(make_msg("@opus explain this"))
 
-        call_kwargs = mock_cli.send.call_args.kwargs
-        assert call_kwargs["model"] == "opus"
-        user_message = mock_cli.send.call_args[0][0]
-        assert "explain this" in user_message
-        assert "@opus" not in user_message
+        send = mock_cli.sends[-1]
+        assert send.model == "opus"
+        assert "explain this" in send.message
+        assert "@opus" not in send.message
 
     async def test_second_message_also_has_session_context(self, mock_cli, mock_channel):
         router = Router(
@@ -299,15 +281,13 @@ class TestRouterPromptSplit:
 
         # First message — should have session context
         await router.handle_message(make_msg("first"))
-        first_system = mock_cli.send.call_args.kwargs.get("append_system_prompt", "")
-        assert "[BoxAgent Context]" in first_system
+        assert "[BoxAgent Context]" in mock_cli.sends[-1].append_system_prompt
 
-        mock_cli.send.reset_mock()
+        mock_cli.sends.clear()
 
         # Second message — should ALSO have session context
         await router.handle_message(make_msg("second"))
-        second_system = mock_cli.send.call_args.kwargs.get("append_system_prompt", "")
-        assert "[BoxAgent Context]" in second_system
+        assert "[BoxAgent Context]" in mock_cli.sends[-1].append_system_prompt
 
     async def test_append_system_prompt_always_has_context(self, mock_cli, mock_channel):
         router = Router(
@@ -318,5 +298,4 @@ class TestRouterPromptSplit:
 
         await router.handle_message(make_msg("plain message"))
 
-        append_system_prompt = mock_cli.send.call_args.kwargs.get("append_system_prompt", "")
-        assert "[BoxAgent Context]" in append_system_prompt
+        assert "[BoxAgent Context]" in mock_cli.sends[-1].append_system_prompt

@@ -2,16 +2,19 @@
 
 import asyncio
 from dataclasses import dataclass
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 from boxagent.transports.base import IncomingMessage
 from boxagent.router import Router
+from boxagent.testing.mocks import MockChannel
 
 
 @dataclass
 class _FakeBusyBackend:
-    """Small controllable backend for router-level /cancel tests."""
+    """Small controllable backend for router-level /cancel tests.
+
+    MockBackend can't model the "block until cancel arrives" race this
+    test needs — its scripting completes before send() returns.
+    """
 
     state: str = "idle"
     session_id: str | None = None
@@ -51,15 +54,7 @@ def _msg(text: str) -> IncomingMessage:
 class TestRouterCancelIntegration:
     async def test_cancel_interrupts_inflight_turn_via_router(self):
         backend = _FakeBusyBackend()
-        channel = AsyncMock()
-        channel.send_text = AsyncMock()
-        channel.show_typing = AsyncMock()
-        channel.stream_start = AsyncMock(
-            return_value=SimpleNamespace(message_id="m1", chat_id="123")
-        )
-        channel.stream_update = AsyncMock()
-        channel.stream_end = AsyncMock()
-        channel.format_tool_call = lambda name, inp: ""
+        channel = MockChannel()
 
         router = Router(
             backend=backend,
@@ -80,6 +75,7 @@ class TestRouterCancelIntegration:
 
         assert backend.cancel_calls == 1
         assert backend.state == "idle"
-        channel.send_text.assert_any_call("123", "Cancelled current task.")
-        channel.stream_update.assert_called()
-        channel.stream_end.assert_called_once()
+        assert ("123", "Cancelled current task.") in channel.sent_texts
+        assert len(channel.streams) == 1
+        assert channel.streams[0].chunks  # at least one chunk emitted
+        assert channel.streams[0].closed
