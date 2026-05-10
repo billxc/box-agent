@@ -10,47 +10,47 @@ from boxagent.agent.protocol import AgentBackend
 from boxagent.config import BotConfig
 
 
-def create_backend(bot_cfg: BotConfig, session_id: str | None) -> AgentBackend:
+def create_backend(bot_config: BotConfig, session_id: str | None) -> AgentBackend:
     """Instantiate the AI backend for a bot config."""
-    if bot_cfg.ai_backend == "codex-cli":
+    if bot_config.ai_backend == "codex-cli":
         from boxagent.agent.codex_process import CodexProcess
 
         return CodexProcess(
-            workspace=bot_cfg.workspace,
+            workspace=bot_config.workspace,
             session_id=session_id,
-            model=bot_cfg.model,
-            agent=bot_cfg.agent,
-            bot_name=bot_cfg.name,
-            yolo=bot_cfg.yolo,
+            model=bot_config.model,
+            agent=bot_config.agent,
+            bot_name=bot_config.name,
+            yolo=bot_config.yolo,
         )
-    if bot_cfg.ai_backend == "agent-sdk-claude":
+    if bot_config.ai_backend == "agent-sdk-claude":
         from boxagent.agent.sdk_claude_process import AgentSDKClaude
 
         return AgentSDKClaude(
-            workspace=bot_cfg.workspace,
+            workspace=bot_config.workspace,
             session_id=session_id,
-            model=bot_cfg.model,
-            agent=bot_cfg.agent,
-            bot_name=bot_cfg.name,
-            yolo=bot_cfg.yolo,
+            model=bot_config.model,
+            agent=bot_config.agent,
+            bot_name=bot_config.name,
+            yolo=bot_config.yolo,
         )
-    if bot_cfg.ai_backend == "agent-sdk-copilot":
+    if bot_config.ai_backend == "agent-sdk-copilot":
         from boxagent.agent.sdk_copilot_process import AgentSDKCopilot
 
         return AgentSDKCopilot(
-            workspace=bot_cfg.workspace,
+            workspace=bot_config.workspace,
             session_id=session_id,
-            model=bot_cfg.model,
-            agent=bot_cfg.agent,
-            bot_name=bot_cfg.name,
-            yolo=bot_cfg.yolo,
+            model=bot_config.model,
+            agent=bot_config.agent,
+            bot_name=bot_config.name,
+            yolo=bot_config.yolo,
         )
     # Default: claude-cli.
     return ClaudeProcess(
-        workspace=bot_cfg.workspace,
+        workspace=bot_config.workspace,
         session_id=session_id,
-        model=bot_cfg.model,
-        agent=bot_cfg.agent,
-        bot_name=bot_cfg.name,
-        yolo=bot_cfg.yolo,
+        model=bot_config.model,
+        agent=bot_config.agent,
+        bot_name=bot_config.name,
+        yolo=bot_config.yolo,
     )

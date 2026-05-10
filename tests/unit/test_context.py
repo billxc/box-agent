@@ -13,7 +13,7 @@ class TestBuildSessionContext:
             display_name="Test Bot",
             node_id="my-node",
             workspace="/tmp/ws",
-            config_dir="/tmp/cfg",
+            config_dir="/tmp/config",
         )
         assert "[BoxAgent Context]" in ctx
         assert "[/BoxAgent Context]" in ctx
@@ -45,15 +45,15 @@ class TestBuildSessionContext:
         assert "workspace instructions here" in ctx
 
     def test_reads_both_md_files(self, tmp_path):
-        cfg_dir = tmp_path / "cfg"
+        config_dir = tmp_path / "config"
         ws_dir = tmp_path / "ws"
-        cfg_dir.mkdir()
+        config_dir.mkdir()
         ws_dir.mkdir()
-        (cfg_dir / "BOXAGENT.md").write_text("from config")
+        (config_dir / "BOXAGENT.md").write_text("from config")
         (ws_dir / "BOXAGENT.md").write_text("from workspace")
 
         ctx = build_session_context(
-            config_dir=str(cfg_dir),
+            config_dir=str(config_dir),
             workspace=str(ws_dir),
         )
         assert "from config" in ctx
@@ -127,12 +127,12 @@ class TestPeerInjection:
         peers = [
             {"name": "war-room-2", "machine": "local", "online": True,
              "kind": "workgroup", "description": "local backup"},
-            {"name": "mac-mini-wg", "machine": "macmini", "online": True,
+            {"name": "mac-mini-workgroup", "machine": "macmini", "online": True,
              "kind": "workgroup", "description": "Mac Mini Admin"},
         ]
         ctx = build_session_context(env=self._env(peers=peers))
         assert "- war-room-2 (local) — local backup" in ctx
-        assert "- mac-mini-wg (@macmini) — Mac Mini Admin" in ctx
+        assert "- mac-mini-workgroup (@macmini) — Mac Mini Admin" in ctx
 
     def test_offline_peer_marked(self):
         peers = [{"name": "old-mbp", "machine": "old-mbp", "online": False,

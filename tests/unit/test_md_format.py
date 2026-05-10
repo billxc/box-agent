@@ -26,8 +26,8 @@ class TestEscapeTelegram:
 
     def test_all_special_chars(self):
         result = escape_telegram("_ * [ ] ( ) ~ ` > # + - = | { } . ! \\")
-        for ch in r"_*[]()~`>#+-=|{}.!\\":
-            assert f"\\{ch}" in result or ch == " "
+        for channel in r"_*[]()~`>#+-=|{}.!\\":
+            assert f"\\{channel}" in result or channel == " "
 
     def test_underscore(self):
         assert escape_telegram("foo_bar") == r"foo\_bar"

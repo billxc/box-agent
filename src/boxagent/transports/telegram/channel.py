@@ -498,12 +498,12 @@ class TelegramChannel(Channel):
         chat_id = str(callback_query.message.chat.id) if callback_query.message else ""
         user_id = str(user.id) if user else ""
 
-        cb_chat_type = callback_query.message.chat.type if callback_query.message and callback_query.message.chat else "private"
+        callback_chat_type = callback_query.message.chat.type if callback_query.message and callback_query.message.chat else "private"
         incoming = IncomingMessage(
             channel="telegram",
             chat_id=chat_id,
             user_id=user_id,
             text=data,
-            channel_info=ChannelInfo(platform="telegram", telegram_chat_type=cb_chat_type),
+            channel_info=ChannelInfo(platform="telegram", telegram_chat_type=callback_chat_type),
         )
         await self.on_message(incoming)

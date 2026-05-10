@@ -142,13 +142,13 @@ class TestChannelCallback:
             return True
         channel.on_tool_call = _on_tool_call
 
-        cb = ChannelCallback(channel=channel, chat_id="123")
+        callback = ChannelCallback(channel=channel, chat_id="123")
 
-        await cb.on_stream("Before tool.")
-        await cb.on_tool_call("Read", {"path": "x"}, "")
-        await cb.on_stream("After tool.")
+        await callback.on_stream("Before tool.")
+        await callback.on_tool_call("Read", {"path": "x"}, "")
+        await callback.on_stream("After tool.")
 
-        assert cb.collected_text == "Before tool.\n\nAfter tool."
+        assert callback.collected_text == "Before tool.\n\nAfter tool."
         assert channel.stream_update.mock_calls[0].args[1] == "Before tool."
         assert channel.stream_update.mock_calls[1].args[1] == "\ntool:Read\n"
         assert channel.stream_update.mock_calls[2].args[1] == "\n\nAfter tool."

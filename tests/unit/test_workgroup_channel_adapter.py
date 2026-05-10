@@ -11,7 +11,7 @@ from boxagent.workgroup.channel_adapter import (
 )
 
 
-def _make_wg_cfg(**overrides) -> WorkgroupConfig:
+def _make_workgroup_config(**overrides) -> WorkgroupConfig:
     base = dict(name="wg1", workspace="/tmp/admin")
     base.update(overrides)
     return WorkgroupConfig(**base)
@@ -38,7 +38,7 @@ def test_null_adapter_protocol_compliance():
     assert a.primary_channel() is None
 
 
-def test_null_adapter_chat_id_falls_back_to_wg_prefix():
+def test_null_adapter_chat_id_falls_back_to_workgroup_prefix():
     a = NullWorkgroupChannelAdapter()
     assert a.get_specialist_chat_id("alice", _make_specialist_config()) == "workgroup:alice"
 
@@ -46,7 +46,7 @@ def test_null_adapter_chat_id_falls_back_to_wg_prefix():
 def test_null_adapter_methods_are_noops():
     a = NullWorkgroupChannelAdapter()
     specialist = _make_specialist_config()
-    workgroup = _make_wg_cfg()
+    workgroup = _make_workgroup_config()
     router = MagicMock()
     asyncio.run(a.setup_specialist("alice", specialist, workgroup, router))
     out = asyncio.run(a.provision_specialist("alice", specialist, workgroup))
@@ -79,7 +79,7 @@ def test_web_adapter_primary_channel_is_web_channel():
     assert a.primary_channel() is wc
 
 
-def test_web_adapter_chat_id_is_virtual_wg_prefix():
+def test_web_adapter_chat_id_is_virtual_workgroup_prefix():
     a = WebWorkgroupAdapter(web_channel=_make_web_channel())
     specialist = _make_specialist_config()
     assert a.get_specialist_chat_id("alice", specialist) == "workgroup:alice"
@@ -90,14 +90,14 @@ def test_web_adapter_setup_specialist_wires_inbound_channel():
     a = WebWorkgroupAdapter(web_channel=wc)
     router = MagicMock()
     router._channels = {}
-    asyncio.run(a.setup_specialist("alice", _make_specialist_config(), _make_wg_cfg(), router))
+    asyncio.run(a.setup_specialist("alice", _make_specialist_config(), _make_workgroup_config(), router))
     assert router._channels["web"] is wc
 
 
-def test_web_adapter_provision_returns_sp_cfg_unchanged():
+def test_web_adapter_provision_returns_sp_config_unchanged():
     a = WebWorkgroupAdapter(web_channel=_make_web_channel())
     specialist = _make_specialist_config()
-    out = asyncio.run(a.provision_specialist("alice", specialist, _make_wg_cfg()))
+    out = asyncio.run(a.provision_specialist("alice", specialist, _make_workgroup_config()))
     assert out is specialist
 
 

@@ -129,7 +129,7 @@ def main():
 
 
 async def _run(config, config_dir, local_dir):
-    gw = Gateway(config=config, config_dir=config_dir, local_dir=local_dir)
+    gateway = Gateway(config=config, config_dir=config_dir, local_dir=local_dir)
     loop = asyncio.get_event_loop()
     stop = asyncio.Event()
 
@@ -139,11 +139,11 @@ async def _run(config, config_dir, local_dir):
     else:
         signal.signal(signal.SIGINT, lambda *_: stop.set())
 
-    await gw.start()
+    await gateway.start()
     await stop.wait()
 
     try:
-        await asyncio.wait_for(gw.stop(), timeout=3.0)
+        await asyncio.wait_for(gateway.stop(), timeout=3.0)
     except asyncio.TimeoutError:
         logger.warning("Graceful shutdown timed out")
 

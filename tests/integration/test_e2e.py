@@ -56,12 +56,12 @@ async def gateway(tmp_path):
 
     config = load_config(config_dir)
     local_dir = tmp_path / "local"
-    gw = Gateway(config=config, local_dir=local_dir)
-    await gw.start()
+    gateway = Gateway(config=config, local_dir=local_dir)
+    await gateway.start()
 
-    yield gw
+    yield gateway
 
-    await gw.stop()
+    await gateway.stop()
 
 
 def _mock_channel(channel, response_collector):

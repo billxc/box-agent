@@ -14,13 +14,13 @@ Owns lifecycle wiring; behavior lives in the composed managers built in
   - ``_web_server``       WebHttpServer       (Web UI aiohttp server)
 
 Workgroup HTTP routes live on the WorkgroupManager itself
-(``workgroup_mgr.routes``) so wiring stays inside the workgroup module.
+(``workgroup_manager.routes``) so wiring stays inside the workgroup module.
 
 Two-phase DI:
   Phase 1 — managers built with infrastructure (config / shared dicts /
             sibling refs that already exist).
   Phase 2 — late-bound siblings injected via setters
-            (workgroup_mgr in ``set_workgroup_mgr``, scheduler in
+            (workgroup_manager in ``set_workgroup_manager``, scheduler in
             ``set_scheduler``, host_election in ``set_host_election``).
 """
 
@@ -99,14 +99,14 @@ class InternalApiServer:
         if self.scheduler_routes is not None:
             app.router.add_post("/api/schedule/run", self.scheduler_routes.handle_schedule_run)
         if self.workgroup_routes is not None:
-            wg = self.workgroup_routes
-            app.router.add_get("/api/workgroup/specialists", wg.handle_list_specialists)
-            app.router.add_get("/api/workgroup/specialist_status", wg.handle_specialist_status)
-            app.router.add_post("/api/workgroup/send", wg.handle_workgroup_send)
-            app.router.add_post("/api/workgroup/create_specialist", wg.handle_create_specialist)
-            app.router.add_post("/api/workgroup/reset_specialist", wg.handle_reset_specialist)
-            app.router.add_post("/api/workgroup/delete_specialist", wg.handle_delete_specialist)
-            app.router.add_post("/api/workgroup/cancel_task", wg.handle_cancel_task)
+            workgroup = self.workgroup_routes
+            app.router.add_get("/api/workgroup/specialists", workgroup.handle_list_specialists)
+            app.router.add_get("/api/workgroup/specialist_status", workgroup.handle_specialist_status)
+            app.router.add_post("/api/workgroup/send", workgroup.handle_workgroup_send)
+            app.router.add_post("/api/workgroup/create_specialist", workgroup.handle_create_specialist)
+            app.router.add_post("/api/workgroup/reset_specialist", workgroup.handle_reset_specialist)
+            app.router.add_post("/api/workgroup/delete_specialist", workgroup.handle_delete_specialist)
+            app.router.add_post("/api/workgroup/cancel_task", workgroup.handle_cancel_task)
         app.router.add_post("/api/peer/send", self.peer.handle_peer_send)
         # NOTE: /api/wg/peer/recv lives on the Web UI port (see ClusterHttpRoutes)
         # because guest_client forwards RPC frames to the web port.
@@ -146,7 +146,7 @@ class Gateway:
     _scheduler_task: asyncio.Task | None = field(default=None, repr=False)
     _host_election: HostElection | None = field(default=None, repr=False)
     _start_time: float = 0.0
-    _workgroup_mgr: WorkgroupManager | None = field(default=None, repr=False)
+    _workgroup_manager: WorkgroupManager | None = field(default=None, repr=False)
     _bots: AgentManager | None = field(default=None, repr=False)
     _topology: TopologyService | None = field(default=None, repr=False)
     _peer: PeerService | None = field(default=None, repr=False)
@@ -201,7 +201,7 @@ class Gateway:
 
         # Workgroups.
         if self.config.workgroups:
-            self._workgroup_mgr = WorkgroupManager(
+            self._workgroup_manager = WorkgroupManager(
                 config=self.config.workgroups,
                 config_dir=str(self.config_dir),
                 node_id=self.config.node_id,
@@ -211,23 +211,23 @@ class Gateway:
                 web_channels=self._bots.web_channels,
                 _peer_provider=self._topology.build_peer_descriptors,
             )
-            # Phase 2: topology + peer + web server now see workgroup_mgr.
-            # (workgroup_mgr.routes ships with the manager; no separate setter.)
-            self._topology.set_workgroup_mgr(self._workgroup_mgr)
-            self._peer.set_workgroup_mgr(self._workgroup_mgr)
-            self._web_server.set_workgroup_mgr(self._workgroup_mgr)
-            await self._workgroup_mgr.start_all_for_node(self.config.node_id)
+            # Phase 2: topology + peer + web server now see workgroup_manager.
+            # (workgroup_manager.routes ships with the manager; no separate setter.)
+            self._topology.set_workgroup_manager(self._workgroup_manager)
+            self._peer.set_workgroup_manager(self._workgroup_manager)
+            self._web_server.set_workgroup_manager(self._workgroup_manager)
+            await self._workgroup_manager.start_all_for_node(self.config.node_id)
 
         # Scheduler + its HTTP route adapter.
         self._start_scheduler()
 
-        # Internal API + MCP HTTP — both depend on workgroup_mgr.routes +
+        # Internal API + MCP HTTP — both depend on workgroup_manager.routes +
         # scheduler_routes existing.
         self._internal_api = InternalApiServer(
             config=self.config,
             local_dir=self.local_dir,
             peer=self._peer,
-            workgroup_routes=(self._workgroup_mgr.routes if self._workgroup_mgr else None),
+            workgroup_routes=(self._workgroup_manager.routes if self._workgroup_manager else None),
             scheduler_routes=self._scheduler_routes,
         )
         await self._internal_api.start()
@@ -315,7 +315,7 @@ class Gateway:
             await self._bots.stop()
 
         # Workgroup resources
-        if self._workgroup_mgr:
-            await self._workgroup_mgr.stop()
+        if self._workgroup_manager:
+            await self._workgroup_manager.stop()
 
         logger.info("Gateway stopped")

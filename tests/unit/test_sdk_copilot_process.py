@@ -59,11 +59,11 @@ class TestFactoryWiring:
         from boxagent.agent.sdk_copilot_process import AgentSDKCopilot
         from boxagent.config import BotConfig
 
-        cfg = BotConfig(
+        config = BotConfig(
             name="t", ai_backend="agent-sdk-copilot",
             workspace="/tmp", model="gpt-5",
         )
-        backend = create_backend(cfg, session_id="s-9")
+        backend = create_backend(config, session_id="s-9")
         assert isinstance(backend, AgentSDKCopilot)
         assert backend.session_id == "s-9"
         assert backend.workspace == "/tmp"
@@ -92,8 +92,8 @@ class TestFactoryWiring:
                     allowed_users: [111]
         """)
         (tmp_path / "config.yaml").write_text(config)
-        cfg = load_config(tmp_path)
-        assert cfg.bots["cop"].ai_backend == "agent-sdk-copilot"
+        config = load_config(tmp_path)
+        assert config.bots["cop"].ai_backend == "agent-sdk-copilot"
 
 
 class TestSharedClient:

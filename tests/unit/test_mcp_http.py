@@ -10,12 +10,12 @@ class TestMCPHttpApp:
     """Verify the MCP HTTP app is built from the unified tool registry."""
 
     def _gateway_stub(self):
-        gw = MagicMock()
-        gw.config = MagicMock()
-        gw.config.bots = {}
-        gw.config.workgroups = {}
-        gw.config.telegram_bots = {}
-        return gw
+        gateway = MagicMock()
+        gateway.config = MagicMock()
+        gateway.config.bots = {}
+        gateway.config.workgroups = {}
+        gateway.config.telegram_bots = {}
+        return gateway
 
     def test_create_mcp_app_returns_starlette(self):
         from starlette.applications import Starlette
@@ -35,7 +35,7 @@ class TestMCPHttpApp:
         from boxagent.transports.mcp.server import create_mcp_app, _ENDPOINTS
 
         app = create_mcp_app(
-            config_dir="/tmp/cfg", local_dir="/tmp/loc",
+            config_dir="/tmp/config", local_dir="/tmp/loc",
             node_id="n", gateway=self._gateway_stub(),
         )
         assert len(_ENDPOINTS) == 4
@@ -48,7 +48,7 @@ class TestMCPHttpApp:
         from boxagent.transports.mcp.server import create_mcp_app, _ContextMiddleware
 
         app = create_mcp_app(
-            config_dir="/tmp/cfg", local_dir="/tmp/loc",
+            config_dir="/tmp/config", local_dir="/tmp/loc",
             node_id="n", gateway=self._gateway_stub(),
         )
         # Starlette stores middleware in user_middleware; check ours is in there.

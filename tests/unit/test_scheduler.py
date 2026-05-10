@@ -362,41 +362,41 @@ def test_next_run_weekday_only():
 
 @pytest.fixture
 def mock_channel():
-    ch = AsyncMock()
-    ch.send_text = AsyncMock()
-    return ch
+    channel = AsyncMock()
+    channel.send_text = AsyncMock()
+    return channel
 
 
 async def test_callback_collects_text(mock_channel):
-    cb = _SchedulerCallback(channel=mock_channel, chat_id="123", task_id="t1")
-    await cb.on_stream("Hello ")
-    await cb.on_stream("world")
-    assert cb._text == "Hello world"
+    callback = _SchedulerCallback(channel=mock_channel, chat_id="123", task_id="t1")
+    await callback.on_stream("Hello ")
+    await callback.on_stream("world")
+    assert callback._text == "Hello world"
 
 
 async def test_callback_send_result_success(mock_channel):
-    cb = _SchedulerCallback(channel=mock_channel, chat_id="123", task_id="t1")
-    await cb.on_stream("Done!")
-    await cb.send_result()
+    callback = _SchedulerCallback(channel=mock_channel, chat_id="123", task_id="t1")
+    await callback.on_stream("Done!")
+    await callback.send_result()
     mock_channel.send_text.assert_called_once_with("123", "Done!")
 
 
 async def test_callback_send_result_error(mock_channel):
-    cb = _SchedulerCallback(channel=mock_channel, chat_id="123", task_id="t1")
-    await cb.on_error("something broke")
-    await cb.send_result()
+    callback = _SchedulerCallback(channel=mock_channel, chat_id="123", task_id="t1")
+    await callback.on_error("something broke")
+    await callback.send_result()
     mock_channel.send_text.assert_called_once_with("123", "🤖 *t1* Error: something broke")
 
 
 async def test_callback_send_result_empty(mock_channel):
-    cb = _SchedulerCallback(channel=mock_channel, chat_id="123", task_id="t1")
-    await cb.send_result()
+    callback = _SchedulerCallback(channel=mock_channel, chat_id="123", task_id="t1")
+    await callback.send_result()
     mock_channel.send_text.assert_called_once_with("123", "🤖 *t1* (no output)")
 
 
 async def test_callback_tool_call_noop(mock_channel):
-    cb = _SchedulerCallback(channel=mock_channel, chat_id="123", task_id="t1")
-    await cb.on_tool_call("Bash", {}, "")  # should not raise
+    callback = _SchedulerCallback(channel=mock_channel, chat_id="123", task_id="t1")
+    await callback.on_tool_call("Bash", {}, "")  # should not raise
 
 
 # --- Scheduler._fire ---
@@ -405,11 +405,11 @@ async def test_callback_tool_call_noop(mock_channel):
 async def test_fire_append_sends_to_cli(tmp_path):
     mock_cli = AsyncMock()
     mock_cli.send = AsyncMock()
-    mock_ch = AsyncMock()
-    mock_ch.send_text = AsyncMock()
+    mock_channel = AsyncMock()
+    mock_channel.send_text = AsyncMock()
 
     sched = _make_scheduler(tmp_path, bot_refs={
-        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_channel, chat_id="123"),
     })
 
     task = ScheduleTask(
@@ -432,8 +432,8 @@ async def test_fire_append_sends_to_cli(tmp_path):
     assert call_args[0][0] == "Do something"
     assert "t1" not in sched._executing  # cleaned up
     # send_text called twice: task started notification + result
-    assert mock_ch.send_text.call_count == 2
-    first_call = mock_ch.send_text.call_args_list[0]
+    assert mock_channel.send_text.call_count == 2
+    first_call = mock_channel.send_text.call_args_list[0]
     assert "Append" in first_call[0][1]
 
 
@@ -475,11 +475,11 @@ async def test_stop_exits_loop(tmp_path):
 async def test_run_forever_fires_matching_task(tmp_path):
     mock_cli = AsyncMock()
     mock_cli.send = AsyncMock()
-    mock_ch = AsyncMock()
-    mock_ch.send_text = AsyncMock()
+    mock_channel = AsyncMock()
+    mock_channel.send_text = AsyncMock()
 
     sched = _make_scheduler(tmp_path, bot_refs={
-        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_channel, chat_id="123"),
     })
 
     _write_schedules(sched.schedules_file, {
@@ -505,10 +505,10 @@ async def test_run_forever_fires_matching_task(tmp_path):
 
 async def test_run_forever_skips_disabled(tmp_path):
     mock_cli = AsyncMock()
-    mock_ch = AsyncMock()
+    mock_channel = AsyncMock()
 
     sched = _make_scheduler(tmp_path, bot_refs={
-        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_channel, chat_id="123"),
     })
 
     _write_schedules(sched.schedules_file, {
@@ -532,10 +532,10 @@ async def test_run_forever_skips_disabled(tmp_path):
 
 async def test_run_forever_skips_non_matching_cron(tmp_path):
     mock_cli = AsyncMock()
-    mock_ch = AsyncMock()
+    mock_channel = AsyncMock()
 
     sched = _make_scheduler(tmp_path, bot_refs={
-        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_channel, chat_id="123"),
     })
 
     _write_schedules(sched.schedules_file, {
@@ -559,10 +559,10 @@ async def test_run_forever_skips_non_matching_cron(tmp_path):
 
 async def test_run_forever_skips_wrong_node(tmp_path):
     mock_cli = AsyncMock()
-    mock_ch = AsyncMock()
+    mock_channel = AsyncMock()
 
     sched = _make_scheduler(tmp_path, node_id="server-a", bot_refs={
-        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_channel, chat_id="123"),
     })
 
     _write_schedules(sched.schedules_file, {
@@ -586,10 +586,10 @@ async def test_run_forever_skips_wrong_node(tmp_path):
 
 async def test_run_forever_skips_wrong_node_filter(tmp_path):
     mock_cli = AsyncMock()
-    mock_ch = AsyncMock()
+    mock_channel = AsyncMock()
 
     sched = _make_scheduler(tmp_path, node_id="home-server", bot_refs={
-        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_channel, chat_id="123"),
     })
 
     _write_schedules(sched.schedules_file, {
@@ -614,11 +614,11 @@ async def test_run_forever_skips_wrong_node_filter(tmp_path):
 async def test_run_forever_fires_matching_node(tmp_path):
     mock_cli = AsyncMock()
     mock_cli.send = AsyncMock()
-    mock_ch = AsyncMock()
-    mock_ch.send_text = AsyncMock()
+    mock_channel = AsyncMock()
+    mock_channel.send_text = AsyncMock()
 
     sched = _make_scheduler(tmp_path, node_id="cloud-pc", bot_refs={
-        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_channel, chat_id="123"),
     })
 
     _write_schedules(sched.schedules_file, {
@@ -650,11 +650,11 @@ async def test_run_forever_skips_already_executing(tmp_path):
         await hang_event.wait()
 
     mock_cli.send = AsyncMock(side_effect=_hang)
-    mock_ch = AsyncMock()
-    mock_ch.send_text = AsyncMock()
+    mock_channel = AsyncMock()
+    mock_channel.send_text = AsyncMock()
 
     sched = _make_scheduler(tmp_path, bot_refs={
-        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_channel, chat_id="123"),
     })
 
     _write_schedules(sched.schedules_file, {
@@ -684,11 +684,11 @@ async def test_run_forever_hot_reload(tmp_path):
     """YAML changes are picked up on the next tick."""
     mock_cli = AsyncMock()
     mock_cli.send = AsyncMock()
-    mock_ch = AsyncMock()
-    mock_ch.send_text = AsyncMock()
+    mock_channel = AsyncMock()
+    mock_channel.send_text = AsyncMock()
 
     sched = _make_scheduler(tmp_path, bot_refs={
-        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_channel, chat_id="123"),
     })
 
     # Start with no schedules
@@ -764,11 +764,11 @@ async def test_catchup_fires_missed_task(tmp_path):
     """If a task was missed during a long sleep, it fires on catch-up."""
     mock_cli = AsyncMock()
     mock_cli.send = AsyncMock()
-    mock_ch = AsyncMock()
-    mock_ch.send_text = AsyncMock()
+    mock_channel = AsyncMock()
+    mock_channel.send_text = AsyncMock()
 
     sched = _make_scheduler(tmp_path, bot_refs={
-        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_channel, chat_id="123"),
     })
     # Simulate: last check was 3 minutes ago
     sched._last_check = datetime.now() - timedelta(minutes=3)
@@ -800,10 +800,10 @@ async def test_catchup_fires_missed_task(tmp_path):
 async def test_execute_once_append(tmp_path):
     mock_cli = AsyncMock()
     mock_cli.send = AsyncMock()
-    mock_ch = AsyncMock()
+    mock_channel = AsyncMock()
 
     sched = _make_scheduler(tmp_path, bot_refs={
-        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_channel, chat_id="123"),
     })
 
     task = ScheduleTask(
@@ -813,8 +813,8 @@ async def test_execute_once_append(tmp_path):
     result = await sched.execute_once(task)
     mock_cli.send.assert_called_once()
     # send_text called twice: task started notification + result
-    assert mock_ch.send_text.call_count == 2
-    assert "Append" in mock_ch.send_text.call_args_list[0][0][1]
+    assert mock_channel.send_text.call_count == 2
+    assert "Append" in mock_channel.send_text.call_args_list[0][0][1]
     assert isinstance(result, str)
 
 
@@ -831,11 +831,11 @@ async def test_execute_once_append_unknown_bot(tmp_path):
 async def test_execute_once_append_ignores_model_and_backend_fields(tmp_path):
     mock_cli = AsyncMock()
     mock_cli.send = AsyncMock()
-    mock_ch = AsyncMock()
-    mock_ch.send_text = AsyncMock()
+    mock_channel = AsyncMock()
+    mock_channel.send_text = AsyncMock()
 
     sched = _make_scheduler(tmp_path, bot_refs={
-        "my-bot": BotRef(backend=mock_cli, channel=mock_ch, chat_id="123", ai_backend="claude-cli"),
+        "my-bot": BotRef(backend=mock_cli, channel=mock_channel, chat_id="123", ai_backend="claude-cli"),
     })
 
     task = ScheduleTask(

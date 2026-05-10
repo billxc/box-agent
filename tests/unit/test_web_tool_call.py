@@ -82,52 +82,52 @@ def test_on_tool_update_in_progress_publishes_nothing():
 
 # ─── ChannelCallback delegates without branching ─────────────────────────────
 
-def _cb_with(channel):
-    cb = ChannelCallback(channel=channel, chat_id="c1")
-    return cb
+def _callback_with(channel):
+    callback = ChannelCallback(channel=channel, chat_id="c1")
+    return callback
 
 
 def test_channelcallback_on_tool_call_delegates_to_channel():
-    ch = MagicMock()
-    ch.on_tool_call = AsyncMock(return_value=False)
-    ch.show_typing = AsyncMock()
-    cb = _cb_with(ch)
-    asyncio.run(cb.on_tool_call("Bash", {"command": "ls"}, "result", tool_id="t-1"))
-    ch.on_tool_call.assert_awaited_once()
-    args, kwargs = ch.on_tool_call.call_args
+    channel = MagicMock()
+    channel.on_tool_call = AsyncMock(return_value=False)
+    channel.show_typing = AsyncMock()
+    callback = _callback_with(channel)
+    asyncio.run(callback.on_tool_call("Bash", {"command": "ls"}, "result", tool_id="t-1"))
+    channel.on_tool_call.assert_awaited_once()
+    args, kwargs = channel.on_tool_call.call_args
     assert args == ("c1", "t-1", "Bash", {"command": "ls"}, "result")
     assert kwargs["stream_handle"] is None
     assert kwargs["webhook_name"] == ""
 
 
 def test_channelcallback_marks_paragraph_break_when_channel_streamed():
-    ch = MagicMock()
-    ch.on_tool_call = AsyncMock(return_value=True)  # channel streamed
-    ch.show_typing = AsyncMock()
-    cb = _cb_with(ch)
-    asyncio.run(cb.on_tool_call("x", {}, "", tool_id=""))
-    assert cb._needs_paragraph_break_after_tool is True
+    channel = MagicMock()
+    channel.on_tool_call = AsyncMock(return_value=True)  # channel streamed
+    channel.show_typing = AsyncMock()
+    callback = _callback_with(channel)
+    asyncio.run(callback.on_tool_call("x", {}, "", tool_id=""))
+    assert callback._needs_paragraph_break_after_tool is True
 
 
 def test_channelcallback_no_paragraph_break_when_channel_did_not_stream():
-    ch = MagicMock()
-    ch.on_tool_call = AsyncMock(return_value=False)
-    ch.show_typing = AsyncMock()
-    cb = _cb_with(ch)
-    asyncio.run(cb.on_tool_call("x", {}, "", tool_id=""))
-    assert cb._needs_paragraph_break_after_tool is False
+    channel = MagicMock()
+    channel.on_tool_call = AsyncMock(return_value=False)
+    channel.show_typing = AsyncMock()
+    callback = _callback_with(channel)
+    asyncio.run(callback.on_tool_call("x", {}, "", tool_id=""))
+    assert callback._needs_paragraph_break_after_tool is False
 
 
 def test_channelcallback_on_tool_update_delegates():
-    ch = MagicMock()
-    ch.on_tool_update = AsyncMock(return_value=False)
-    ch.show_typing = AsyncMock()
-    cb = _cb_with(ch)
-    asyncio.run(cb.on_tool_update(
+    channel = MagicMock()
+    channel.on_tool_update = AsyncMock(return_value=False)
+    channel.show_typing = AsyncMock()
+    callback = _callback_with(channel)
+    asyncio.run(callback.on_tool_update(
         tool_call_id="t-3", title="$ ls", status="completed", output="done",
     ))
-    ch.on_tool_update.assert_awaited_once()
-    args, kwargs = ch.on_tool_update.call_args
+    channel.on_tool_update.assert_awaited_once()
+    args, kwargs = channel.on_tool_update.call_args
     assert args == ("c1", "t-3", "$ ls")
     assert kwargs["status"] == "completed"
     assert kwargs["output"] == "done"

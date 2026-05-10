@@ -318,8 +318,8 @@ class AgentSDKCopilot(AgentBackend):
         methods are coroutines. Ordering across awaits is preserved by the
         event loop's task queue (events arrive serialised).
         """
-        cb = self._active_callback
-        if cb is None:
+        callback = self._active_callback
+        if callback is None:
             return
         data = event.data
 
@@ -327,14 +327,14 @@ class AgentSDKCopilot(AgentBackend):
             text = getattr(data, "content", "") or getattr(data, "delta", "")
             if text:
                 self.record_received_stream = True
-                self._schedule(cb.on_stream(text))
+                self._schedule(callback.on_stream(text))
             return
 
         if isinstance(data, AssistantMessageDeltaData):
             text = getattr(data, "content", "") or ""
             if text:
                 self.record_received_stream = True
-                self._schedule(cb.on_stream(text))
+                self._schedule(callback.on_stream(text))
             return
 
         if isinstance(data, AssistantMessageData):
@@ -345,7 +345,7 @@ class AgentSDKCopilot(AgentBackend):
             if not self.record_received_stream:
                 text = getattr(data, "content", "") or ""
                 if text:
-                    self._schedule(cb.on_stream(text))
+                    self._schedule(callback.on_stream(text))
             return
 
         if isinstance(data, ToolExecutionStartData):
@@ -355,7 +355,7 @@ class AgentSDKCopilot(AgentBackend):
             if isinstance(args, dict):
                 self._tool_inputs[tool_id] = dict(args)
             self._tool_names[tool_id] = name
-            self._schedule(cb.on_tool_update(
+            self._schedule(callback.on_tool_update(
                 tool_call_id=tool_id, title=name, status="in_progress",
                 input=args if isinstance(args, dict) else None,
             ))
@@ -367,14 +367,14 @@ class AgentSDKCopilot(AgentBackend):
             input_dict = self._tool_inputs.pop(tool_id, {})
             result = getattr(data, "result", None)
             result_text = self._stringify_result(result)
-            self._schedule(cb.on_tool_call(
+            self._schedule(callback.on_tool_call(
                 name=name, input=input_dict, result=result_text, tool_id=tool_id,
             ))
             return
 
         if isinstance(data, SessionErrorData):
             msg = getattr(data, "message", "") or "session error"
-            self._schedule(cb.on_error(msg))
+            self._schedule(callback.on_error(msg))
             self.last_turn_failed = True
             self.last_turn_error = msg
             return

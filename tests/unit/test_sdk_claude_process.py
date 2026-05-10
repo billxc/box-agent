@@ -73,11 +73,11 @@ class TestFactoryWiring:
         from boxagent.agent.sdk_claude_process import AgentSDKClaude
         from boxagent.config import BotConfig
 
-        cfg = BotConfig(
+        config = BotConfig(
             name="t", ai_backend="agent-sdk-claude",
             workspace="/tmp", model="sonnet",
         )
-        backend = create_backend(cfg, session_id="s-9")
+        backend = create_backend(config, session_id="s-9")
         assert isinstance(backend, AgentSDKClaude)
         assert backend.session_id == "s-9"
         assert backend.workspace == "/tmp"

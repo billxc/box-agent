@@ -115,7 +115,7 @@ class HeartbeatManager:
     get_running_tasks: Callable[[], list[dict]] | None = None
     # Provider for the dispatch chat_id (the workgroup's "main" session).
     # Manager wires this to a closure over Storage.get/set_main_chat_id; the
-    # provider mints + persists a fresh `heartbeat:<wg>-<ts>` if none set.
+    # provider mints + persists a fresh `heartbeat:<workgroup>-<ts>` if none set.
     main_chat_id_provider: Callable[[], str] | None = None
     _running: bool = field(default=False, repr=False)
     _is_ticking: bool = field(default=False, repr=False)

@@ -158,27 +158,27 @@ class TestBuildHeartbeatPrompt:
         assert "<heartbeat_action>" in prompt
 
     def test_includes_uptime(self):
-        prompt = _build_heartbeat_prompt("wg", "checklist", uptime_seconds=7500)
+        prompt = _build_heartbeat_prompt("workgroup", "checklist", uptime_seconds=7500)
         assert "2h 5m" in prompt
 
     def test_short_uptime(self):
-        prompt = _build_heartbeat_prompt("wg", "checklist", uptime_seconds=125)
+        prompt = _build_heartbeat_prompt("workgroup", "checklist", uptime_seconds=125)
         assert "2m 5s" in prompt
 
     def test_includes_running_tasks(self):
         tasks = [
             {"task_id": "dev-1", "target": "dev", "started_at": time.time() - 60, "active": True},
         ]
-        prompt = _build_heartbeat_prompt("wg", "checklist", running_tasks=tasks)
+        prompt = _build_heartbeat_prompt("workgroup", "checklist", running_tasks=tasks)
         assert "dev-1" in prompt
         assert "[active]" in prompt
 
     def test_no_running_tasks(self):
-        prompt = _build_heartbeat_prompt("wg", "checklist", running_tasks=[])
+        prompt = _build_heartbeat_prompt("workgroup", "checklist", running_tasks=[])
         assert "No specialist tasks currently running" in prompt
 
     def test_read_only_instruction(self):
-        prompt = _build_heartbeat_prompt("wg", "checklist")
+        prompt = _build_heartbeat_prompt("workgroup", "checklist")
         assert "read-only" in prompt
         assert "NO execution permissions" in prompt
 
@@ -191,13 +191,13 @@ class TestBuildHeartbeatPrompt:
 class TestSeedAdminWorkspace:
     def test_creates_all_files(self, tmp_path):
         ws = str(tmp_path / "admin")
-        created = seed_admin_workspace(ws, "test-wg")
+        created = seed_admin_workspace(ws, "test-workgroup")
         assert ".claude/CLAUDE.md" in created
         assert ".claude/skills/superboss/SKILL.md" in created
         assert ".claude/skills/superboss/references/templates.md" in created
         assert "HEARTBEAT.md" in created
 
-    def test_claude_md_contains_wg_name(self, tmp_path):
+    def test_claude_md_contains_workgroup_name(self, tmp_path):
         ws = str(tmp_path / "admin")
         seed_admin_workspace(ws, "my-workgroup")
         content = (tmp_path / "admin" / ".claude" / "CLAUDE.md").read_text()
@@ -205,59 +205,59 @@ class TestSeedAdminWorkspace:
 
     def test_system_layer_overwrites(self, tmp_path):
         ws = str(tmp_path / "admin")
-        seed_admin_workspace(ws, "wg")
+        seed_admin_workspace(ws, "workgroup")
         # Modify system file
         claude_md = tmp_path / "admin" / ".claude" / "CLAUDE.md"
         claude_md.write_text("custom content")
         # Re-seed should overwrite system files
-        written = seed_admin_workspace(ws, "wg")
+        written = seed_admin_workspace(ws, "workgroup")
         assert ".claude/CLAUDE.md" in written
         assert claude_md.read_text() != "custom content"
 
     def test_user_layer_not_overwritten(self, tmp_path):
         ws = str(tmp_path / "admin")
-        seed_admin_workspace(ws, "wg")
+        seed_admin_workspace(ws, "workgroup")
         # Modify user file
         heartbeat = tmp_path / "admin" / "HEARTBEAT.md"
         heartbeat.write_text("my custom checklist")
         # Re-seed should NOT overwrite user files
-        seed_admin_workspace(ws, "wg")
+        seed_admin_workspace(ws, "workgroup")
         assert heartbeat.read_text() == "my custom checklist"
 
     def test_system_layer_skip_if_unchanged(self, tmp_path):
         ws = str(tmp_path / "admin")
-        seed_admin_workspace(ws, "wg")
+        seed_admin_workspace(ws, "workgroup")
         # Re-seed with same content should report nothing changed
-        written = seed_admin_workspace(ws, "wg")
+        written = seed_admin_workspace(ws, "workgroup")
         assert ".claude/CLAUDE.md" not in written
 
     def test_empty_workspace_returns_empty(self):
-        assert seed_admin_workspace("", "wg") == []
+        assert seed_admin_workspace("", "workgroup") == []
 
     def test_worktrees_dir_in_claude_md(self, tmp_path):
-        ws = str(tmp_path / "wg" / "admin")
-        seed_admin_workspace(ws, "wg")
-        content = (tmp_path / "wg" / "admin" / ".claude" / "CLAUDE.md").read_text()
+        ws = str(tmp_path / "workgroup" / "admin")
+        seed_admin_workspace(ws, "workgroup")
+        content = (tmp_path / "workgroup" / "admin" / ".claude" / "CLAUDE.md").read_text()
         assert "worktrees" in content
 
 
 class TestSeedSpecialistWorkspace:
     def test_creates_all_files(self, tmp_path):
         ws = str(tmp_path / "specialists" / "dev-1")
-        created = seed_specialist_workspace(ws, "dev-1", "test-wg")
+        created = seed_specialist_workspace(ws, "dev-1", "test-workgroup")
         assert ".claude/CLAUDE.md" in created
         assert ".claude/skills/supercrew/SKILL.md" in created
         assert ".claude/skills/supercrew/references/templates.md" in created
 
     def test_contains_specialist_name(self, tmp_path):
         ws = str(tmp_path / "specialists" / "dev-alice")
-        seed_specialist_workspace(ws, "dev-alice", "my-wg")
+        seed_specialist_workspace(ws, "dev-alice", "my-workgroup")
         content = (tmp_path / "specialists" / "dev-alice" / ".claude" / "CLAUDE.md").read_text()
         assert "dev-alice" in content
-        assert "my-wg" in content
+        assert "my-workgroup" in content
 
     def test_empty_workspace_returns_empty(self):
-        assert seed_specialist_workspace("", "dev", "wg") == []
+        assert seed_specialist_workspace("", "dev", "workgroup") == []
 
 
 # ---------------------------------------------------------------------------
@@ -280,13 +280,13 @@ class TestTemplateFormat:
 
     def test_specialist_claude_md(self):
         result = SPECIALIST_CLAUDE_MD.format(
-            specialist_name="dev-1", workgroup_name="wg",
+            specialist_name="dev-1", workgroup_name="workgroup",
             supercrew_ref=SUPERCREW_REF, worktrees_dir="/tmp/wt",
         )
         assert "dev-1" in result
 
     def test_specialist_skill_md(self):
-        result = SPECIALIST_SKILL_MD.format(supercrew_ref=SUPERCREW_REF, workgroup_name="test-wg")
+        result = SPECIALIST_SKILL_MD.format(supercrew_ref=SUPERCREW_REF, workgroup_name="test-workgroup")
         assert "Super Crew" in result
 
 
@@ -299,97 +299,97 @@ class TestWorkgroupManagerPureMethods:
     def _make_manager(self, tmp_path):
         from boxagent.config import WorkgroupConfig, SpecialistConfig
         workgroup_config = WorkgroupConfig(
-            name="test-wg",
+            name="test-workgroup",
             workspace=str(tmp_path / "workspace"),
         )
         workgroup_config.specialists["dev-1"] = SpecialistConfig(
             name="dev-1", model="sonnet", workspace=str(tmp_path / "dev-1"),
         )
-        mgr = WorkgroupManager(
-            config={"test-wg": workgroup_config},
+        manager = WorkgroupManager(
+            config={"test-workgroup": workgroup_config},
             local_dir=tmp_path / "local",
             start_time=time.time(),
         )
-        return mgr
+        return manager
 
     def test_list_specialists_empty(self, tmp_path):
         from boxagent.config import WorkgroupConfig
-        mgr = WorkgroupManager(
-            config={"wg": WorkgroupConfig(name="wg", workspace=str(tmp_path))},
+        manager = WorkgroupManager(
+            config={"workgroup": WorkgroupConfig(name="workgroup", workspace=str(tmp_path))},
             local_dir=tmp_path,
         )
-        result = mgr.list_specialists("wg")
+        result = manager.list_specialists("workgroup")
         assert result["ok"] is True
         assert result["specialists"] == []
 
     def test_list_specialists_with_entries(self, tmp_path):
-        mgr = self._make_manager(tmp_path)
-        result = mgr.list_specialists("test-wg")
+        manager = self._make_manager(tmp_path)
+        result = manager.list_specialists("test-workgroup")
         assert result["ok"] is True
         assert len(result["specialists"]) == 1
         assert result["specialists"][0]["name"] == "dev-1"
 
-    def test_list_specialists_wrong_wg(self, tmp_path):
-        mgr = self._make_manager(tmp_path)
-        result = mgr.list_specialists("nonexistent")
+    def test_list_specialists_wrong_workgroup(self, tmp_path):
+        manager = self._make_manager(tmp_path)
+        result = manager.list_specialists("nonexistent")
         assert result["ok"] is True
         assert result["specialists"] == []
 
     def test_get_task_result_not_found(self, tmp_path):
-        mgr = self._make_manager(tmp_path)
-        result = mgr.get_task_result("fake-id")
+        manager = self._make_manager(tmp_path)
+        result = manager.get_task_result("fake-id")
         assert result["ok"] is False
 
     def test_get_task_result_found(self, tmp_path):
-        mgr = self._make_manager(tmp_path)
-        mgr.tasks._results["dev-1-1"] = {"status": "done", "result": "ok"}
-        result = mgr.get_task_result("dev-1-1")
+        manager = self._make_manager(tmp_path)
+        manager.tasks._results["dev-1-1"] = {"status": "done", "result": "ok"}
+        result = manager.get_task_result("dev-1-1")
         assert result["ok"] is True
         assert result["status"] == "done"
 
     def test_get_running_tasks_none(self, tmp_path):
-        mgr = self._make_manager(tmp_path)
-        assert mgr._get_running_tasks("test-wg") == []
+        manager = self._make_manager(tmp_path)
+        assert manager._get_running_tasks("test-workgroup") == []
 
     def test_get_running_tasks_with_running(self, tmp_path):
-        mgr = self._make_manager(tmp_path)
-        mgr.tasks._results["dev-1-1"] = {
+        manager = self._make_manager(tmp_path)
+        manager.tasks._results["dev-1-1"] = {
             "status": "running", "target": "dev-1", "started_at": time.time(),
         }
         # No pool, so active=False
-        tasks = mgr._get_running_tasks("test-wg")
+        tasks = manager._get_running_tasks("test-workgroup")
         assert len(tasks) == 1
         assert tasks[0]["task_id"] == "dev-1-1"
         assert tasks[0]["active"] is False
 
     def test_get_running_tasks_ignores_done(self, tmp_path):
-        mgr = self._make_manager(tmp_path)
-        mgr.tasks._results["dev-1-1"] = {"status": "done", "target": "dev-1"}
-        assert mgr._get_running_tasks("test-wg") == []
+        manager = self._make_manager(tmp_path)
+        manager.tasks._results["dev-1-1"] = {"status": "done", "target": "dev-1"}
+        assert manager._get_running_tasks("test-workgroup") == []
 
     def test_save_and_load_specialists(self, tmp_path):
-        mgr = self._make_manager(tmp_path)
+        manager = self._make_manager(tmp_path)
         (tmp_path / "local").mkdir(exist_ok=True)
         from boxagent.config import SpecialistConfig
         specialist = SpecialistConfig(name="dynamic-1", model="haiku", workspace="/tmp/dyn")
-        mgr._save_specialist("test-wg", specialist)
-        loaded = mgr._load_saved_specialists("test-wg")
+        manager._save_specialist("test-workgroup", specialist)
+        loaded = manager._load_saved_specialists("test-workgroup")
         assert "dynamic-1" in loaded
         assert loaded["dynamic-1"].model == "haiku"
 
     def test_remove_saved_specialist(self, tmp_path):
-        mgr = self._make_manager(tmp_path)
+        manager = self._make_manager(tmp_path)
         (tmp_path / "local").mkdir(exist_ok=True)
         from boxagent.config import SpecialistConfig
         specialist = SpecialistConfig(name="dynamic-1", model="haiku")
-        mgr._save_specialist("test-wg", specialist)
-        mgr._remove_saved_specialist("test-wg", "dynamic-1")
-        loaded = mgr._load_saved_specialists("test-wg")
+        manager._save_specialist("test-workgroup", specialist)
+        manager._remove_saved_specialist("test-workgroup", "dynamic-1")
+        loaded = manager._load_saved_specialists("test-workgroup")
         assert "dynamic-1" not in loaded
 
     def test_reset_specialist_not_found(self, tmp_path):
-        mgr = self._make_manager(tmp_path)
-        result = mgr.reset_specialist("nonexistent")
+        manager = self._make_manager(tmp_path)
+        result = manager.reset_specialist("nonexistent")
         assert result["ok"] is False
 
 
@@ -402,7 +402,7 @@ class TestHeartbeatReadMd:
     def test_reads_file(self, tmp_path):
         (tmp_path / "HEARTBEAT.md").write_text("- Check tasks\n- Review work")
         hb = HeartbeatManager(
-            workgroup_name="wg", admin_pool=None, admin_router=None,
+            workgroup_name="workgroup", admin_pool=None, admin_router=None,
             workspace=str(tmp_path), interval_seconds=60,
         )
         content = hb._read_heartbeat_md()
@@ -410,7 +410,7 @@ class TestHeartbeatReadMd:
 
     def test_missing_file(self, tmp_path):
         hb = HeartbeatManager(
-            workgroup_name="wg", admin_pool=None, admin_router=None,
+            workgroup_name="workgroup", admin_pool=None, admin_router=None,
             workspace=str(tmp_path), interval_seconds=60,
         )
         assert hb._read_heartbeat_md() is None
@@ -418,14 +418,14 @@ class TestHeartbeatReadMd:
     def test_empty_file(self, tmp_path):
         (tmp_path / "HEARTBEAT.md").write_text("")
         hb = HeartbeatManager(
-            workgroup_name="wg", admin_pool=None, admin_router=None,
+            workgroup_name="workgroup", admin_pool=None, admin_router=None,
             workspace=str(tmp_path), interval_seconds=60,
         )
         assert hb._read_heartbeat_md() is None
 
     def test_empty_workspace(self):
         hb = HeartbeatManager(
-            workgroup_name="wg", admin_pool=None, admin_router=None,
+            workgroup_name="workgroup", admin_pool=None, admin_router=None,
             workspace="", interval_seconds=60,
         )
         assert hb._read_heartbeat_md() is None
@@ -439,7 +439,7 @@ class TestHeartbeatReadMd:
 class TestHeartbeatLog:
     def test_writes_log(self, tmp_path):
         hb = HeartbeatManager(
-            workgroup_name="wg", admin_pool=None, admin_router=None,
+            workgroup_name="workgroup", admin_pool=None, admin_router=None,
             workspace=str(tmp_path), interval_seconds=60,
         )
         hb._write_heartbeat_log("NO_REPLY", {
@@ -456,7 +456,7 @@ class TestHeartbeatLog:
 
     def test_appends_multiple(self, tmp_path):
         hb = HeartbeatManager(
-            workgroup_name="wg", admin_pool=None, admin_router=None,
+            workgroup_name="workgroup", admin_pool=None, admin_router=None,
             workspace=str(tmp_path), interval_seconds=60,
         )
         meta = {"source_session_id": "", "fork_session_id": "", "raw_response": "", "prompt": ""}

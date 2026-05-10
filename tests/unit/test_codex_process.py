@@ -72,12 +72,12 @@ from tests.unit.helpers import FakeProcess
 
 @pytest.fixture
 def callback():
-    cb = AsyncMock()
-    cb.on_stream = AsyncMock()
-    cb.on_tool_call = AsyncMock()
-    cb.on_tool_update = AsyncMock()
-    cb.on_error = AsyncMock()
-    return cb
+    callback = AsyncMock()
+    callback.on_stream = AsyncMock()
+    callback.on_tool_call = AsyncMock()
+    callback.on_tool_update = AsyncMock()
+    callback.on_error = AsyncMock()
+    return callback
 
 
 @pytest.fixture

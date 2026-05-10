@@ -4,7 +4,7 @@ Composition class. Held by Gateway as ``self._topology``. Two-phase DI:
 
 - Phase 1 (constructor): config + shared web_channels dict (read for the
   local bot list).
-- Phase 2 (setters): ``set_host_election`` / ``set_workgroup_mgr`` after
+- Phase 2 (setters): ``set_host_election`` / ``set_workgroup_manager`` after
   those siblings exist.
 
 Public surface (no leading underscore):
@@ -38,13 +38,13 @@ class TopologyService:
         self.web_channels = web_channels
         # Phase 2 deps
         self.host_election: "HostElection | None" = None
-        self.workgroup_mgr: "WorkgroupManager | None" = None
+        self.workgroup_manager: "WorkgroupManager | None" = None
 
     def set_host_election(self, host_election: "HostElection") -> None:
         self.host_election = host_election
 
-    def set_workgroup_mgr(self, workgroup_mgr: "WorkgroupManager") -> None:
-        self.workgroup_mgr = workgroup_mgr
+    def set_workgroup_manager(self, workgroup_manager: "WorkgroupManager") -> None:
+        self.workgroup_manager = workgroup_manager
 
     # ── HostElection-owned views (re-exposed read-only) ──
 
@@ -79,14 +79,14 @@ class TopologyService:
     def local_bot_descriptors(self) -> list[dict]:
         out: list[dict] = []
         for name in self.web_channels:
-            cfg = self.config.bots.get(name)
+            config = self.config.bots.get(name)
             workgroup = self.config.workgroups.get(name)
-            if cfg is not None:
+            if config is not None:
                 out.append({
                     "name": name,
-                    "display_name": cfg.display_name or name,
-                    "backend": cfg.ai_backend,
-                    "model": cfg.model,
+                    "display_name": config.display_name or name,
+                    "backend": config.ai_backend,
+                    "model": config.model,
                     "kind": "bot",
                 })
             elif workgroup is not None:
@@ -103,8 +103,8 @@ class TopologyService:
 
     def build_peer_descriptors(self, exclude: str = "") -> list[dict]:
         out: list[dict] = []
-        if self.workgroup_mgr is not None:
-            for name in self.workgroup_mgr.routers:
+        if self.workgroup_manager is not None:
+            for name in self.workgroup_manager.routers:
                 if name == exclude:
                     continue
                 if name not in self.config.workgroups:
@@ -166,15 +166,15 @@ class TopologyService:
                 b.name for b in session.bots if b.kind == "workgroup"
             }
             peers: list[dict] = []
-            if self.workgroup_mgr is not None:
-                for wg_name in self.workgroup_mgr.routers:
-                    if wg_name in self_workgroup_names:
+            if self.workgroup_manager is not None:
+                for workgroup_name in self.workgroup_manager.routers:
+                    if workgroup_name in self_workgroup_names:
                         continue
-                    if wg_name not in self.config.workgroups:
+                    if workgroup_name not in self.config.workgroups:
                         continue
-                    workgroup = self.config.workgroups[wg_name]
+                    workgroup = self.config.workgroups[workgroup_name]
                     peers.append({
-                        "name": wg_name,
+                        "name": workgroup_name,
                         "machine": self.config.node_id or "host",
                         "online": True,
                         "kind": "workgroup",

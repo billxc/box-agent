@@ -43,12 +43,12 @@ def _make_template(
 
 
 def test_discover_empty_dirs(tmp_path: Path) -> None:
-    out = discover_templates(tmp_path / "wg", tmp_path / "builtin", tmp_path)
+    out = discover_templates(tmp_path / "workgroup", tmp_path / "builtin", tmp_path)
     assert out == {}
 
 
 def test_discover_basic(tmp_path: Path) -> None:
-    workgroup_dir = tmp_path / "wg"
+    workgroup_dir = tmp_path / "workgroup"
     workgroup_dir.mkdir()
     _make_template(workgroup_dir, "planner", description="task decomp")
     out = discover_templates(workgroup_dir, tmp_path / "builtin", tmp_path)
@@ -59,7 +59,7 @@ def test_discover_basic(tmp_path: Path) -> None:
 
 
 def test_discover_missing_description_raises(tmp_path: Path) -> None:
-    workgroup_dir = tmp_path / "wg"
+    workgroup_dir = tmp_path / "workgroup"
     workgroup_dir.mkdir()
     bad = workgroup_dir / "broken"
     bad.mkdir()
@@ -69,7 +69,7 @@ def test_discover_missing_description_raises(tmp_path: Path) -> None:
 
 
 def test_discover_missing_claude_md_raises(tmp_path: Path) -> None:
-    workgroup_dir = tmp_path / "wg"
+    workgroup_dir = tmp_path / "workgroup"
     workgroup_dir.mkdir()
     bad = workgroup_dir / "broken"
     bad.mkdir()
@@ -79,7 +79,7 @@ def test_discover_missing_claude_md_raises(tmp_path: Path) -> None:
 
 
 def test_discover_name_conflict_raises(tmp_path: Path) -> None:
-    workgroup_dir = tmp_path / "wg"
+    workgroup_dir = tmp_path / "workgroup"
     builtin_dir = tmp_path / "builtin"
     workgroup_dir.mkdir()
     builtin_dir.mkdir()
@@ -90,7 +90,7 @@ def test_discover_name_conflict_raises(tmp_path: Path) -> None:
 
 
 def test_allows_and_blocks_mutex_raises(tmp_path: Path) -> None:
-    workgroup_dir = tmp_path / "wg"
+    workgroup_dir = tmp_path / "workgroup"
     workgroup_dir.mkdir()
     _make_template(workgroup_dir, "planner", allows=["a"], blocks=["b"])
     with pytest.raises(ValueError, match="mutually exclusive"):
@@ -101,7 +101,7 @@ def test_extra_skill_dirs_resolution(tmp_path: Path) -> None:
     # boxagent_dir = tmp_path; relative path under it.
     shared = tmp_path / "shared-skills" / "owasp"
     shared.mkdir(parents=True)
-    workgroup_dir = tmp_path / "wg"
+    workgroup_dir = tmp_path / "workgroup"
     workgroup_dir.mkdir()
     _make_template(workgroup_dir, "auditor", extra_skill_dirs=["shared-skills/owasp"])
     out = discover_templates(workgroup_dir, tmp_path / "builtin", tmp_path)
@@ -109,7 +109,7 @@ def test_extra_skill_dirs_resolution(tmp_path: Path) -> None:
 
 
 def test_extra_skill_dirs_missing_raises(tmp_path: Path) -> None:
-    workgroup_dir = tmp_path / "wg"
+    workgroup_dir = tmp_path / "workgroup"
     workgroup_dir.mkdir()
     _make_template(workgroup_dir, "auditor", extra_skill_dirs=["does-not-exist"])
     with pytest.raises(ValueError, match="non-existent"):
@@ -119,7 +119,7 @@ def test_extra_skill_dirs_missing_raises(tmp_path: Path) -> None:
 def test_extra_skill_dirs_ignores_blank_and_comments(tmp_path: Path) -> None:
     shared = tmp_path / "shared" / "x"
     shared.mkdir(parents=True)
-    workgroup_dir = tmp_path / "wg"
+    workgroup_dir = tmp_path / "workgroup"
     workgroup_dir.mkdir()
     _make_template(
         workgroup_dir, "t",
@@ -130,7 +130,7 @@ def test_extra_skill_dirs_ignores_blank_and_comments(tmp_path: Path) -> None:
 
 
 def test_get_template_not_found(tmp_path: Path) -> None:
-    workgroup_dir = tmp_path / "wg"
+    workgroup_dir = tmp_path / "workgroup"
     workgroup_dir.mkdir()
     _make_template(workgroup_dir, "planner")
     with pytest.raises(ValueError, match="not found"):
@@ -152,7 +152,7 @@ def test_filter_skill_subdirs(tmp_path: Path) -> None:
 
 
 def test_description_takes_first_nonblank_line(tmp_path: Path) -> None:
-    workgroup_dir = tmp_path / "wg"
+    workgroup_dir = tmp_path / "workgroup"
     workgroup_dir.mkdir()
     _make_template(workgroup_dir, "p", description="\n\nFirst real line\nignored\n")
     out = discover_templates(workgroup_dir, tmp_path / "builtin", tmp_path)
@@ -160,7 +160,7 @@ def test_description_takes_first_nonblank_line(tmp_path: Path) -> None:
 
 
 def test_inline_skills_dir_picked_up(tmp_path: Path) -> None:
-    workgroup_dir = tmp_path / "wg"
+    workgroup_dir = tmp_path / "workgroup"
     workgroup_dir.mkdir()
     _make_template(workgroup_dir, "p", skills=["one", "two"])
     out = discover_templates(workgroup_dir, tmp_path / "builtin", tmp_path)

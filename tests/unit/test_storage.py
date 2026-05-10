@@ -125,7 +125,7 @@ class TestLegacyWorkgroupPrefixMigration:
         data = _yaml.safe_load((local_dir / "sessions.yaml").read_text())
         assert "alice:workgroup:dev-1:" in data
         assert "alice:wg:dev-1:" not in data
-        assert "bob:foo:" in data  # non-wg keys preserved verbatim
+        assert "bob:foo:" in data  # non-workgroup keys preserved verbatim
         assert data["alice:workgroup:dev-1:"]["session_id"] == "s1"
 
     def test_idempotent_when_no_legacy_keys(self, tmp_path):

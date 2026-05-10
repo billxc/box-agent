@@ -12,29 +12,29 @@ from boxagent.router import ChannelCallback
 
 @pytest.fixture
 def mock_channel():
-    ch = AsyncMock()
-    ch.show_typing = AsyncMock()
-    ch.stream_start = AsyncMock(
+    channel = AsyncMock()
+    channel.show_typing = AsyncMock()
+    channel.stream_start = AsyncMock(
         return_value=StreamHandle(message_id="msg1", chat_id="chat1")
     )
-    ch.stream_update = AsyncMock()
-    ch.stream_end = AsyncMock()
-    ch.send_text = AsyncMock()
-    ch.format_tool_call = lambda name, inp: f"tool:{name}"
+    channel.stream_update = AsyncMock()
+    channel.stream_end = AsyncMock()
+    channel.send_text = AsyncMock()
+    channel.format_tool_call = lambda name, inp: f"tool:{name}"
 
     # Mimic the polymorphic on_tool_call that TelegramChannel
     # provides: format_tool_call → stream_update OR send_text.
     async def _on_tool_call(chat_id, tool_id, name, inp, result, *, stream_handle=None, webhook_name=""):
-        fmt = ch.format_tool_call(name, inp)
+        fmt = channel.format_tool_call(name, inp)
         if not fmt:
             return False
         if stream_handle is not None:
-            await ch.stream_update(stream_handle, f"\n{fmt}\n")
+            await channel.stream_update(stream_handle, f"\n{fmt}\n")
             return True
-        await ch.send_text(chat_id, fmt, parse_mode=None, webhook_name=webhook_name)
+        await channel.send_text(chat_id, fmt, parse_mode=None, webhook_name=webhook_name)
         return False
-    ch.on_tool_call = _on_tool_call
-    return ch
+    channel.on_tool_call = _on_tool_call
+    return channel
 
 
 @pytest.fixture
@@ -258,17 +258,17 @@ class TestFullLifecycle:
 
 def _make_router_channel():
     """Create a mock channel that tracks show_typing calls."""
-    ch = AsyncMock()
-    ch.show_typing = AsyncMock()
-    ch.send_text = AsyncMock()
-    ch.stream_start = AsyncMock(
+    channel = AsyncMock()
+    channel.show_typing = AsyncMock()
+    channel.send_text = AsyncMock()
+    channel.stream_start = AsyncMock(
         return_value=StreamHandle(message_id="msg1", chat_id="chat1")
     )
-    ch.stream_update = AsyncMock()
-    ch.stream_end = AsyncMock()
-    ch.format_tool_call = lambda name, inp: f"tool:{name}"
-    ch.tool_calls_display = "summary"
-    return ch
+    channel.stream_update = AsyncMock()
+    channel.stream_end = AsyncMock()
+    channel.format_tool_call = lambda name, inp: f"tool:{name}"
+    channel.tool_calls_display = "summary"
+    return channel
 
 
 def _make_router(channel, cli=None):
@@ -297,23 +297,23 @@ class TestCommandsNoTyping:
 
     @pytest.mark.parametrize("cmd", ["/status", "/new", "/cancel", "/resume", "/start", "/help", "/verbose", "/sync_skills"])
     async def test_command_no_show_typing(self, cmd):
-        ch = _make_router_channel()
-        router = _make_router(ch)
+        channel = _make_router_channel()
+        router = _make_router(channel)
         await router.handle_message(_msg(cmd))
-        ch.show_typing.assert_not_called()
+        channel.show_typing.assert_not_called()
 
     @pytest.mark.parametrize("cmd", ["/status", "/new", "/cancel", "/resume", "/start", "/help", "/verbose", "/sync_skills"])
     async def test_command_no_stream_start(self, cmd):
-        ch = _make_router_channel()
-        router = _make_router(ch)
+        channel = _make_router_channel()
+        router = _make_router(channel)
         await router.handle_message(_msg(cmd))
-        ch.stream_start.assert_not_called()
+        channel.stream_start.assert_not_called()
 
     @pytest.mark.parametrize("cmd", ["/status", "/new", "/cancel", "/resume", "/start", "/help", "/verbose", "/sync_skills"])
     async def test_command_no_lingering_tasks(self, cmd):
         """No background asyncio tasks left after command handling."""
-        ch = _make_router_channel()
-        router = _make_router(ch)
+        channel = _make_router_channel()
+        router = _make_router(channel)
 
         tasks_before = {t for t in asyncio.all_tasks() if not t.done()}
         await router.handle_message(_msg(cmd))
@@ -330,25 +330,25 @@ class TestDispatchTyping:
 
     async def test_dispatch_calls_show_typing(self):
         """Normal message triggers typing loop via _dispatch."""
-        ch = _make_router_channel()
+        channel = _make_router_channel()
         cli = AsyncMock()
         # Make cli.send slow enough for typing loop to fire
         async def slow_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
             await asyncio.sleep(0.1)
         cli.send = slow_send
         cli.session_id = None
-        router = _make_router(ch, cli)
+        router = _make_router(channel, cli)
 
         await router.handle_message(_msg("hello"))
-        ch.show_typing.assert_called()
+        channel.show_typing.assert_called()
 
     async def test_dispatch_typing_cleaned_up_after_send(self):
         """After cli.send completes, no typing task is left behind."""
-        ch = _make_router_channel()
+        channel = _make_router_channel()
         cli = AsyncMock()
         cli.send = AsyncMock()
         cli.session_id = None
-        router = _make_router(ch, cli)
+        router = _make_router(channel, cli)
 
         tasks_before = {t for t in asyncio.all_tasks() if not t.done()}
         await router.handle_message(_msg("hello"))
@@ -366,7 +366,7 @@ class TestConcurrentCommandDuringDispatch:
     @pytest.mark.parametrize("cmd", ["/status", "/new", "/cancel", "/resume", "/start", "/help", "/verbose", "/sync_skills"])
     async def test_command_during_busy_dispatch(self, cmd):
         """Command responds immediately even while CLI is busy."""
-        ch = _make_router_channel()
+        channel = _make_router_channel()
         dispatch_done = asyncio.Event()
 
         async def slow_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
@@ -377,7 +377,7 @@ class TestConcurrentCommandDuringDispatch:
         cli.cancel = AsyncMock()
         cli.state = "busy"
         cli.session_id = "sess_abc"
-        router = _make_router(ch, cli)
+        router = _make_router(channel, cli)
 
         # Start a dispatch that blocks
         dispatch_task = asyncio.create_task(
@@ -386,11 +386,11 @@ class TestConcurrentCommandDuringDispatch:
         await asyncio.sleep(0.05)  # let dispatch start
 
         # Now send a command concurrently
-        ch.send_text.reset_mock()
+        channel.send_text.reset_mock()
         await router.handle_message(_msg(cmd))
 
         # Command should have responded
-        ch.send_text.assert_called()
+        channel.send_text.assert_called()
 
         # Clean up: unblock dispatch
         dispatch_done.set()
@@ -398,7 +398,7 @@ class TestConcurrentCommandDuringDispatch:
 
     async def test_command_does_not_disrupt_active_typing(self):
         """A /status during dispatch doesn't kill the dispatch's typing task."""
-        ch = _make_router_channel()
+        channel = _make_router_channel()
         dispatch_done = asyncio.Event()
 
         async def slow_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
@@ -408,7 +408,7 @@ class TestConcurrentCommandDuringDispatch:
         cli.send = slow_send
         cli.state = "busy"
         cli.session_id = "sess_abc"
-        router = _make_router(ch, cli)
+        router = _make_router(channel, cli)
 
         dispatch_task = asyncio.create_task(
             router.handle_message(_msg("do something"))
@@ -416,14 +416,14 @@ class TestConcurrentCommandDuringDispatch:
         await asyncio.sleep(0.05)  # let typing start
 
         # Typing should be running (at least one call)
-        assert ch.show_typing.call_count >= 1
+        assert channel.show_typing.call_count >= 1
 
         # Send /status while dispatch is in progress
         await router.handle_message(_msg("/status"))
 
         # Typing task should still exist — command doesn't touch it
         # Verify by checking show_typing keeps getting called
-        ch.show_typing.reset_mock()
+        channel.show_typing.reset_mock()
         await asyncio.sleep(0.1)
         # The loop is still alive (it sleeps 4s, but the task is not cancelled)
         # We can't easily wait 4s, so just check the task wasn't leaked/killed
@@ -438,7 +438,7 @@ class TestConcurrentCommandDuringDispatch:
 
     async def test_status_shows_busy_during_dispatch(self):
         """/status shows state=busy while CLI is processing."""
-        ch = _make_router_channel()
+        channel = _make_router_channel()
         dispatch_done = asyncio.Event()
 
         async def slow_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
@@ -448,7 +448,7 @@ class TestConcurrentCommandDuringDispatch:
         cli.send = slow_send
         cli.state = "busy"
         cli.session_id = "sess_123"
-        router = _make_router(ch, cli)
+        router = _make_router(channel, cli)
         router.bot_name = "test-bot"
 
         dispatch_task = asyncio.create_task(
@@ -456,9 +456,9 @@ class TestConcurrentCommandDuringDispatch:
         )
         await asyncio.sleep(0.05)
 
-        ch.send_text.reset_mock()
+        channel.send_text.reset_mock()
         await router.handle_message(_msg("/status"))
-        text = ch.send_text.call_args[0][1]
+        text = channel.send_text.call_args[0][1]
         assert "busy" in text.lower()
 
         dispatch_done.set()
@@ -466,7 +466,7 @@ class TestConcurrentCommandDuringDispatch:
 
     async def test_cancel_during_dispatch(self):
         """/cancel calls cli.cancel while dispatch is running."""
-        ch = _make_router_channel()
+        channel = _make_router_channel()
         dispatch_done = asyncio.Event()
 
         async def slow_send(prompt, callback, model="", chat_id="", append_system_prompt="", env=None):
@@ -477,7 +477,7 @@ class TestConcurrentCommandDuringDispatch:
         cli.cancel = AsyncMock()
         cli.state = "busy"
         cli.session_id = None
-        router = _make_router(ch, cli)
+        router = _make_router(channel, cli)
 
         dispatch_task = asyncio.create_task(
             router.handle_message(_msg("long task"))
@@ -492,7 +492,7 @@ class TestConcurrentCommandDuringDispatch:
 
     async def test_late_tool_event_after_cancel_does_not_restart_typing(self):
         """Late callback events after dispatch cleanup must not leak typing loops."""
-        ch = _make_router_channel()
+        channel = _make_router_channel()
         dispatch_done = asyncio.Event()
         captured_callback = None
 
@@ -506,7 +506,7 @@ class TestConcurrentCommandDuringDispatch:
         cli.cancel = AsyncMock(side_effect=lambda: dispatch_done.set())
         cli.state = "busy"
         cli.session_id = None
-        router = _make_router(ch, cli)
+        router = _make_router(channel, cli)
 
         dispatch_task = asyncio.create_task(
             router.handle_message(_msg("long task"))
@@ -517,9 +517,9 @@ class TestConcurrentCommandDuringDispatch:
         await dispatch_task
 
         assert captured_callback is not None
-        ch.show_typing.reset_mock()
-        ch.send_text.reset_mock()
-        ch.stream_update.reset_mock()
+        channel.show_typing.reset_mock()
+        channel.send_text.reset_mock()
+        channel.stream_update.reset_mock()
 
         await captured_callback.on_tool_call("bash", {}, "")
         await asyncio.sleep(0.05)
@@ -527,5 +527,5 @@ class TestConcurrentCommandDuringDispatch:
         tasks = {t for t in asyncio.all_tasks() if not t.done()}
         typing_tasks = [t for t in tasks if "_loop" in repr(t)]
         assert typing_tasks == []
-        ch.show_typing.assert_not_called()
-        ch.stream_update.assert_not_called()
+        channel.show_typing.assert_not_called()
+        channel.stream_update.assert_not_called()

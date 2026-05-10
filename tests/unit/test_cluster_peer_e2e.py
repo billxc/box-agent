@@ -104,7 +104,7 @@ async def test_sat_dial_host_and_register(host_registry_app, sat_local_app):
         tunnel_name="dummy-tunnel",
         local_web_token="",
         bot_provider=lambda: [
-            {"name": "remote-wg", "display_name": "Remote WG",
+            {"name": "remote-workgroup", "display_name": "Remote WG",
              "backend": "claude-cli", "kind": "workgroup"},
         ],
     )
@@ -113,7 +113,7 @@ async def test_sat_dial_host_and_register(host_registry_app, sat_local_app):
         await _wait_until(lambda: "guest-1" in registry.sessions, timeout=3.0)
         bots = registry.list_bots()
         assert ("guest-1", ) == tuple(m for m, b in bots)
-        assert bots[0][1].name == "remote-wg"
+        assert bots[0][1].name == "remote-workgroup"
         assert bots[0][1].kind == "workgroup"
     finally:
         await guest.stop()
@@ -140,7 +140,7 @@ async def test_send_to_peer_round_trip_via_cluster_rpc(
         tunnel_name="dummy-tunnel",
         local_web_token="",
         bot_provider=lambda: [
-            {"name": "remote-wg", "display_name": "Remote WG",
+            {"name": "remote-workgroup", "display_name": "Remote WG",
              "backend": "claude-cli", "kind": "workgroup"},
         ],
     )
@@ -152,8 +152,8 @@ async def test_send_to_peer_round_trip_via_cluster_rpc(
         result = await session.call(
             "POST", "/api/wg/peer/recv",
             body={
-                "target_workgroup": "remote-wg",
-                "sender": "local-wg",
+                "target_workgroup": "remote-workgroup",
+                "sender": "local-workgroup",
                 "body": "ping from local",
             },
             timeout=3.0,
@@ -166,8 +166,8 @@ async def test_send_to_peer_round_trip_via_cluster_rpc(
         # 2) Guest's local HTTP actually received the POST with the full body
         await _wait_until(lambda: bool(received), timeout=2.0)
         assert received[0] == {
-            "target_workgroup": "remote-wg",
-            "sender": "local-wg",
+            "target_workgroup": "remote-workgroup",
+            "sender": "local-workgroup",
             "body": "ping from local",
         }, received
     finally:
@@ -193,7 +193,7 @@ async def test_host_send_peer_falls_through_to_sat_when_target_not_local(
         tunnel_name="dummy-tunnel",
         local_web_token="",
         bot_provider=lambda: [
-            {"name": "remote-wg", "display_name": "Remote WG",
+            {"name": "remote-workgroup", "display_name": "Remote WG",
              "backend": "claude-cli", "kind": "workgroup"},
         ],
     )
@@ -202,7 +202,7 @@ async def test_host_send_peer_falls_through_to_sat_when_target_not_local(
         await _wait_until(lambda: "guest-1" in registry.sessions, timeout=3.0)
 
         # Replicate gateway.send_peer's decision tree (target NOT local).
-        target = "remote-wg"
+        target = "remote-workgroup"
         sender = "local-admin"
         message = "hello peer"
 
@@ -300,21 +300,21 @@ async def test_send_peer_surfaces_404_from_sat_recv():
     class _FakeRegistry:
         def list_bots(self):
             from boxagent.cluster.registry import RemoteBot
-            return [("guest-x", RemoteBot(name="remote-wg", kind="workgroup"))]
+            return [("guest-x", RemoteBot(name="remote-workgroup", kind="workgroup"))]
 
         def get(self, machine_id):
             return _FakeSession() if machine_id == "guest-x" else None
 
-    cfg = MagicMock()
-    cfg.machine_id = ""
-    cfg.node_id = ""
-    cfg.cluster_tunnel = False
-    topo = TopologyService(config=cfg, web_channels={})
+    config = MagicMock()
+    config.machine_id = ""
+    config.node_id = ""
+    config.cluster_tunnel = False
+    topo = TopologyService(config=config, web_channels={})
     topo.set_host_election(SimpleNamespace(registry=_FakeRegistry(), client=None, tunnel=None))
     ps = PeerService(topology=topo, main_chat_id_provider=lambda b: f"main-{b}")
-    # workgroup_mgr left as None — target is NOT local
+    # workgroup_manager left as None — target is NOT local
 
-    result = await ps.send_peer("remote-wg", "local-wg", "hello")
+    result = await ps.send_peer("remote-workgroup", "local-workgroup", "hello")
     assert result["ok"] is False, f"send_peer must NOT report success on 404; got {result}"
     assert result["via"] == "rpc"
     assert "404" in str(result.get("error", "")), result
@@ -327,13 +327,13 @@ async def test_send_peer_surfaces_404_from_sat_recv():
 
 
 def test_build_peer_descriptors_combines_local_and_remote():
-    """Replaces the old peers.yaml read. Source = local workgroup_mgr.routers
+    """Replaces the old peers.yaml read. Source = local workgroup_manager.routers
     + remote guest_registry.list_bots() + offline history. Self is excluded."""
     from boxagent.cluster.registry import RemoteBot, GuestRegistry
     from boxagent.cluster.topology_service import TopologyService
     from boxagent.config import AppConfig, WorkgroupConfig
 
-    cfg = AppConfig(
+    config = AppConfig(
         workgroups={
             "war-room": WorkgroupConfig(name="war-room", display_name="War Room"),
             "war-room-2": WorkgroupConfig(name="war-room-2", display_name="War Room Backup"),
@@ -346,19 +346,19 @@ def test_build_peer_descriptors_combines_local_and_remote():
     reg = GuestRegistry()
     # Online guest with one workgroup + one regular bot (regular must be excluded)
     session = type("S", (), {"bots": [
-        RemoteBot(name="mac-mini-wg", display_name="MM Admin", kind="workgroup"),
+        RemoteBot(name="mac-mini-workgroup", display_name="MM Admin", kind="workgroup"),
         RemoteBot(name="claude", display_name="Claude bot", kind="bot"),
     ]})()
     reg.sessions["macmini"] = session
     # Offline guest (history only)
     reg.history["old-mbp"] = {
-        "bots": [{"name": "old-mbp-wg", "display_name": "Old", "kind": "workgroup"}],
+        "bots": [{"name": "old-mbp-workgroup", "display_name": "Old", "kind": "workgroup"}],
         "last_seen": 0,
     }
     he = SimpleNamespace(registry=reg, client=None, tunnel=None)
 
-    ts = TopologyService(config=cfg, web_channels={})
-    ts.set_workgroup_mgr(_FakeMgr())
+    ts = TopologyService(config=config, web_channels={})
+    ts.set_workgroup_manager(_FakeMgr())
     ts.set_host_election(he)
 
     peers = ts.build_peer_descriptors(exclude="war-room")
@@ -370,10 +370,10 @@ def test_build_peer_descriptors_combines_local_and_remote():
         "name": "war-room-2", "machine": "local", "online": True,
         "kind": "workgroup", "description": "War Room Backup",
     }
-    assert by_name["mac-mini-wg"]["machine"] == "macmini"
-    assert by_name["mac-mini-wg"]["online"] is True
-    assert by_name["old-mbp-wg"]["machine"] == "old-mbp"
-    assert by_name["old-mbp-wg"]["online"] is False
+    assert by_name["mac-mini-workgroup"]["machine"] == "macmini"
+    assert by_name["mac-mini-workgroup"]["online"] is True
+    assert by_name["old-mbp-workgroup"]["machine"] == "old-mbp"
+    assert by_name["old-mbp-workgroup"]["online"] is False
 
 
 def test_build_peer_descriptors_guest_node_returns_local_only():
@@ -382,13 +382,13 @@ def test_build_peer_descriptors_guest_node_returns_local_only():
     from boxagent.cluster.topology_service import TopologyService
     from boxagent.config import AppConfig, WorkgroupConfig
 
-    cfg = AppConfig(workgroups={
-        "guest-wg": WorkgroupConfig(name="guest-wg", display_name="Guest WG"),
+    config = AppConfig(workgroups={
+        "guest-workgroup": WorkgroupConfig(name="guest-workgroup", display_name="Guest WG"),
     })
-    ts = TopologyService(config=cfg, web_channels={})
-    ts.set_workgroup_mgr(type("M", (), {"routers": {"guest-wg": object()}})())
+    ts = TopologyService(config=config, web_channels={})
+    ts.set_workgroup_manager(type("M", (), {"routers": {"guest-workgroup": object()}})())
     # host_election remains None — guest mode
 
     peers = ts.build_peer_descriptors(exclude="")
-    assert [p["name"] for p in peers] == ["guest-wg"]
+    assert [p["name"] for p in peers] == ["guest-workgroup"]
     assert peers[0]["machine"] == "local"

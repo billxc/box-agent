@@ -6,28 +6,28 @@ import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
-def _internal_api_from(gw):
+def _internal_api_from(gateway):
     """Build an InternalApiServer bound to a Gateway's deps (for tests
-    that bypass gw.start()).
+    that bypass gateway.start()).
     """
     from boxagent.gateway import InternalApiServer
     return InternalApiServer(
-        config=gw.config,
-        local_dir=gw.local_dir,
-        peer=gw._peer,
-        workgroup_routes=gw._workgroup_routes,
-        scheduler_routes=gw._scheduler_routes,
+        config=gateway.config,
+        local_dir=gateway.local_dir,
+        peer=gateway._peer,
+        workgroup_routes=gateway._workgroup_routes,
+        scheduler_routes=gateway._scheduler_routes,
     )
 
 
-def _agent_mgr_from(gw):
-    """Build an AgentManager for tests that bypass gw.start()."""
+def _agent_manager_from(gateway):
+    """Build an AgentManager for tests that bypass gateway.start()."""
     from boxagent.agent.agent_manager import AgentManager
     return AgentManager(
-        config=gw.config,
-        config_dir=gw.config_dir,
-        storage=gw._storage,
-        start_time=gw._start_time,
+        config=gateway.config,
+        config_dir=gateway.config_dir,
+        storage=gateway._storage,
+        start_time=gateway._start_time,
     )
 
 
@@ -54,11 +54,11 @@ class TestGateway:
         }
         mock_config.node_id = "test-node"
 
-        gw = Gateway(config=mock_config, config_dir=tmp_path)
+        gateway = Gateway(config=mock_config, config_dir=tmp_path)
 
         started: list[str] = []
 
-        async def track(self, name, cfg):
+        async def track(self, name, config):
             started.append(name)
 
         async def noop_raw(self):
@@ -68,11 +68,11 @@ class TestGateway:
                    side_effect=track, autospec=True), \
              patch("boxagent.agent.agent_manager.AgentManager.start_raw_bot",
                    side_effect=noop_raw, autospec=True), \
-             patch.object(gw, "_start_scheduler"), \
+             patch.object(gateway, "_start_scheduler"), \
              patch("boxagent.gateway.InternalApiServer.start", new_callable=AsyncMock), \
              patch("boxagent.gateway.McpHttpServer.start", new_callable=AsyncMock), \
              patch("boxagent.transports.web.server.WebHttpServer.start", new_callable=AsyncMock):
-            await gw.start()
+            await gateway.start()
 
         assert started == ["test-bot"]
 
@@ -83,10 +83,10 @@ class TestGateway:
         custom_box_agent_dir = tmp_path / "ba-dir"
 
         with patch.dict(os.environ, {"BOX_AGENT_DIR": str(custom_box_agent_dir)}):
-            gw = Gateway(config=mock_config)
+            gateway = Gateway(config=mock_config)
 
-        assert gw.config_dir == custom_box_agent_dir
-        assert gw.local_dir == custom_box_agent_dir / "local"
+        assert gateway.config_dir == custom_box_agent_dir
+        assert gateway.local_dir == custom_box_agent_dir / "local"
 
     async def test_stop_does_not_crash_without_start(self, tmp_path):
         """Gateway.stop() before start() should be a no-op (all manager refs
@@ -97,8 +97,8 @@ class TestGateway:
         mock_config = MagicMock()
         mock_config.bots = {}
 
-        gw = Gateway(config=mock_config, config_dir=tmp_path)
-        await gw.stop()
+        gateway = Gateway(config=mock_config, config_dir=tmp_path)
+        await gateway.stop()
 
     async def test_start_creates_scheduler(self, tmp_path):
         from boxagent.gateway import Gateway
@@ -107,21 +107,21 @@ class TestGateway:
         mock_config.bots = {}
         mock_config.node_id = "test-node"
 
-        gw = Gateway(config=mock_config, config_dir=tmp_path)
+        gateway = Gateway(config=mock_config, config_dir=tmp_path)
         with patch("boxagent.gateway.InternalApiServer.start", new_callable=AsyncMock), \
              patch("boxagent.gateway.McpHttpServer.start", new_callable=AsyncMock), \
                      patch("boxagent.transports.web.server.WebHttpServer.start", new_callable=AsyncMock):
-            await gw.start()
+            await gateway.start()
 
-        assert gw._scheduler is not None
-        assert gw._scheduler_task is not None
-        assert not gw._scheduler_task.done()
+        assert gateway._scheduler is not None
+        assert gateway._scheduler_task is not None
+        assert not gateway._scheduler_task.done()
 
         # Cleanup
-        gw._scheduler.stop()
-        gw._scheduler_task.cancel()
+        gateway._scheduler.stop()
+        gateway._scheduler_task.cancel()
         try:
-            await gw._scheduler_task
+            await gateway._scheduler_task
         except asyncio.CancelledError:
             pass
 
@@ -132,14 +132,14 @@ class TestGateway:
         mock_config.bots = {}
         mock_config.node_id = "test-node"
 
-        gw = Gateway(config=mock_config, config_dir=tmp_path)
+        gateway = Gateway(config=mock_config, config_dir=tmp_path)
         with patch("boxagent.gateway.InternalApiServer.start", new_callable=AsyncMock), \
              patch("boxagent.gateway.McpHttpServer.start", new_callable=AsyncMock), \
                      patch("boxagent.transports.web.server.WebHttpServer.start", new_callable=AsyncMock):
-            await gw.start()
+            await gateway.start()
 
-        scheduler_task = gw._scheduler_task
-        await gw.stop()
+        scheduler_task = gateway._scheduler_task
+        await gateway.stop()
 
         # Give the cancelled task a chance to finish
         try:
@@ -156,23 +156,23 @@ class TestGateway:
         mock_config.bots = {}
         mock_config.node_id = "test-node"
 
-        gw = Gateway(config=mock_config, config_dir=tmp_path)
-        gw._storage = MagicMock()
-        gw._storage.load_session.return_value = None
-        gw._start_time = 1.0
+        gateway = Gateway(config=mock_config, config_dir=tmp_path)
+        gateway._storage = MagicMock()
+        gateway._storage.load_session.return_value = None
+        gateway._start_time = 1.0
 
-        bot_cfg = MagicMock()
-        bot_cfg.telegram_token = "123:ABC"
-        bot_cfg.allowed_users = [111]
-        bot_cfg.telegram_allowed_users = [111]
-        bot_cfg.workspace = str(tmp_path)
-        bot_cfg.display_tool_calls = "summary"
-        bot_cfg.model = ""
-        bot_cfg.agent = ""
-        bot_cfg.extra_skill_dirs = []
-        bot_cfg.display_name = ""
-        bot_cfg.ai_backend = "claude-cli"
-        bot_cfg.enabled_on_nodes = ""
+        bot_config = MagicMock()
+        bot_config.telegram_token = "123:ABC"
+        bot_config.allowed_users = [111]
+        bot_config.telegram_allowed_users = [111]
+        bot_config.workspace = str(tmp_path)
+        bot_config.display_tool_calls = "summary"
+        bot_config.model = ""
+        bot_config.agent = ""
+        bot_config.extra_skill_dirs = []
+        bot_config.display_name = ""
+        bot_config.ai_backend = "claude-cli"
+        bot_config.enabled_on_nodes = ""
 
         with patch("boxagent.agent.backend_factory.ClaudeProcess") as MockCLI, \
              patch("boxagent.transports.telegram.TelegramChannel") as MockChan, \
@@ -186,7 +186,7 @@ class TestGateway:
             mock_wd.run_forever = AsyncMock()
             MockWD.return_value = mock_wd
 
-            await _agent_mgr_from(gw).start_bot("my-bot", bot_cfg)
+            await _agent_manager_from(gateway).start_bot("my-bot", bot_config)
             # Startup notify is now fire-and-forget; let the task run.
             await asyncio.sleep(0)
 
@@ -205,7 +205,7 @@ class TestGateway:
         mock_config.bots = {}
         mock_config.node_id = "test-node"
 
-        gw = Gateway(config=mock_config, config_dir=tmp_path)
+        gateway = Gateway(config=mock_config, config_dir=tmp_path)
 
         # Set up a mock scheduler with a bot ref
         old_backend = MagicMock()
@@ -213,7 +213,7 @@ class TestGateway:
         old_backend.stop = AsyncMock()
 
         mock_channel = MagicMock()
-        gw._scheduler = Scheduler(
+        gateway._scheduler = Scheduler(
             schedules_file=tmp_path / "schedules.yaml",
             node_id="test-node",
             bot_refs={"my-bot": BotRef(
@@ -221,22 +221,22 @@ class TestGateway:
             )},
         )
 
-        bot_cfg = MagicMock()
-        bot_cfg.workspace = str(tmp_path)
-        bot_cfg.model = ""
-        bot_cfg.agent = ""
-        bot_cfg.telegram_token = "token"
-        bot_cfg.extra_skill_dirs = []
+        bot_config = MagicMock()
+        bot_config.workspace = str(tmp_path)
+        bot_config.model = ""
+        bot_config.agent = ""
+        bot_config.telegram_token = "token"
+        bot_config.extra_skill_dirs = []
 
         with patch("boxagent.agent.backend_factory.ClaudeProcess") as MockCLI:
             new_backend = MagicMock()
             MockCLI.return_value = new_backend
-            mgr = _agent_mgr_from(gw)
-            mgr.backends["my-bot"] = old_backend  # seed manager state
-            mgr.set_scheduler(gw._scheduler)
-            await mgr.restart_bot("my-bot", bot_cfg)
+            manager = _agent_manager_from(gateway)
+            manager.backends["my-bot"] = old_backend  # seed manager state
+            manager.set_scheduler(gateway._scheduler)
+            await manager.restart_bot("my-bot", bot_config)
 
-        assert gw._scheduler.bot_refs["my-bot"].backend is new_backend
+        assert gateway._scheduler.bot_refs["my-bot"].backend is new_backend
 
     async def test_start_bot_loads_saved_codex_session(self, tmp_path):
         from boxagent.gateway import Gateway
@@ -245,21 +245,21 @@ class TestGateway:
         mock_config.bots = {}
         mock_config.node_id = "test-node"
 
-        gw = Gateway(config=mock_config, config_dir=tmp_path)
-        gw._storage = MagicMock()
-        gw._storage.load_session.return_value = "saved-codex-session"
-        gw._start_time = 1.0
+        gateway = Gateway(config=mock_config, config_dir=tmp_path)
+        gateway._storage = MagicMock()
+        gateway._storage.load_session.return_value = "saved-codex-session"
+        gateway._start_time = 1.0
 
-        bot_cfg = MagicMock()
-        bot_cfg.ai_backend = "codex-cli"
-        bot_cfg.telegram_token = "123:ABC"
-        bot_cfg.allowed_users = [111]
-        bot_cfg.workspace = str(tmp_path)
-        bot_cfg.display_tool_calls = "summary"
-        bot_cfg.model = ""
-        bot_cfg.agent = ""
-        bot_cfg.yolo = False
-        bot_cfg.extra_skill_dirs = []
+        bot_config = MagicMock()
+        bot_config.ai_backend = "codex-cli"
+        bot_config.telegram_token = "123:ABC"
+        bot_config.allowed_users = [111]
+        bot_config.workspace = str(tmp_path)
+        bot_config.display_tool_calls = "summary"
+        bot_config.model = ""
+        bot_config.agent = ""
+        bot_config.yolo = False
+        bot_config.extra_skill_dirs = []
 
         with patch("boxagent.agent.codex_process.CodexProcess") as MockCodex, \
              patch("boxagent.transports.telegram.TelegramChannel") as MockChan, \
@@ -272,7 +272,7 @@ class TestGateway:
             mock_wd.run_forever = AsyncMock()
             MockWD.return_value = mock_wd
 
-            await _agent_mgr_from(gw).start_bot("my-bot", bot_cfg)
+            await _agent_manager_from(gateway).start_bot("my-bot", bot_config)
 
         assert MockCodex.call_args_list[0].kwargs["session_id"] == "saved-codex-session"
 
@@ -305,11 +305,11 @@ class TestGateway:
 
         local_dir = tmp_path / "local"
         local_dir.mkdir()
-        gw = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
-        gw._peer = MagicMock()
-        gw._workgroup_routes = MagicMock()
-        gw._scheduler_routes = MagicMock()
-        api = _internal_api_from(gw)
+        gateway = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
+        gateway._peer = MagicMock()
+        gateway._workgroup_routes = MagicMock()
+        gateway._scheduler_routes = MagicMock()
+        api = _internal_api_from(gateway)
 
         mock_socket = MagicMock()
         mock_socket.getsockname.return_value = ("127.0.0.1", 50762)
@@ -337,11 +337,11 @@ class TestGateway:
 
         local_dir = tmp_path / "local"
         local_dir.mkdir()
-        gw = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
-        gw._peer = MagicMock()
-        gw._workgroup_routes = MagicMock()
-        gw._scheduler_routes = MagicMock()
-        api = _internal_api_from(gw)
+        gateway = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
+        gateway._peer = MagicMock()
+        gateway._workgroup_routes = MagicMock()
+        gateway._scheduler_routes = MagicMock()
+        api = _internal_api_from(gateway)
 
         with patch.object(web, "TCPSite") as MockTCP:
             mock_tcp = AsyncMock()
@@ -362,11 +362,11 @@ class TestGateway:
 
         local_dir = tmp_path / "local"
         local_dir.mkdir()
-        gw = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
-        gw._peer = MagicMock()
-        gw._workgroup_routes = MagicMock()
-        gw._scheduler_routes = MagicMock()
-        api = _internal_api_from(gw)
+        gateway = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
+        gateway._peer = MagicMock()
+        gateway._workgroup_routes = MagicMock()
+        gateway._scheduler_routes = MagicMock()
+        api = _internal_api_from(gateway)
 
         port_file = local_dir / "api-port.txt"
         port_file.write_text("50762\n", encoding="utf-8")
@@ -411,11 +411,11 @@ class TestGateway:
         mock_config.bots = {"bot-a": bot_a, "bot-b": bot_b}
         mock_config.node_id = "home-server"
 
-        gw = Gateway(config=mock_config, config_dir=tmp_path)
+        gateway = Gateway(config=mock_config, config_dir=tmp_path)
 
         started = []
 
-        async def track_start_bot(self, name, cfg):
+        async def track_start_bot(self, name, config):
             started.append(name)
 
         async def noop_raw(self):
@@ -425,11 +425,11 @@ class TestGateway:
                    side_effect=track_start_bot, autospec=True), \
              patch("boxagent.agent.agent_manager.AgentManager.start_raw_bot",
                    side_effect=noop_raw, autospec=True), \
-             patch.object(gw, "_start_scheduler"), \
+             patch.object(gateway, "_start_scheduler"), \
              patch("boxagent.gateway.InternalApiServer.start", new_callable=AsyncMock), \
              patch("boxagent.gateway.McpHttpServer.start", new_callable=AsyncMock), \
              patch("boxagent.transports.web.server.WebHttpServer.start", new_callable=AsyncMock):
-            await gw.start()
+            await gateway.start()
 
         assert "bot-a" not in started
         assert "bot-b" in started
@@ -446,11 +446,11 @@ class TestGateway:
         mock_config.bots = {"bot-a": bot_a, "bot-b": bot_b}
         mock_config.node_id = ""
 
-        gw = Gateway(config=mock_config, config_dir=tmp_path)
+        gateway = Gateway(config=mock_config, config_dir=tmp_path)
 
         started = []
 
-        async def track_start_bot(self, name, cfg):
+        async def track_start_bot(self, name, config):
             started.append(name)
 
         async def noop_raw(self):
@@ -460,11 +460,11 @@ class TestGateway:
                    side_effect=track_start_bot, autospec=True), \
              patch("boxagent.agent.agent_manager.AgentManager.start_raw_bot",
                    side_effect=noop_raw, autospec=True), \
-             patch.object(gw, "_start_scheduler"), \
+             patch.object(gateway, "_start_scheduler"), \
              patch("boxagent.gateway.InternalApiServer.start", new_callable=AsyncMock), \
              patch("boxagent.gateway.McpHttpServer.start", new_callable=AsyncMock), \
              patch("boxagent.transports.web.server.WebHttpServer.start", new_callable=AsyncMock):
-            await gw.start()
+            await gateway.start()
 
         assert "bot-a" in started
         assert "bot-b" in started

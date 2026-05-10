@@ -153,13 +153,13 @@ def load_config(
     if not raw:
         raise ConfigError("Config file is empty")
 
-    local_cfg = _load_local_config(Path(local_dir)) if local_dir else {}
-    node_id = str(local_cfg.get("node_id", "") or "")
+    local_config = _load_local_config(Path(local_dir)) if local_dir else {}
+    node_id = str(local_config.get("node_id", "") or "")
 
     # Compat: fall back to deprecated global.node_id from config.yaml
-    base_global_cfg = raw.get("global", {})
-    if not node_id and base_global_cfg.get("node_id"):
-        node_id = str(base_global_cfg["node_id"])
+    base_global_config = raw.get("global", {})
+    if not node_id and base_global_config.get("node_id"):
+        node_id = str(base_global_config["node_id"])
         logger.warning(
             "global.node_id in config.yaml is deprecated; "
             "move it to local.yaml as node_id"
@@ -167,43 +167,43 @@ def load_config(
 
     effective_raw = _apply_node_overrides(raw, node_id)
 
-    global_cfg = effective_raw.get("global", {})
+    global_config = effective_raw.get("global", {})
 
     # local.yaml global section overrides config.yaml global
-    local_global = local_cfg.get("global", {})
+    local_global = local_config.get("global", {})
     if isinstance(local_global, dict):
-        global_cfg = {**global_cfg, **local_global}
+        global_config = {**global_config, **local_global}
 
-    log_level = global_cfg.get("log_level", "info") or "info"
+    log_level = global_config.get("log_level", "info") or "info"
     log_level = os.environ.get("BOXAGENT_GLOBAL_LOG_LEVEL", log_level) or "info"
 
-    api_port = int(global_cfg.get("api_port", 0))
+    api_port = int(global_config.get("api_port", 0))
     api_port = int(os.environ.get("BOXAGENT_GLOBAL_API_PORT", api_port))
 
-    web_token = str(global_cfg.get("web_token", "") or "")
+    web_token = str(global_config.get("web_token", "") or "")
     web_token = os.environ.get("BOXAGENT_WEB_TOKEN", web_token)
     web_trust_header = str(
-        global_cfg.get("web_trust_header", "X-BoxAgent-Trusted") or "X-BoxAgent-Trusted"
+        global_config.get("web_trust_header", "X-BoxAgent-Trusted") or "X-BoxAgent-Trusted"
     )
-    web_port = int(global_cfg.get("web_port", 9292) or 9292)
+    web_port = int(global_config.get("web_port", 9292) or 9292)
     web_port = int(os.environ.get("BOXAGENT_WEB_PORT", web_port))
-    web_host = str(global_cfg.get("web_host", "127.0.0.1") or "127.0.0.1")
+    web_host = str(global_config.get("web_host", "127.0.0.1") or "127.0.0.1")
     web_host = os.environ.get("BOXAGENT_WEB_HOST", web_host)
     # Cluster: shared block in config.yaml describes the topology;
     # `cluster.host` is an ordered fallback list — first-online wins. Single
     # string is accepted for back-compat.
-    cluster_cfg = effective_raw.get("cluster") or {}
-    if not isinstance(cluster_cfg, dict):
-        cluster_cfg = {}
-    raw_host = cluster_cfg.get("host", "") or ""
+    cluster_config = effective_raw.get("cluster") or {}
+    if not isinstance(cluster_config, dict):
+        cluster_config = {}
+    raw_host = cluster_config.get("host", "") or ""
     if isinstance(raw_host, str):
         host_priority = [raw_host] if raw_host else []
     elif isinstance(raw_host, list):
         host_priority = [str(h).strip() for h in raw_host if str(h).strip()]
     else:
         host_priority = []
-    cluster_tunnel_name = str(cluster_cfg.get("tunnel_name", "") or "boxagent-cluster")
-    cluster_token = str(cluster_cfg.get("token", "") or "")
+    cluster_tunnel_name = str(cluster_config.get("tunnel_name", "") or "boxagent-cluster")
+    cluster_token = str(cluster_config.get("token", "") or "")
     cluster_token = os.environ.get("BOXAGENT_CLUSTER_TOKEN", cluster_token)
     machine_id = node_id or (host_priority[0] if host_priority else "")
     my_host_index = host_priority.index(node_id) if (node_id and node_id in host_priority) else -1
@@ -406,13 +406,13 @@ def _parse_bot(
     # config.yaml are silently ignored.
 
     # --- Web channel (default on, additive — opt out with channels.web: false) ---
-    web_cfg = channels.get("web")
-    if web_cfg is None:
+    web_config = channels.get("web")
+    if web_config is None:
         web_enabled = bool(raw.get("web_enabled", True))
-    elif isinstance(web_cfg, bool):
-        web_enabled = web_cfg
-    elif isinstance(web_cfg, dict):
-        web_enabled = bool(web_cfg.get("enabled", True))
+    elif isinstance(web_config, bool):
+        web_enabled = web_config
+    elif isinstance(web_config, dict):
+        web_enabled = bool(web_config.get("enabled", True))
     else:
         web_enabled = True
 

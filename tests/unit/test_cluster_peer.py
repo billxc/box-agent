@@ -12,12 +12,12 @@ from boxagent.cluster.topology_service import TopologyService
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 def _make_peer(*router_names: str, host_election=None) -> PeerService:
-    """Build a PeerService with a workgroup_mgr that owns named routers."""
-    cfg = MagicMock()
-    cfg.machine_id = ""
-    cfg.node_id = ""
-    cfg.cluster_tunnel = False
-    topo = TopologyService(config=cfg, web_channels={})
+    """Build a PeerService with a workgroup_manager that owns named routers."""
+    config = MagicMock()
+    config.machine_id = ""
+    config.node_id = ""
+    config.cluster_tunnel = False
+    topo = TopologyService(config=config, web_channels={})
     if host_election is not None:
         topo.set_host_election(host_election)
     ps = PeerService(
@@ -25,7 +25,7 @@ def _make_peer(*router_names: str, host_election=None) -> PeerService:
         main_chat_id_provider=lambda b: f"main-{b}-{int(time.time())}",
     )
     if router_names:
-        ps.set_workgroup_mgr(SimpleNamespace(
+        ps.set_workgroup_manager(SimpleNamespace(
             routers={n: AsyncMock(handle_message=AsyncMock()) for n in router_names},
         ))
     return ps
@@ -48,7 +48,7 @@ def _post(handler, body: dict):
 def test_dispatch_local_peer_envelopes_raw_body():
     ps = _make_peer("admin-a")
     asyncio.run(ps._dispatch_local_peer("admin-a", "admin-b", "hello"))
-    handler = ps.workgroup_mgr.routers["admin-a"].handle_message
+    handler = ps.workgroup_manager.routers["admin-a"].handle_message
     handler.assert_awaited_once()
     msg = handler.await_args.args[0]
     # Peer message routes to the bot's main chat_id (provider hook). Lands in
@@ -63,7 +63,7 @@ def test_dispatch_local_peer_envelopes_raw_body():
 def test_dispatch_local_peer_no_double_envelope_when_body_already_wrapped():
     ps = _make_peer("admin-a")
     asyncio.run(ps._dispatch_local_peer("admin-a", "admin-b", "raw text"))
-    text = ps.workgroup_mgr.routers["admin-a"].handle_message.await_args.args[0].text
+    text = ps.workgroup_manager.routers["admin-a"].handle_message.await_args.args[0].text
     assert text.count("[Peer message from admin-b]") == 1
 
 
@@ -75,7 +75,7 @@ def test_peer_recv_dispatches_to_local_admin():
         "target_workgroup": "admin-a", "sender": "admin-b", "body": "hi",
     })
     assert response.status == 200
-    ps.workgroup_mgr.routers["admin-a"].handle_message.assert_awaited_once()
+    ps.workgroup_manager.routers["admin-a"].handle_message.assert_awaited_once()
 
 
 def test_peer_recv_404_for_unknown_workgroup():
@@ -100,7 +100,7 @@ def test_peer_send_local_admin_dispatches_in_process():
         "target": "admin-a", "from": "admin-b", "message": "hi there",
     })
     assert response.status == 200
-    ps.workgroup_mgr.routers["admin-a"].handle_message.assert_awaited_once()
+    ps.workgroup_manager.routers["admin-a"].handle_message.assert_awaited_once()
 
 
 def _he_with_bots(bots: list[tuple[str, object]], session):
@@ -180,4 +180,4 @@ def test_peer_send_local_takes_priority_over_remote_with_same_name():
     })
     assert response.status == 200
     session.call.assert_not_awaited()
-    ps.workgroup_mgr.routers["admin-a"].handle_message.assert_awaited_once()
+    ps.workgroup_manager.routers["admin-a"].handle_message.assert_awaited_once()

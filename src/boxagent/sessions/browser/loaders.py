@@ -37,8 +37,8 @@ def _parse_iso_to_ts(iso_str: str) -> int:
     if not iso_str:
         return 0
     try:
-        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
-        return int(dt.timestamp())
+        datetime = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        return int(datetime.timestamp())
     except (ValueError, TypeError):
         return 0
 

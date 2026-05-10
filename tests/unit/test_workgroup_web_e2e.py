@@ -101,13 +101,13 @@ def _make_manager(tmp_path: Path):
     specialist_config = SpecialistConfig(
         name="sp1",
         model="",
-        workspace=str(tmp_path / "wg" / "specialists" / "sp1"),
+        workspace=str(tmp_path / "workgroup" / "specialists" / "sp1"),
         ai_backend="claude-cli",
         display_name="sp1",
     )
     workgroup_config = WorkgroupConfig(
-        name="wg",
-        workspace=str(tmp_path / "wg-root"),
+        name="workgroup",
+        workspace=str(tmp_path / "workgroup-root"),
         ai_backend="claude-cli",
         specialists={"sp1": specialist_config},
     )
@@ -116,20 +116,20 @@ def _make_manager(tmp_path: Path):
 
     fakes: dict[str, list[FakeCLIProcess]] = {}
 
-    def _factory(bot_cfg, session_id=None):
+    def _factory(bot_config, session_id=None):
         fp = FakeCLIProcess(
-            response=f"<specialist_response>done by {bot_cfg.name}</specialist_response>",
-            workspace=bot_cfg.workspace,
-            model=bot_cfg.model,
-            bot_name=bot_cfg.name,
+            response=f"<specialist_response>done by {bot_config.name}</specialist_response>",
+            workspace=bot_config.workspace,
+            model=bot_config.model,
+            bot_name=bot_config.name,
         )
-        fakes.setdefault(bot_cfg.name, []).append(fp)
+        fakes.setdefault(bot_config.name, []).append(fp)
         return fp
 
     with patch("boxagent.workgroup.manager.create_backend", side_effect=_factory), \
          patch("boxagent.workgroup.manager.ensure_git_repo"):
         manager = WorkgroupManager(
-            config={"wg": workgroup_config},
+            config={"workgroup": workgroup_config},
             config_dir=str(tmp_path / "config"),
             node_id="test-node",
             local_dir=tmp_path / "local",
@@ -137,7 +137,7 @@ def _make_manager(tmp_path: Path):
             storage=None,
         )
         # Pre-create the WebChannel exactly as Gateway does.
-        manager.web_channels["wg"] = WebChannel(bot_name="wg")
+        manager.web_channels["workgroup"] = WebChannel(bot_name="workgroup")
 
         yield manager, fakes
 
@@ -154,27 +154,27 @@ async def test_admin_dispatch_to_specialist_e2e(tmp_path):
 
         # Subscribe to the specialist's virtual chat_id BEFORE dispatch so we can
         # assert the streaming events the admin's web UI would see.
-        web = manager.web_channels["wg"]
+        web = manager.web_channels["workgroup"]
         sp_queue = web.subscribe("workgroup:sp1")
         admin_queue = web.subscribe("admin-chat")
 
-        await manager.start_workgroup("wg", manager.config["wg"])
+        await manager.start_workgroup("workgroup", manager.config["workgroup"])
 
-        assert "wg" in fakes, "admin backend not created"
+        assert "workgroup" in fakes, "admin backend not created"
         assert "sp1" in fakes, "specialist backend not created"
-        assert all(fp._started for fp in fakes["wg"]), "admin backends not started"
+        assert all(fp._started for fp in fakes["workgroup"]), "admin backends not started"
         assert all(fp._started for fp in fakes["sp1"]), "specialist backends not started"
 
         # Sanity: the adapter is the Web one (not Null) and Routers got the WebChannel.
         from boxagent.workgroup.channel_adapter import WebWorkgroupAdapter
-        assert isinstance(manager.adapters["wg"], WebWorkgroupAdapter)
+        assert isinstance(manager.adapters["workgroup"], WebWorkgroupAdapter)
         assert manager.routers["sp1"].channel is web
 
         # The actual call the admin's `send_to_agent` MCP tool makes.
         result = await manager.send_to_specialist(
             target="sp1",
             text="please check the build",
-            from_bot="wg",
+            from_bot="workgroup",
             reply_chat_id="admin-chat",
         )
         assert result == {"ok": True, "task_id": "sp1-1", "specialist": "sp1"}
@@ -188,7 +188,7 @@ async def test_admin_dispatch_to_specialist_e2e(tmp_path):
         assert "please check the build" in sp_prompts[0]
         assert "<specialist_response>" in sp_prompts[0]  # SYSTEM wrapper present
 
-        # 2) Specialist's stream events landed on its `wg:sp1` chat for admin web UI.
+        # 2) Specialist's stream events landed on its `workgroup:sp1` chat for admin web UI.
         sp_events: list[dict] = []
         while not sp_queue.empty():
             sp_events.append(sp_queue.get_nowait())
@@ -211,7 +211,7 @@ async def test_admin_dispatch_to_specialist_e2e(tmp_path):
         # _dispatch → pool.acquire → backend.send. Aggregate prompts across all
         # admin pool members.
         await asyncio.sleep(0)
-        admin_prompts = [p for fp in fakes["wg"] for p in fp.received_prompts]
+        admin_prompts = [p for fp in fakes["workgroup"] for p in fp.received_prompts]
         assert any("[TaskResult from sp1]" in p for p in admin_prompts), (
             f"admin never received task callback; admin_prompts={admin_prompts!r}"
         )
@@ -237,13 +237,13 @@ async def test_admin_env_carries_workgroup_role(tmp_path):
     otherwise claude_process never injects the /mcp/admin endpoint and the
     admin AI literally has no `send_to_agent` tool — silent failure."""
     with _make_manager(tmp_path) as (manager, fakes):
-        await manager.start_workgroup("wg", manager.config["wg"])
+        await manager.start_workgroup("workgroup", manager.config["workgroup"])
 
         # Drive a turn through the admin router with a normal user message.
-        admin_router = manager.routers["wg"]
+        admin_router = manager.routers["workgroup"]
         await admin_router.dispatch_sync("hello", "admin-chat", from_bot="user")
 
-        envs = [e for fp in fakes["wg"] for e in fp.received_envs]
+        envs = [e for fp in fakes["workgroup"] for e in fp.received_envs]
         assert envs, "admin backend.send was never called"
         env = envs[0]
         assert env is not None, "router did not pass an AgentEnv"
@@ -257,12 +257,12 @@ async def test_specialist_env_carries_workgroup_role(tmp_path):
     workgroup_role='specialist' so env.is_specialist works. Was previously
     dead code because manager._create_specialist_agent never set the role."""
     with _make_manager(tmp_path) as (manager, fakes):
-        await manager.start_workgroup("wg", manager.config["wg"])
+        await manager.start_workgroup("workgroup", manager.config["workgroup"])
 
         # Find any specialist router built by the fixture.
-        spec_name = next(n for n in manager.routers if n != "wg")
+        spec_name = next(n for n in manager.routers if n != "workgroup")
         spec_router = manager.routers[spec_name]
-        await spec_router.dispatch_sync("hello", f"workgroup:{spec_name}", from_bot="wg")
+        await spec_router.dispatch_sync("hello", f"workgroup:{spec_name}", from_bot="workgroup")
 
         envs = [e for fp in fakes[spec_name] for e in fp.received_envs]
         assert envs, "specialist backend.send was never called"

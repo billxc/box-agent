@@ -5,7 +5,7 @@ Composition class. Held by Gateway as ``self._peer``. Two-phase DI:
 - Phase 1 (constructor): topology (for guest_registry/guest_client lookups)
   and main_chat_id_provider (callable that mints/loads the admin's main
   chat_id for envelope dispatch).
-- Phase 2 (setter): ``set_workgroup_mgr`` after WorkgroupManager built.
+- Phase 2 (setter): ``set_workgroup_manager`` after WorkgroupManager built.
 
 Public surface:
 - ``send_peer`` — cluster-aware peer message dispatch (used by MCP tool
@@ -36,10 +36,10 @@ class PeerService:
         self.topology = topology
         self._main_chat_id_provider = main_chat_id_provider
         # Phase 2 dep
-        self.workgroup_mgr: "WorkgroupManager | None" = None
+        self.workgroup_manager: "WorkgroupManager | None" = None
 
-    def set_workgroup_mgr(self, workgroup_mgr: "WorkgroupManager") -> None:
-        self.workgroup_mgr = workgroup_mgr
+    def set_workgroup_manager(self, workgroup_manager: "WorkgroupManager") -> None:
+        self.workgroup_manager = workgroup_manager
 
     async def send_peer(
         self, target: str, sender: str, message: str,
@@ -52,8 +52,8 @@ class PeerService:
         Returns ``{ok: bool, via: "local"|"rpc"|"none", machine?: str, error?: str}``.
         """
         if (
-            self.workgroup_mgr is not None
-            and target in self.workgroup_mgr.routers
+            self.workgroup_manager is not None
+            and target in self.workgroup_manager.routers
         ):
             await self._dispatch_local_peer(target, sender, message)
             return {"ok": True, "via": "local"}
@@ -136,9 +136,9 @@ class PeerService:
 
     async def _dispatch_local_peer(self, target: str, sender: str, body: str) -> None:
         """Inject a peer message into the local workgroup admin's router."""
-        if self.workgroup_mgr is None:
-            raise RuntimeError(f"PeerService.workgroup_mgr not set; cannot dispatch to {target!r}")
-        admin_router = self.workgroup_mgr.routers[target]
+        if self.workgroup_manager is None:
+            raise RuntimeError(f"PeerService.workgroup_manager not set; cannot dispatch to {target!r}")
+        admin_router = self.workgroup_manager.routers[target]
         envelope = (
             f"[Peer message from {sender}]\n"
             f"{body}\n\n"
@@ -174,8 +174,8 @@ class PeerService:
                 status=400,
             )
         if (
-            self.workgroup_mgr is None
-            or target not in self.workgroup_mgr.routers
+            self.workgroup_manager is None
+            or target not in self.workgroup_manager.routers
         ):
             return web.json_response(
                 {"ok": False, "error": f"workgroup '{target}' not on this node"},

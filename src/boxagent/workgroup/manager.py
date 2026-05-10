@@ -90,14 +90,14 @@ class WorkgroupManager:
     _peer_provider: Callable[[str], list[dict]] | None = None  # exclude=self_name
 
     # HTTP route adapter — built lazily on first access so the manager and
-    # its HTTP surface ship together. Gateway just reads ``mgr.routes``.
+    # its HTTP surface ship together. Gateway just reads ``manager.routes``.
     _routes: "WorkgroupHttpRoutes | None" = field(default=None, init=False, repr=False)
 
     @property
     def routes(self) -> "WorkgroupHttpRoutes":
         from boxagent.workgroup.http_routes import WorkgroupHttpRoutes
         if self._routes is None:
-            self._routes = WorkgroupHttpRoutes(workgroup_mgr=self)
+            self._routes = WorkgroupHttpRoutes(workgroup_manager=self)
         return self._routes
 
     def _require_local_dir(self) -> Path:
@@ -111,8 +111,8 @@ class WorkgroupManager:
     def _save_specialist(self, workgroup_name: str, specialist: SpecialistConfig) -> None:
         save_specialist(self._require_local_dir(), workgroup_name, specialist)
 
-    def _make_backend(self, bot_cfg: BotConfig, session_id=None):
-        return create_backend(bot_cfg, session_id)
+    def _make_backend(self, bot_config: BotConfig, session_id=None):
+        return create_backend(bot_config, session_id)
 
     def _apply_template_skills(
         self,
@@ -161,8 +161,8 @@ class WorkgroupManager:
         backend.start()
         self.procs[specialist_name] = backend
 
-        def _factory(cfg=bot_config):
-            return self._make_backend(cfg)
+        def _factory(config=bot_config):
+            return self._make_backend(config)
 
         pool = SessionPool(
             size=1,
@@ -232,7 +232,7 @@ class WorkgroupManager:
 
         # --- Create admin agent ---
         admin_ws = workgroup_config.admin_workspace
-        admin_bot_cfg = BotConfig(
+        admin_bot_config = BotConfig(
             name=workgroup_name,
             ai_backend=workgroup_config.ai_backend,
             workspace=admin_ws,
@@ -258,12 +258,12 @@ class WorkgroupManager:
             sync_skills(admin_ws, workgroup_config.extra_skill_dirs, workgroup_config.ai_backend)
         seed_admin_workspace(admin_ws, workgroup_name)
 
-        admin_backend = self._make_backend(admin_bot_cfg)
+        admin_backend = self._make_backend(admin_bot_config)
         admin_backend.start()
         self.procs[workgroup_name] = admin_backend
 
-        def _admin_factory(cfg=admin_bot_cfg):
-            backend = self._make_backend(cfg)
+        def _admin_factory(config=admin_bot_config):
+            backend = self._make_backend(config)
             return backend
 
         admin_pool = SessionPool(
@@ -329,12 +329,12 @@ class WorkgroupManager:
             # chat (via main_chat_id_provider) and dispatches actionable
             # decisions back to that same chat. Display goes to web only.
             storage = self.storage
-            wg_name = workgroup_name
+            workgroup_name = workgroup_name
 
             # Heartbeat needs admin's main chat_id so it forks the same session
             # heartbeat / peer messages dispatch into. Reuse the standard
             # Storage helper instead of inlining the get-or-mint pattern.
-            def _main_chat_id_provider(_storage=storage, _name=wg_name):
+            def _main_chat_id_provider(_storage=storage, _name=workgroup_name):
                 if _storage is None:
                     return f"main-{_name}-{int(time.time())}"
                 return _storage.get_or_create_main_chat_id(_name)

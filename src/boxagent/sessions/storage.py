@@ -224,12 +224,12 @@ class Storage:
         Used for heartbeat ticks and incoming peer messages so they always
         land in the admin's designated main session.
         """
-        cid = self.get_main_chat_id(bot_id)
-        if cid:
-            return cid
-        cid = f"main-{bot_id}-{int(time.time())}"
-        self.set_main_chat_id(bot_id, cid)
-        return cid
+        chat_id = self.get_main_chat_id(bot_id)
+        if chat_id:
+            return chat_id
+        chat_id = f"main-{bot_id}-{int(time.time())}"
+        self.set_main_chat_id(bot_id, chat_id)
+        return chat_id
 
     def set_main_chat_id(self, bot_id: str, chat_id: str) -> None:
         with self._main_lock:

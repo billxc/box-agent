@@ -70,7 +70,7 @@ def _mock_pool():
 def _make_manager(tmp_path, specialists=None):
     """Create a WorkgroupManager with a basic config."""
     workgroup_config = WorkgroupConfig(
-        name="test-wg",
+        name="test-workgroup",
         workspace=str(tmp_path / "workspace"),
     )
     if specialists:
@@ -80,12 +80,12 @@ def _make_manager(tmp_path, specialists=None):
                 workspace=str(tmp_path / "specialists" / name),
             )
 
-    mgr = WorkgroupManager(
-        config={"test-wg": workgroup_config},
+    manager = WorkgroupManager(
+        config={"test-workgroup": workgroup_config},
         local_dir=tmp_path / "local",
         start_time=time.time(),
     )
-    return mgr, workgroup_config
+    return manager, workgroup_config
 
 
 # ---------------------------------------------------------------------------
@@ -95,87 +95,87 @@ def _make_manager(tmp_path, specialists=None):
 
 class TestSendToSpecialist:
     async def test_returns_task_id(self, tmp_path):
-        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
-        mgr.routers["dev-1"] = _mock_router("task done")
-        mgr.pools["dev-1"] = _mock_pool()
+        manager, workgroup_config = _make_manager(tmp_path, ["dev-1"])
+        manager.routers["dev-1"] = _mock_router("task done")
+        manager.pools["dev-1"] = _mock_pool()
 
-        result = await mgr.send_to_specialist("dev-1", "do something", from_bot="admin")
+        result = await manager.send_to_specialist("dev-1", "do something", from_bot="admin")
         assert result["ok"] is True
         assert "task_id" in result
         assert result["specialist"] == "dev-1"
 
     async def test_task_marked_running(self, tmp_path):
-        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
-        mgr.routers["dev-1"] = _mock_router("done")
-        mgr.pools["dev-1"] = _mock_pool()
+        manager, workgroup_config = _make_manager(tmp_path, ["dev-1"])
+        manager.routers["dev-1"] = _mock_router("done")
+        manager.pools["dev-1"] = _mock_pool()
 
-        result = await mgr.send_to_specialist("dev-1", "work")
+        result = await manager.send_to_specialist("dev-1", "work")
         task_id = result["task_id"]
         # Immediately after dispatch, status should be running
-        info = mgr.get_task_result(task_id)
+        info = manager.get_task_result(task_id)
         assert info["ok"] is True
         assert info["status"] == "running"
 
     async def test_task_completes(self, tmp_path):
-        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
-        mgr.routers["dev-1"] = _mock_router("all done")
-        mgr.pools["dev-1"] = _mock_pool()
+        manager, workgroup_config = _make_manager(tmp_path, ["dev-1"])
+        manager.routers["dev-1"] = _mock_router("all done")
+        manager.pools["dev-1"] = _mock_pool()
 
-        result = await mgr.send_to_specialist("dev-1", "work")
+        result = await manager.send_to_specialist("dev-1", "work")
         task_id = result["task_id"]
         # Wait for background task to complete
-        await mgr.tasks._tasks[task_id]
+        await manager.tasks._tasks[task_id]
 
-        info = mgr.get_task_result(task_id)
+        info = manager.get_task_result(task_id)
         assert info["status"] == "done"
         assert info["result"] == "all done"
 
     async def test_extracts_specialist_response(self, tmp_path):
-        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
+        manager, workgroup_config = _make_manager(tmp_path, ["dev-1"])
         router = _mock_router()
         router.dispatch_sync = AsyncMock(
             return_value="Thinking...\n<specialist_response>Final result</specialist_response>"
         )
-        mgr.routers["dev-1"] = router
-        mgr.pools["dev-1"] = _mock_pool()
+        manager.routers["dev-1"] = router
+        manager.pools["dev-1"] = _mock_pool()
 
-        result = await mgr.send_to_specialist("dev-1", "work")
-        await mgr.tasks._tasks[result["task_id"]]
+        result = await manager.send_to_specialist("dev-1", "work")
+        await manager.tasks._tasks[result["task_id"]]
 
-        info = mgr.get_task_result(result["task_id"])
+        info = manager.get_task_result(result["task_id"])
         assert info["result"] == "Final result"
 
     async def test_error_handling(self, tmp_path):
-        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
+        manager, workgroup_config = _make_manager(tmp_path, ["dev-1"])
         router = _mock_router()
         router.dispatch_sync = AsyncMock(side_effect=RuntimeError("boom"))
-        mgr.routers["dev-1"] = router
-        mgr.pools["dev-1"] = _mock_pool()
+        manager.routers["dev-1"] = router
+        manager.pools["dev-1"] = _mock_pool()
 
-        result = await mgr.send_to_specialist("dev-1", "work")
-        await mgr.tasks._tasks[result["task_id"]]
+        result = await manager.send_to_specialist("dev-1", "work")
+        await manager.tasks._tasks[result["task_id"]]
 
-        info = mgr.get_task_result(result["task_id"])
+        info = manager.get_task_result(result["task_id"])
         assert info["status"] == "error"
         assert "boom" in info["error"]
 
     async def test_unknown_specialist(self, tmp_path):
-        mgr, _ = _make_manager(tmp_path, ["dev-1"])
-        result = await mgr.send_to_specialist("nonexistent", "work")
+        manager, _ = _make_manager(tmp_path, ["dev-1"])
+        result = await manager.send_to_specialist("nonexistent", "work")
         assert result["ok"] is False
         assert "not found" in result["error"]
 
     async def test_callback_to_admin(self, tmp_path):
-        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
+        manager, workgroup_config = _make_manager(tmp_path, ["dev-1"])
         admin_router = _mock_router()
-        mgr.routers["test-wg"] = admin_router
-        mgr.routers["dev-1"] = _mock_router("result text")
-        mgr.pools["dev-1"] = _mock_pool()
+        manager.routers["test-workgroup"] = admin_router
+        manager.routers["dev-1"] = _mock_router("result text")
+        manager.pools["dev-1"] = _mock_pool()
 
-        result = await mgr.send_to_specialist(
-            "dev-1", "work", from_bot="admin", reply_chat_id="admin-ch",
+        result = await manager.send_to_specialist(
+            "dev-1", "work", from_bot="admin", reply_chat_id="admin-channel",
         )
-        await mgr.tasks._tasks[result["task_id"]]
+        await manager.tasks._tasks[result["task_id"]]
 
         # Admin router should receive the task result callback
         admin_router.handle_message.assert_called_once()
@@ -184,12 +184,12 @@ class TestSendToSpecialist:
         assert "result text" in msg.text
 
     async def test_wraps_prompt_with_xml_instruction(self, tmp_path):
-        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
+        manager, workgroup_config = _make_manager(tmp_path, ["dev-1"])
         router = _mock_router("ok")
-        mgr.routers["dev-1"] = router
-        mgr.pools["dev-1"] = _mock_pool()
+        manager.routers["dev-1"] = router
+        manager.pools["dev-1"] = _mock_pool()
 
-        await mgr.send_to_specialist("dev-1", "implement auth")
+        await manager.send_to_specialist("dev-1", "implement auth")
         # Wait a tick for task to start
         await asyncio.sleep(0.01)
 
@@ -199,12 +199,12 @@ class TestSendToSpecialist:
         assert "<specialist_response>" in prompt
 
     async def test_increments_task_counter(self, tmp_path):
-        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
-        mgr.routers["dev-1"] = _mock_router("ok")
-        mgr.pools["dev-1"] = _mock_pool()
+        manager, workgroup_config = _make_manager(tmp_path, ["dev-1"])
+        manager.routers["dev-1"] = _mock_router("ok")
+        manager.pools["dev-1"] = _mock_pool()
 
-        r1 = await mgr.send_to_specialist("dev-1", "task 1")
-        r2 = await mgr.send_to_specialist("dev-1", "task 2")
+        r1 = await manager.send_to_specialist("dev-1", "task 1")
+        r2 = await manager.send_to_specialist("dev-1", "task 2")
         assert r1["task_id"] == "dev-1-1"
         assert r2["task_id"] == "dev-1-2"
 
@@ -216,63 +216,63 @@ class TestSendToSpecialist:
 
 class TestCreateSpecialist:
     async def test_creates_specialist(self, tmp_path):
-        mgr, workgroup_config = _make_manager(tmp_path)
+        manager, workgroup_config = _make_manager(tmp_path)
 
 
-        result = await mgr.create_specialist("test-wg", "new-dev")
+        result = await manager.create_specialist("test-workgroup", "new-dev")
         assert result["ok"] is True
-        assert "new-dev" in mgr.routers
+        assert "new-dev" in manager.routers
         assert "new-dev" in workgroup_config.specialists
 
     async def test_rejects_duplicate(self, tmp_path):
-        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
-        mgr.routers["dev-1"] = _mock_router()
+        manager, workgroup_config = _make_manager(tmp_path, ["dev-1"])
+        manager.routers["dev-1"] = _mock_router()
 
-        result = await mgr.create_specialist("test-wg", "dev-1")
+        result = await manager.create_specialist("test-workgroup", "dev-1")
         assert result["ok"] is False
         assert "already exists" in result["error"]
 
     async def test_rejects_unknown_workgroup(self, tmp_path):
-        mgr, _ = _make_manager(tmp_path)
-        result = await mgr.create_specialist("nonexistent", "dev-1")
+        manager, _ = _make_manager(tmp_path)
+        result = await manager.create_specialist("nonexistent", "dev-1")
         assert result["ok"] is False
         assert "not found" in result["error"]
 
     async def test_rejects_invalid_name_with_colon(self, tmp_path):
         """Names with ':' would collide with the workgroup:<name> chat_id namespace."""
-        mgr, _ = _make_manager(tmp_path)
-        result = await mgr.create_specialist("test-wg", "workgroup:foo")
+        manager, _ = _make_manager(tmp_path)
+        result = await manager.create_specialist("test-workgroup", "workgroup:foo")
         assert result["ok"] is False
         assert "invalid" in result["error"]
 
     async def test_rejects_empty_name(self, tmp_path):
-        mgr, _ = _make_manager(tmp_path)
-        result = await mgr.create_specialist("test-wg", "")
+        manager, _ = _make_manager(tmp_path)
+        result = await manager.create_specialist("test-workgroup", "")
         assert result["ok"] is False
 
     async def test_rejects_uppercase_or_spaces(self, tmp_path):
-        mgr, _ = _make_manager(tmp_path)
+        manager, _ = _make_manager(tmp_path)
         for bad in ("Dev-1", "my dev", ".hidden", "-leading", "way-too-long-specialist-name-exceeds-31-chars"):
-            result = await mgr.create_specialist("test-wg", bad)
+            result = await manager.create_specialist("test-workgroup", bad)
             assert result["ok"] is False, f"name {bad!r} should be rejected"
 
     async def test_default_workspace(self, tmp_path):
-        mgr, workgroup_config = _make_manager(tmp_path)
+        manager, workgroup_config = _make_manager(tmp_path)
 
 
-        await mgr.create_specialist("test-wg", "new-dev")
+        await manager.create_specialist("test-workgroup", "new-dev")
         specialist = workgroup_config.specialists["new-dev"]
         expected = str(Path(workgroup_config.workgroup_dir) / "specialists" / "new-dev")
         assert specialist.workspace == expected
 
     async def test_persists_specialist(self, tmp_path):
-        mgr, workgroup_config = _make_manager(tmp_path)
+        manager, workgroup_config = _make_manager(tmp_path)
         (tmp_path / "local").mkdir(exist_ok=True)
 
 
-        await mgr.create_specialist("test-wg", "new-dev")
+        await manager.create_specialist("test-workgroup", "new-dev")
 
-        loaded = mgr._load_saved_specialists("test-wg")
+        loaded = manager._load_saved_specialists("test-workgroup")
         assert "new-dev" in loaded
 
 
@@ -283,21 +283,21 @@ class TestCreateSpecialist:
 
 class TestDeleteSpecialist:
     async def test_deletes_dynamic_specialist(self, tmp_path):
-        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
-        mgr.routers["dev-1"] = _mock_router()
-        mgr.pools["dev-1"] = _mock_pool()
-        mgr.procs["dev-1"] = AsyncMock()
+        manager, workgroup_config = _make_manager(tmp_path, ["dev-1"])
+        manager.routers["dev-1"] = _mock_router()
+        manager.pools["dev-1"] = _mock_pool()
+        manager.procs["dev-1"] = AsyncMock()
 
-        result = await mgr.delete_specialist("dev-1")
+        result = await manager.delete_specialist("dev-1")
         assert result["ok"] is True
-        assert "dev-1" not in mgr.routers
-        assert "dev-1" not in mgr.pools
-        assert "dev-1" not in mgr.procs
+        assert "dev-1" not in manager.routers
+        assert "dev-1" not in manager.pools
+        assert "dev-1" not in manager.procs
         assert "dev-1" not in workgroup_config.specialists
 
     async def test_rejects_unknown(self, tmp_path):
-        mgr, _ = _make_manager(tmp_path)
-        result = await mgr.delete_specialist("nonexistent")
+        manager, _ = _make_manager(tmp_path)
+        result = await manager.delete_specialist("nonexistent")
         assert result["ok"] is False
         assert "not found" in result["error"]
 
@@ -309,17 +309,17 @@ class TestDeleteSpecialist:
 
 class TestResetSpecialist:
     def test_resets_session(self, tmp_path):
-        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
+        manager, workgroup_config = _make_manager(tmp_path, ["dev-1"])
         pool = _mock_pool()
-        mgr.pools["dev-1"] = pool
+        manager.pools["dev-1"] = pool
 
-        result = mgr.reset_specialist("dev-1")
+        result = manager.reset_specialist("dev-1")
         assert result["ok"] is True
         pool.clear_session.assert_called_once()
 
     def test_unknown_specialist(self, tmp_path):
-        mgr, _ = _make_manager(tmp_path)
-        result = mgr.reset_specialist("nonexistent")
+        manager, _ = _make_manager(tmp_path)
+        result = manager.reset_specialist("nonexistent")
         assert result["ok"] is False
 
 
@@ -333,7 +333,7 @@ class TestHeartbeatTick:
         (tmp_path / "HEARTBEAT.md").write_text("- Check tasks")
 
         hb = HeartbeatManager(
-            workgroup_name="wg", admin_pool=MagicMock(), admin_router=AsyncMock(),
+            workgroup_name="workgroup", admin_pool=MagicMock(), admin_router=AsyncMock(),
             workspace=str(tmp_path), interval_seconds=60, yolo=True,
         )
 
@@ -357,7 +357,7 @@ class TestHeartbeatTick:
         admin_router.dispatch_sync = AsyncMock(return_value="executed")
 
         hb = HeartbeatManager(
-            workgroup_name="wg", admin_pool=MagicMock(), admin_router=admin_router,
+            workgroup_name="workgroup", admin_pool=MagicMock(), admin_router=admin_router,
             workspace=str(tmp_path), interval_seconds=60, yolo=True,
         )
 
@@ -378,7 +378,7 @@ class TestHeartbeatTick:
         (tmp_path / "HEARTBEAT.md").write_text("- Check tasks")
 
         hb = HeartbeatManager(
-            workgroup_name="wg", admin_pool=MagicMock(), admin_router=AsyncMock(),
+            workgroup_name="workgroup", admin_pool=MagicMock(), admin_router=AsyncMock(),
             workspace=str(tmp_path), interval_seconds=60, yolo=True,
         )
         hb._is_ticking = True
@@ -389,7 +389,7 @@ class TestHeartbeatTick:
 
     async def test_tick_no_heartbeat_md(self, tmp_path):
         hb = HeartbeatManager(
-            workgroup_name="wg", admin_pool=MagicMock(), admin_router=AsyncMock(),
+            workgroup_name="workgroup", admin_pool=MagicMock(), admin_router=AsyncMock(),
             workspace=str(tmp_path), interval_seconds=60, yolo=True,
         )
 
@@ -406,7 +406,7 @@ class TestHeartbeatTick:
         wc.send_text = AsyncMock()
 
         hb = HeartbeatManager(
-            workgroup_name="my-wg", admin_pool=MagicMock(), admin_router=AsyncMock(),
+            workgroup_name="my-workgroup", admin_pool=MagicMock(), admin_router=AsyncMock(),
             workspace=str(tmp_path), interval_seconds=60, yolo=True,
             web_channel=wc,
             display_heartbeat=True,
@@ -421,7 +421,7 @@ class TestHeartbeatTick:
 
         wc.send_text.assert_awaited()
         first = wc.send_text.await_args_list[0]
-        assert first.args[0] == "heartbeat:my-wg"
+        assert first.args[0] == "heartbeat:my-workgroup"
 
     async def test_find_fork_session_via_main_chat_provider(self, tmp_path):
         """Fork source = pool ctx for the chat_id returned by main_chat_id_provider."""
@@ -434,13 +434,13 @@ class TestHeartbeatTick:
         pool._chat_states = {}
 
         hb = HeartbeatManager(
-            workgroup_name="wg", admin_pool=pool, admin_router=AsyncMock(),
+            workgroup_name="workgroup", admin_pool=pool, admin_router=AsyncMock(),
             workspace=str(tmp_path), interval_seconds=60,
-            main_chat_id_provider=lambda: "main-wg-1",
+            main_chat_id_provider=lambda: "main-workgroup-1",
         )
 
         assert hb._find_fork_session_id() == "session-main"
-        pool._get_state.assert_called_once_with("main-wg-1")
+        pool._get_state.assert_called_once_with("main-workgroup-1")
 
     async def test_find_fork_session_no_provider_does_not_scan_pool(self, tmp_path):
         """No provider → return None without scanning pool (no silent fallback)."""
@@ -452,7 +452,7 @@ class TestHeartbeatTick:
         pool._chat_states = {"some-chat": ChatState(session_id="should-not-be-used")}
 
         hb = HeartbeatManager(
-            workgroup_name="wg", admin_pool=pool, admin_router=AsyncMock(),
+            workgroup_name="workgroup", admin_pool=pool, admin_router=AsyncMock(),
             workspace=str(tmp_path), interval_seconds=60,
         )
 
@@ -469,17 +469,17 @@ class TestHeartbeatTick:
         pool._chat_states = {"other": ChatState(session_id="leak")}
 
         hb = HeartbeatManager(
-            workgroup_name="wg", admin_pool=pool, admin_router=AsyncMock(),
+            workgroup_name="workgroup", admin_pool=pool, admin_router=AsyncMock(),
             workspace=str(tmp_path), interval_seconds=60,
-            main_chat_id_provider=lambda: "main-wg-1",
+            main_chat_id_provider=lambda: "main-workgroup-1",
         )
 
         assert hb._find_fork_session_id() is None
-        pool._get_state.assert_called_once_with("main-wg-1")
+        pool._get_state.assert_called_once_with("main-workgroup-1")
 
     async def test_find_fork_session_no_pool(self, tmp_path):
         hb = HeartbeatManager(
-            workgroup_name="wg", admin_pool=None, admin_router=AsyncMock(),
+            workgroup_name="workgroup", admin_pool=None, admin_router=AsyncMock(),
             workspace=str(tmp_path), interval_seconds=60,
         )
         assert hb._find_fork_session_id() is None
@@ -502,11 +502,11 @@ class TestTemplateIntegration:
     async def test_create_with_template_writes_snapshot_and_appends_prompt(self, tmp_path, monkeypatch):
         # Anchor boxagent_dir to tmp_path so relative path resolution stays inside the test sandbox.
         monkeypatch.setenv("BOX_AGENT_DIR", str(tmp_path))
-        mgr, workgroup_config = _make_manager(tmp_path)
+        manager, workgroup_config = _make_manager(tmp_path)
         _seed_template(Path(workgroup_config.workgroup_dir), "planner", "## Planner role\nDecompose tasks.")
 
-        result = await mgr.create_specialist(
-            "test-wg", "p1", template="planner",
+        result = await manager.create_specialist(
+            "test-workgroup", "p1", template="planner",
         )
         assert result["ok"] is True
 
@@ -524,51 +524,51 @@ class TestTemplateIntegration:
 
     async def test_create_with_unknown_template_fails(self, tmp_path, monkeypatch):
         monkeypatch.setenv("BOX_AGENT_DIR", str(tmp_path))
-        mgr, workgroup_config = _make_manager(tmp_path)
-        result = await mgr.create_specialist(
-            "test-wg", "p1", template="does-not-exist",
+        manager, workgroup_config = _make_manager(tmp_path)
+        result = await manager.create_specialist(
+            "test-workgroup", "p1", template="does-not-exist",
         )
         assert result["ok"] is False
         assert "not found" in result["error"]
-        assert "p1" not in mgr.routers
+        assert "p1" not in manager.routers
 
     async def test_template_field_persisted_and_restored(self, tmp_path, monkeypatch):
         monkeypatch.setenv("BOX_AGENT_DIR", str(tmp_path))
         (tmp_path / "local").mkdir(exist_ok=True)
-        mgr, workgroup_config = _make_manager(tmp_path)
+        manager, workgroup_config = _make_manager(tmp_path)
         _seed_template(Path(workgroup_config.workgroup_dir), "planner")
 
-        await mgr.create_specialist(
-            "test-wg", "p1", template="planner",
+        await manager.create_specialist(
+            "test-workgroup", "p1", template="planner",
             extra_skill_dirs=["/tmp/some-skills"],
         )
-        loaded = mgr._load_saved_specialists("test-wg")
+        loaded = manager._load_saved_specialists("test-workgroup")
         assert loaded["p1"].template == "planner"
         # Resolution preserved as-is for absolute paths
         assert "/tmp/some-skills" in loaded["p1"].extra_skill_dirs
 
     async def test_list_templates_returns_sorted(self, tmp_path, monkeypatch):
         monkeypatch.setenv("BOX_AGENT_DIR", str(tmp_path))
-        mgr, workgroup_config = _make_manager(tmp_path)
+        manager, workgroup_config = _make_manager(tmp_path)
         _seed_template(Path(workgroup_config.workgroup_dir), "planner")
         _seed_template(Path(workgroup_config.workgroup_dir), "auditor")
 
-        result = mgr.list_templates("test-wg")
+        result = manager.list_templates("test-workgroup")
         assert result["ok"] is True
         names = [t["name"] for t in result["templates"]]
         assert names == ["auditor", "planner"]
 
     async def test_delete_specialist_removes_workspace(self, tmp_path):
-        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
+        manager, workgroup_config = _make_manager(tmp_path, ["dev-1"])
         # Create a fake workspace so delete has something to wipe.
         ws_path = Path(workgroup_config.specialists["dev-1"].workspace)
         ws_path.mkdir(parents=True, exist_ok=True)
         (ws_path / "marker").write_text("x")
-        mgr.routers["dev-1"] = _mock_router()
-        mgr.pools["dev-1"] = _mock_pool()
-        mgr.procs["dev-1"] = AsyncMock()
+        manager.routers["dev-1"] = _mock_router()
+        manager.pools["dev-1"] = _mock_pool()
+        manager.procs["dev-1"] = AsyncMock()
 
-        result = await mgr.delete_specialist("dev-1")
+        result = await manager.delete_specialist("dev-1")
         assert result["ok"] is True
         assert not ws_path.exists()
 
@@ -581,21 +581,21 @@ class TestTemplateIntegration:
         BaseCLIProcess.stop() already escalates SIGTERM → SIGKILL with
         a 3s timeout; if even that fails, log + continue rather than
         leaving zombie state half-deleted."""
-        mgr, workgroup_config = _make_manager(tmp_path, ["dev-1"])
+        manager, workgroup_config = _make_manager(tmp_path, ["dev-1"])
         ws_path = Path(workgroup_config.specialists["dev-1"].workspace)
         ws_path.mkdir(parents=True, exist_ok=True)
         (ws_path / "marker").write_text("x")
 
         wedged_backend = AsyncMock()
         wedged_backend.stop = AsyncMock(side_effect=RuntimeError("kill syscall failed"))
-        mgr.routers["dev-1"] = _mock_router()
-        mgr.pools["dev-1"] = _mock_pool()
-        mgr.procs["dev-1"] = wedged_backend
+        manager.routers["dev-1"] = _mock_router()
+        manager.pools["dev-1"] = _mock_pool()
+        manager.procs["dev-1"] = wedged_backend
 
-        result = await mgr.delete_specialist("dev-1")
+        result = await manager.delete_specialist("dev-1")
         assert result["ok"] is True
         # Specialist gone from in-memory state and disk regardless.
-        assert "dev-1" not in mgr.routers
-        assert "dev-1" not in mgr.pools
-        assert "dev-1" not in mgr.procs
+        assert "dev-1" not in manager.routers
+        assert "dev-1" not in manager.pools
+        assert "dev-1" not in manager.procs
         assert not ws_path.exists()

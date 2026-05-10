@@ -4,7 +4,7 @@ Composition class. Held by Gateway as ``self._web_server``. Two-phase DI:
 
 - Phase 1 (constructor): config + storage + shared dicts + topology +
   cluster_rpc + cluster_routes (all Phase-1 siblings).
-- Phase 2 (setter): ``set_workgroup_mgr`` after WorkgroupManager exists
+- Phase 2 (setter): ``set_workgroup_manager`` after WorkgroupManager exists
   (used only by ``/api/claude/resume`` to look up specialist pools).
 
 The host's *web* port (default 9292) also carries cluster RPC routes
@@ -94,14 +94,14 @@ class WebHttpServer:
         self.cluster_rpc = cluster_rpc
         self.cluster_routes = cluster_routes
         # Phase 2 dep
-        self.workgroup_mgr = None
+        self.workgroup_manager = None
         # Internal state — process-local preview cache (sid → {mtime, ...})
         # used by /api/sessions to avoid re-reading transcript JSONL every poll.
         self.session_meta_cache: dict = {}
         self._runner: web.AppRunner | None = None
 
-    def set_workgroup_mgr(self, workgroup_mgr) -> None:
-        self.workgroup_mgr = workgroup_mgr
+    def set_workgroup_manager(self, workgroup_manager) -> None:
+        self.workgroup_manager = workgroup_manager
 
     @property
     def web_port_file(self) -> Path:
@@ -199,15 +199,15 @@ class WebHttpServer:
             return self._unauthorized()
         bots = []
         local_machine_id = self.topology.local_machine_id()
-        for name, ch in self.web_channels.items():
-            cfg = self.config.bots.get(name)
+        for name, channel in self.web_channels.items():
+            config = self.config.bots.get(name)
             workgroup = self.config.workgroups.get(name)
-            if cfg is not None:
+            if config is not None:
                 bots.append({
                     "name": name,
-                    "display_name": cfg.display_name or name,
-                    "backend": cfg.ai_backend,
-                    "model": cfg.model,
+                    "display_name": config.display_name or name,
+                    "backend": config.ai_backend,
+                    "model": config.model,
                     "kind": "bot",
                     "machine": local_machine_id,
                 })
@@ -289,9 +289,9 @@ class WebHttpServer:
         sessions = self.storage.list_chat_sessions(bot)
         main_chat_id = self.storage.get_main_chat_id(bot)
 
-        bot_cfg = self.config.bots.get(bot)
-        wg_cfg = self.config.workgroups.get(bot)
-        backend = (bot_cfg.ai_backend if bot_cfg else None) or (wg_cfg.ai_backend if wg_cfg else "claude-cli")
+        bot_config = self.config.bots.get(bot)
+        workgroup_config = self.config.workgroups.get(bot)
+        backend = (bot_config.ai_backend if bot_config else None) or (workgroup_config.ai_backend if workgroup_config else "claude-cli")
         if backend in ("claude-cli", "agent-sdk-claude"):
             try:
                 from boxagent.history import get_history
@@ -592,11 +592,11 @@ class WebHttpServer:
             response = await self.cluster_rpc.dispatch_machine_request(machine, "POST", "/api/send", request, body=body)
             if response is not None:
                 return response
-        ch = self.web_channels.get(bot)
-        if ch is None:
+        channel = self.web_channels.get(bot)
+        if channel is None:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
         try:
-            await ch.inject(chat_id=chat_id, text=text, user_id="web")
+            await channel.inject(chat_id=chat_id, text=text, user_id="web")
         except Exception as e:
             logger.exception("web send failed")
             return web.json_response({"ok": False, "error": str(e)}, status=500)
@@ -614,8 +614,8 @@ class WebHttpServer:
             response = await self.cluster_rpc.dispatch_machine_stream(machine, "/api/stream", request)
             if response is not None:
                 return response
-        ch = self.web_channels.get(bot)
-        if ch is None:
+        channel = self.web_channels.get(bot)
+        if channel is None:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
 
         response = web.StreamResponse(
@@ -628,7 +628,7 @@ class WebHttpServer:
             },
         )
         await response.prepare(request)
-        queue = ch.subscribe(chat_id)
+        queue = channel.subscribe(chat_id)
         await response.write(b": connected\n\n")
         import json as _json
         try:
@@ -645,7 +645,7 @@ class WebHttpServer:
         except (ConnectionResetError, asyncio.CancelledError):
             pass
         finally:
-            ch.unsubscribe(chat_id, queue)
+            channel.unsubscribe(chat_id, queue)
         return response
 
     # ── Claude native session picker ──
@@ -731,18 +731,18 @@ class WebHttpServer:
         is_raw = bot == "raw"
         workspace = ""
         if self.storage:
-            cfg = self.config.bots.get(bot)
+            config = self.config.bots.get(bot)
             workgroup = self.config.workgroups.get(bot)
-            model = (cfg.model if cfg else None) or (workgroup.model if workgroup else "")
+            model = (config.model if config else None) or (workgroup.model if workgroup else "")
             if is_raw:
                 backend = backend_override or "claude-cli"
             else:
-                backend = (cfg.ai_backend if cfg else None) or (workgroup.ai_backend if workgroup else "claude-cli")
+                backend = (config.ai_backend if config else None) or (workgroup.ai_backend if workgroup else "claude-cli")
             # ``encoded`` (project_id) is now the cwd path — use it
             # directly. Older callers that don't supply project still
             # fall back to bot/workgroup defaults below.
             workspace = encoded or (
-                cfg.workspace if cfg else (workgroup.admin_workspace if workgroup else "")
+                config.workspace if config else (workgroup.admin_workspace if workgroup else "")
             )
             chat_id = f"{backend.split('-')[0]}-{sid}" if is_raw else f"claude-{sid}"
             self.storage.save_session(
@@ -754,8 +754,8 @@ class WebHttpServer:
                 workspace=workspace,
             )
             pool = self.pools.get(bot)
-            if pool is None and self.workgroup_mgr is not None:
-                pool = self.workgroup_mgr.pools.get(bot)
+            if pool is None and self.workgroup_manager is not None:
+                pool = self.workgroup_manager.pools.get(bot)
             if pool is not None:
                 if workspace:
                     pool.set_workspace(chat_id, workspace)

@@ -306,9 +306,9 @@ def run_doctor(ba_dir: Path, fix: bool = False) -> None:
             all_issues.append(f"❌ local.yaml not found: {local_yaml}")
 
     # --- Config validation ---
-    cfg_ok, cfg_issues = _validate_config(ba_dir, local_dir)
-    all_ok.extend(cfg_ok)
-    all_issues.extend(cfg_issues)
+    config_ok, config_issues = _validate_config(ba_dir, local_dir)
+    all_ok.extend(config_ok)
+    all_issues.extend(config_issues)
 
     # --- Schedules validation ---
     sched_ok, sched_issues = _validate_schedules(ba_dir)

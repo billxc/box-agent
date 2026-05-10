@@ -62,7 +62,7 @@ class TestMockBackend:
         backend = MockBackend()
         observed: list[str] = []
 
-        async def handler(msg, cb, **kw):
+        async def handler(msg, callback, **kw):
             observed.append(backend.state)
 
         backend.script_handler(handler)

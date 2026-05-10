@@ -2,7 +2,7 @@
 
 Composition class. Owned by ``WorkgroupManager`` itself (built in
 ``__post_init__`` so the manager and its routes ship together). Gateway
-wiring just reads ``workgroup_mgr.routes``; the wiring stays inside the
+wiring just reads ``workgroup_manager.routes``; the wiring stays inside the
 workgroup module.
 
 Single-phase DI: needs the ``WorkgroupManager`` instance — bind that and
@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 
 
 class WorkgroupHttpRoutes:
-    def __init__(self, *, workgroup_mgr: "WorkgroupManager") -> None:
-        self.workgroup_mgr = workgroup_mgr
+    def __init__(self, *, workgroup_manager: "WorkgroupManager") -> None:
+        self.workgroup_manager = workgroup_manager
 
     async def handle_workgroup_send(self, request: web.Request) -> web.Response:
         """POST /api/workgroup/send — dispatch task to a specialist (async)."""
@@ -42,7 +42,7 @@ class WorkgroupHttpRoutes:
             return web.json_response({"ok": False, "error": "missing 'message'"}, status=400)
 
         try:
-            result = await self.workgroup_mgr.send_to_specialist(
+            result = await self.workgroup_manager.send_to_specialist(
                 target, message, from_bot=from_bot, reply_chat_id=reply_chat_id,
             )
             return web.json_response(result)
@@ -67,7 +67,7 @@ class WorkgroupHttpRoutes:
                 {"ok": False, "error": "missing 'workgroup' or 'name'"}, status=400,
             )
 
-        result = await self.workgroup_mgr.create_specialist(
+        result = await self.workgroup_manager.create_specialist(
             workgroup_name, specialist_name,
             model=body.get("model", ""),
             workspace=body.get("workspace", ""),
@@ -85,14 +85,14 @@ class WorkgroupHttpRoutes:
         if not target:
             return web.json_response({"ok": False, "error": "missing 'name'"}, status=400)
 
-        result = self.workgroup_mgr.reset_specialist(target)
+        result = self.workgroup_manager.reset_specialist(target)
         status = 200 if result.get("ok") else 400
         return web.json_response(result, status=status)
 
     async def handle_list_specialists(self, request: web.Request) -> web.Response:
         """GET /api/workgroup/specialists — list all specialists with details."""
         workgroup_name = request.query.get("workgroup", "")
-        result = self.workgroup_mgr.list_specialists(workgroup_name)
+        result = self.workgroup_manager.list_specialists(workgroup_name)
         return web.json_response(result)
 
     async def handle_specialist_status(self, request: web.Request) -> web.Response:
@@ -100,7 +100,7 @@ class WorkgroupHttpRoutes:
         name = request.query.get("name", "")
         if not name:
             return web.json_response({"ok": False, "error": "missing 'name'"}, status=400)
-        result = self.workgroup_mgr.get_specialist_status(name)
+        result = self.workgroup_manager.get_specialist_status(name)
         return web.json_response(result)
 
     async def handle_delete_specialist(self, request: web.Request) -> web.Response:
@@ -113,7 +113,7 @@ class WorkgroupHttpRoutes:
         if not target:
             return web.json_response({"ok": False, "error": "missing 'name'"}, status=400)
 
-        result = await self.workgroup_mgr.delete_specialist(target)
+        result = await self.workgroup_manager.delete_specialist(target)
         status = 200 if result.get("ok") else 400
         return web.json_response(result, status=status)
 
@@ -128,6 +128,6 @@ class WorkgroupHttpRoutes:
         if not task_id:
             return web.json_response({"ok": False, "error": "missing 'task_id'"}, status=400)
 
-        result = await self.workgroup_mgr.cancel_task(task_id)
+        result = await self.workgroup_manager.cancel_task(task_id)
         status = 200 if result.get("ok") else 400
         return web.json_response(result, status=status)

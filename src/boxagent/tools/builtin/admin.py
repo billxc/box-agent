@@ -13,14 +13,14 @@ from boxagent.tools import ToolContext, boxagent_tool
 logger = logging.getLogger(__name__)
 
 
-def _wg(ctx: ToolContext):
+def _workgroup(ctx: ToolContext):
     """Resolve the WorkgroupManager or return a tuple (None, error_str)."""
     if ctx.gateway is None:
         return None, "Error: gateway not available"
-    mgr = getattr(ctx.gateway, "_workgroup_mgr", None)
-    if mgr is None:
+    manager = getattr(ctx.gateway, "_workgroup_manager", None)
+    if manager is None:
         return None, "Error: workgroup manager not available"
-    return mgr, ""
+    return manager, ""
 
 
 @boxagent_tool(
@@ -34,10 +34,10 @@ def _wg(ctx: ToolContext):
     requires=["workgroup_admin"],
 )
 async def list_specialists(args: dict, ctx: ToolContext) -> str:
-    mgr, err = _wg(ctx)
-    if mgr is None:
+    manager, err = _workgroup(ctx)
+    if manager is None:
         return err
-    result = mgr.list_specialists(ctx.bot_name)
+    result = manager.list_specialists(ctx.bot_name)
     if not result.get("ok"):
         return f"Error: {result.get('error', 'unknown error')}"
     specialists = result.get("specialists", [])
@@ -72,12 +72,12 @@ async def list_specialists(args: dict, ctx: ToolContext) -> str:
     requires=["workgroup_admin"],
 )
 async def list_templates(args: dict, ctx: ToolContext) -> str:
-    mgr, err = _wg(ctx)
-    if mgr is None:
+    manager, err = _workgroup(ctx)
+    if manager is None:
         return err
     if not ctx.bot_name:
         return "Error: bot_name not set — cannot determine workgroup"
-    result = mgr.list_templates(ctx.bot_name)
+    result = manager.list_templates(ctx.bot_name)
     if not result.get("ok"):
         return f"Error: {result.get('error', 'unknown error')}"
     templates = result.get("templates", [])
@@ -99,11 +99,11 @@ async def list_templates(args: dict, ctx: ToolContext) -> str:
     requires=["workgroup_admin"],
 )
 async def get_specialist_status(args: dict, ctx: ToolContext) -> str:
-    mgr, err = _wg(ctx)
-    if mgr is None:
+    manager, err = _workgroup(ctx)
+    if manager is None:
         return err
     agent_name = args["agent_name"]
-    result = mgr.get_specialist_status(agent_name)
+    result = manager.get_specialist_status(agent_name)
     if not result.get("ok"):
         return f"Error: {result.get('error', 'unknown error')}"
     lines = [f"**{agent_name}** — {'active' if result.get('active') else 'idle'}"]
@@ -143,11 +143,11 @@ async def get_specialist_status(args: dict, ctx: ToolContext) -> str:
     requires=["workgroup_admin"],
 )
 async def send_to_agent(args: dict, ctx: ToolContext) -> str:
-    mgr, err = _wg(ctx)
-    if mgr is None:
+    manager, err = _workgroup(ctx)
+    if manager is None:
         return err
     try:
-        result = await mgr.send_to_specialist(
+        result = await manager.send_to_specialist(
             target=args["agent_name"],
             text=args["message"],
             from_bot=ctx.bot_name,
@@ -177,15 +177,15 @@ async def send_to_agent(args: dict, ctx: ToolContext) -> str:
     requires=["workgroup_admin"],
 )
 async def create_specialist(args: dict, ctx: ToolContext) -> str:
-    mgr, err = _wg(ctx)
-    if mgr is None:
+    manager, err = _workgroup(ctx)
+    if manager is None:
         return err
     if not ctx.bot_name:
         return "Error: bot_name not set — cannot determine workgroup"
     name = args["name"]
     template = args.get("template", "")
     try:
-        result = await mgr.create_specialist(
+        result = await manager.create_specialist(
             ctx.bot_name, name,
             model=args.get("model", ""),
             template=template,
@@ -213,10 +213,10 @@ async def create_specialist(args: dict, ctx: ToolContext) -> str:
     requires=["workgroup_admin"],
 )
 async def reset_specialist(args: dict, ctx: ToolContext) -> str:
-    mgr, err = _wg(ctx)
-    if mgr is None:
+    manager, err = _workgroup(ctx)
+    if manager is None:
         return err
-    result = mgr.reset_specialist(args["agent_name"])
+    result = manager.reset_specialist(args["agent_name"])
     if result.get("ok"):
         return f"Specialist '{args['agent_name']}' session reset. Next task will start fresh."
     return f"Error: {result.get('error', 'unknown error')}"
@@ -230,11 +230,11 @@ async def reset_specialist(args: dict, ctx: ToolContext) -> str:
     requires=["workgroup_admin"],
 )
 async def delete_specialist(args: dict, ctx: ToolContext) -> str:
-    mgr, err = _wg(ctx)
-    if mgr is None:
+    manager, err = _workgroup(ctx)
+    if manager is None:
         return err
     try:
-        result = await mgr.delete_specialist(args["agent_name"])
+        result = await manager.delete_specialist(args["agent_name"])
         if result.get("ok"):
             return f"Specialist '{args['agent_name']}' deleted."
         return f"Error: {result.get('error', 'unknown error')}"
@@ -250,11 +250,11 @@ async def delete_specialist(args: dict, ctx: ToolContext) -> str:
     requires=["workgroup_admin"],
 )
 async def cancel_task(args: dict, ctx: ToolContext) -> str:
-    mgr, err = _wg(ctx)
-    if mgr is None:
+    manager, err = _workgroup(ctx)
+    if manager is None:
         return err
     try:
-        result = await mgr.cancel_task(args["task_id"])
+        result = await manager.cancel_task(args["task_id"])
         if result.get("ok"):
             return f"Task '{args['task_id']}' cancelled."
         return f"Error: {result.get('error', 'unknown error')}"

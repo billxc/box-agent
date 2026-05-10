@@ -254,7 +254,7 @@ async def cmd_backend(router: "Router", msg: "IncomingMessage", channel: "Channe
     old_kind = router.ai_backend
     old_backend = router.backend
 
-    bot_cfg = BotConfig(
+    bot_config = BotConfig(
         name=router.bot_name,
         ai_backend=new_kind,
         workspace=getattr(old_backend, "workspace", router.workspace),
@@ -263,7 +263,7 @@ async def cmd_backend(router: "Router", msg: "IncomingMessage", channel: "Channe
         yolo=bool(getattr(old_backend, "yolo", False)),
     )
     await old_backend.stop()
-    new_backend = create_backend(bot_cfg, session_id=None)
+    new_backend = create_backend(bot_config, session_id=None)
 
     new_backend.start()
     router.backend = new_backend

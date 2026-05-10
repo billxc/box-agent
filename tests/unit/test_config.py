@@ -34,11 +34,11 @@ def config_dir(tmp_path):
 
 class TestLoadConfig:
     def test_valid_config_parses(self, config_dir):
-        cfg = load_config(config_dir)
-        assert cfg.node_id == ""
-        assert cfg.log_level == "info"
-        assert "test-bot" in cfg.bots
-        bot = cfg.bots["test-bot"]
+        config = load_config(config_dir)
+        assert config.node_id == ""
+        assert config.log_level == "info"
+        assert "test-bot" in config.bots
+        bot = config.bots["test-bot"]
         assert bot.workspace == "/tmp/test"
         assert bot.telegram_token == "123:ABC"
         assert bot.allowed_users == [111222]
@@ -57,8 +57,8 @@ class TestLoadConfig:
                     allowed_users: [111]
         """)
         (tmp_path / "config.yaml").write_text(config)
-        cfg = load_config(tmp_path)
-        bot = cfg.bots["web-only-bot"]
+        config = load_config(tmp_path)
+        bot = config.bots["web-only-bot"]
         assert bot.telegram_token == ""
         assert bot.web_enabled is True
 
@@ -66,22 +66,22 @@ class TestLoadConfig:
         with patch.dict(
             os.environ, {"BOXAGENT_TEST_BOT_workspace": "/override"}
         ):
-            cfg = load_config(config_dir)
-        assert cfg.bots["test-bot"].workspace == "/override"
+            config = load_config(config_dir)
+        assert config.bots["test-bot"].workspace == "/override"
 
     def test_env_override_log_level(self, config_dir):
         with patch.dict(
             os.environ, {"BOXAGENT_GLOBAL_LOG_LEVEL": "debug"}
         ):
-            cfg = load_config(config_dir)
-        assert cfg.log_level == "debug"
+            config = load_config(config_dir)
+        assert config.log_level == "debug"
 
     def test_unknown_env_ignored(self, config_dir):
         with patch.dict(
             os.environ, {"BOXAGENT_UNKNOWN_THING": "whatever"}
         ):
-            cfg = load_config(config_dir)
-        assert cfg.node_id == ""
+            config = load_config(config_dir)
+        assert config.node_id == ""
 
     def test_display_defaults(self, tmp_path):
         config = dedent("""\
@@ -96,8 +96,8 @@ class TestLoadConfig:
                     allowed_users: [111]
         """)
         (tmp_path / "config.yaml").write_text(config)
-        cfg = load_config(tmp_path)
-        assert cfg.bots["simple-bot"].display_tool_calls == "summary"
+        config = load_config(tmp_path)
+        assert config.bots["simple-bot"].display_tool_calls == "summary"
 
     def test_box_agent_dir_changes_default_workspace(self, tmp_path):
         config = dedent("""\
@@ -115,9 +115,9 @@ class TestLoadConfig:
         with patch.dict(
             os.environ, {"BOX_AGENT_DIR": "/tmp/ba-test-dir"}
         ):
-            cfg = load_config(tmp_path)
+            config = load_config(tmp_path)
 
-        assert cfg.bots["simple-bot"].workspace == "/tmp/ba-test-dir/workspace"
+        assert config.bots["simple-bot"].workspace == "/tmp/ba-test-dir/workspace"
 
     def test_loads_telegram_bots_mapping_into_app_config(self, tmp_path):
         (tmp_path / "telegram_bots.yaml").write_text("""\
@@ -136,10 +136,10 @@ class TestLoadConfig:
                     allowed_users: [111]
         """))
 
-        cfg = load_config(tmp_path)
+        config = load_config(tmp_path)
 
-        assert cfg.telegram_bots["my_test_bot"] == "123:ABC"
-        assert cfg.telegram_bots["123"] == "123:ABC"
+        assert config.telegram_bots["my_test_bot"] == "123:ABC"
+        assert config.telegram_bots["123"] == "123:ABC"
 
     def test_relative_extra_skill_dirs_resolve_from_config_dir(self, tmp_path):
         config = dedent("""\
@@ -157,9 +157,9 @@ class TestLoadConfig:
         """)
         (tmp_path / "config.yaml").write_text(config)
 
-        cfg = load_config(tmp_path)
+        config = load_config(tmp_path)
 
-        assert cfg.bots["skill-bot"].extra_skill_dirs == [
+        assert config.bots["skill-bot"].extra_skill_dirs == [
             str(tmp_path / "my-notes" / "myproject" / "skills"),
             str(tmp_path / "my-notes" / "myproject" / "extra-skills"),
         ]
@@ -177,13 +177,13 @@ class TestLoadConfig:
         """)
         (tmp_path / "config.yaml").write_text(config)
 
-        cfg = load_config(tmp_path, box_agent_dir="/tmp/ba-cli-dir")
+        config = load_config(tmp_path, box_agent_dir="/tmp/ba-cli-dir")
 
-        assert cfg.bots["simple-bot"].workspace == "/tmp/ba-cli-dir/workspace"
+        assert config.bots["simple-bot"].workspace == "/tmp/ba-cli-dir/workspace"
 
     def test_api_port_defaults_to_zero(self, config_dir):
-        cfg = load_config(config_dir)
-        assert cfg.api_port == 0
+        config = load_config(config_dir)
+        assert config.api_port == 0
 
     def test_api_port_from_config(self, tmp_path):
         config = dedent("""\
@@ -200,8 +200,8 @@ class TestLoadConfig:
                     allowed_users: [111]
         """)
         (tmp_path / "config.yaml").write_text(config)
-        cfg = load_config(tmp_path)
-        assert cfg.api_port == 9800
+        config = load_config(tmp_path)
+        assert config.api_port == 9800
 
     def test_codex_acp_backend_is_rejected(self, tmp_path):
         from boxagent.config import ConfigError
@@ -258,8 +258,8 @@ class TestTelegramBotsYaml:
         """)
         (tmp_path / "config.yaml").write_text(config)
         (tmp_path / "telegram_bots.yaml").write_text(bots_yaml)
-        cfg = load_config(tmp_path)
-        assert cfg.bots["my-bot"].telegram_token == "123:ABC_TOKEN"
+        config = load_config(tmp_path)
+        assert config.bots["my-bot"].telegram_token == "123:ABC_TOKEN"
 
     def test_token_takes_priority_over_bot_id(self, tmp_path):
         config = dedent("""\
@@ -279,8 +279,8 @@ class TestTelegramBotsYaml:
         """)
         (tmp_path / "config.yaml").write_text(config)
         (tmp_path / "telegram_bots.yaml").write_text(bots_yaml)
-        cfg = load_config(tmp_path)
-        assert cfg.bots["my-bot"].telegram_token == "999:DIRECT_TOKEN"
+        config = load_config(tmp_path)
+        assert config.bots["my-bot"].telegram_token == "999:DIRECT_TOKEN"
 
     def test_bot_id_not_found_raises_error(self, tmp_path):
         config = dedent("""\
@@ -333,8 +333,8 @@ class TestTelegramBotsYaml:
         """)
         (tmp_path / "config.yaml").write_text(config)
         # No telegram_bots.yaml — should still work
-        cfg = load_config(tmp_path)
-        assert cfg.bots["my-bot"].telegram_token == "123:DIRECT"
+        config = load_config(tmp_path)
+        assert config.bots["my-bot"].telegram_token == "123:DIRECT"
 
     def test_missing_both_token_and_bot_id_loads_web_only(self, tmp_path):
         """telegram block with neither token nor bot_id is not an error;
@@ -350,9 +350,9 @@ class TestTelegramBotsYaml:
                     allowed_users: [111]
         """)
         (tmp_path / "config.yaml").write_text(config)
-        cfg = load_config(tmp_path)
-        assert cfg.bots["my-bot"].telegram_token == ""
-        assert cfg.bots["my-bot"].web_enabled is True
+        config = load_config(tmp_path)
+        assert config.bots["my-bot"].telegram_token == ""
+        assert config.bots["my-bot"].web_enabled is True
 
     def test_numeric_bot_id_also_works(self, tmp_path):
         """bot_id as int in YAML should still resolve."""
@@ -372,8 +372,8 @@ class TestTelegramBotsYaml:
         """)
         (tmp_path / "config.yaml").write_text(config)
         (tmp_path / "telegram_bots.yaml").write_text(bots_yaml)
-        cfg = load_config(tmp_path)
-        assert cfg.bots["my-bot"].telegram_token == "123:NUM_TOKEN"
+        config = load_config(tmp_path)
+        assert config.bots["my-bot"].telegram_token == "123:NUM_TOKEN"
 
 
 class TestNodeMatches:
@@ -423,8 +423,8 @@ class TestNodeId:
         local_dir = tmp_path / "local"
         local_dir.mkdir()
         (local_dir / "local.yaml").write_text("node_id: cloud-pc\n")
-        cfg = load_config(tmp_path, local_dir=local_dir)
-        assert cfg.node_id == "cloud-pc"
+        config = load_config(tmp_path, local_dir=local_dir)
+        assert config.node_id == "cloud-pc"
 
     def test_node_id_empty_when_no_local_yaml(self, tmp_path):
         config = dedent("""\
@@ -441,8 +441,8 @@ class TestNodeId:
         (tmp_path / "config.yaml").write_text(config)
         local_dir = tmp_path / "local"
         local_dir.mkdir()
-        cfg = load_config(tmp_path, local_dir=local_dir)
-        assert cfg.node_id == ""
+        config = load_config(tmp_path, local_dir=local_dir)
+        assert config.node_id == ""
 
     def test_node_id_empty_when_no_local_dir(self, tmp_path):
         config = dedent("""\
@@ -457,8 +457,8 @@ class TestNodeId:
                     allowed_users: [111]
         """)
         (tmp_path / "config.yaml").write_text(config)
-        cfg = load_config(tmp_path)
-        assert cfg.node_id == ""
+        config = load_config(tmp_path)
+        assert config.node_id == ""
 
     def test_node_id_fallback_from_global_config(self, tmp_path):
         """Compat: global.node_id in config.yaml is used when local.yaml has none."""
@@ -477,8 +477,8 @@ class TestNodeId:
         (tmp_path / "config.yaml").write_text(config)
         local_dir = tmp_path / "local"
         local_dir.mkdir()
-        cfg = load_config(tmp_path, local_dir=local_dir)
-        assert cfg.node_id == "legacy-node"
+        config = load_config(tmp_path, local_dir=local_dir)
+        assert config.node_id == "legacy-node"
 
     def test_local_yaml_takes_priority_over_global(self, tmp_path):
         """local.yaml node_id wins over deprecated global.node_id."""
@@ -498,8 +498,8 @@ class TestNodeId:
         local_dir = tmp_path / "local"
         local_dir.mkdir()
         (local_dir / "local.yaml").write_text("node_id: new-node\n")
-        cfg = load_config(tmp_path, local_dir=local_dir)
-        assert cfg.node_id == "new-node"
+        config = load_config(tmp_path, local_dir=local_dir)
+        assert config.node_id == "new-node"
 
     def test_node_id_empty_when_local_yaml_empty(self, tmp_path):
         config = dedent("""\
@@ -517,8 +517,8 @@ class TestNodeId:
         local_dir = tmp_path / "local"
         local_dir.mkdir()
         (local_dir / "local.yaml").write_text("")
-        cfg = load_config(tmp_path, local_dir=local_dir)
-        assert cfg.node_id == ""
+        config = load_config(tmp_path, local_dir=local_dir)
+        assert config.node_id == ""
 
     def test_local_yaml_overrides_global_log_level(self, tmp_path):
         """local.yaml global section overrides config.yaml global."""
@@ -540,9 +540,9 @@ class TestNodeId:
         (local_dir / "local.yaml").write_text(
             "node_id: test-node\nglobal:\n  log_level: debug\n"
         )
-        cfg = load_config(tmp_path, local_dir=local_dir)
-        assert cfg.node_id == "test-node"
-        assert cfg.log_level == "debug"
+        config = load_config(tmp_path, local_dir=local_dir)
+        assert config.node_id == "test-node"
+        assert config.log_level == "debug"
 
     def test_local_yaml_partial_global_override(self, tmp_path):
         """local.yaml can override only some global fields."""
@@ -565,9 +565,9 @@ class TestNodeId:
         (local_dir / "local.yaml").write_text(
             "node_id: test-node\nglobal:\n  api_port: 9090\n"
         )
-        cfg = load_config(tmp_path, local_dir=local_dir)
-        assert cfg.log_level == "info"  # not overridden
-        assert cfg.api_port == 9090     # overridden
+        config = load_config(tmp_path, local_dir=local_dir)
+        assert config.log_level == "info"  # not overridden
+        assert config.api_port == 9090     # overridden
 
 
 class TestEnabledOnNode:
@@ -587,8 +587,8 @@ class TestEnabledOnNode:
                     allowed_users: [111]
         """)
         (tmp_path / "config.yaml").write_text(config)
-        cfg = load_config(tmp_path)
-        assert cfg.bots["my-bot"].enabled_on_nodes == "cloud-pc"
+        config = load_config(tmp_path)
+        assert config.bots["my-bot"].enabled_on_nodes == "cloud-pc"
 
     def test_list_value(self, tmp_path):
         config = dedent("""\
@@ -606,12 +606,12 @@ class TestEnabledOnNode:
                     allowed_users: [111]
         """)
         (tmp_path / "config.yaml").write_text(config)
-        cfg = load_config(tmp_path)
-        assert cfg.bots["my-bot"].enabled_on_nodes == ["cloud-pc", "home-server"]
+        config = load_config(tmp_path)
+        assert config.bots["my-bot"].enabled_on_nodes == ["cloud-pc", "home-server"]
 
     def test_default_empty(self, config_dir):
-        cfg = load_config(config_dir)
-        assert cfg.bots["test-bot"].enabled_on_nodes == ""
+        config = load_config(config_dir)
+        assert config.bots["test-bot"].enabled_on_nodes == ""
 
 
 class TestNodeOverrides:
@@ -645,12 +645,12 @@ class TestNodeOverrides:
         local_dir.mkdir()
         (local_dir / "local.yaml").write_text("node_id: cloud-pc\n")
 
-        cfg = load_config(tmp_path, local_dir=local_dir)
+        config = load_config(tmp_path, local_dir=local_dir)
 
-        assert cfg.log_level == "debug"
-        assert cfg.api_port == 9800
-        assert cfg.bots["my-bot"].workspace == "/tmp/override"
-        assert cfg.bots["my-bot"].model == "gpt-5"
+        assert config.log_level == "debug"
+        assert config.api_port == 9800
+        assert config.bots["my-bot"].workspace == "/tmp/override"
+        assert config.bots["my-bot"].model == "gpt-5"
 
     def test_node_override_not_applied_when_node_unmatched(self, tmp_path):
         config = dedent("""\
@@ -678,10 +678,10 @@ class TestNodeOverrides:
         local_dir.mkdir()
         (local_dir / "local.yaml").write_text("node_id: home-server\n")
 
-        cfg = load_config(tmp_path, local_dir=local_dir)
+        config = load_config(tmp_path, local_dir=local_dir)
 
-        assert cfg.log_level == "info"
-        assert cfg.bots["my-bot"].workspace == "/tmp/base"
+        assert config.log_level == "info"
+        assert config.bots["my-bot"].workspace == "/tmp/base"
 
     def test_invalid_node_overrides_shape_raises(self, tmp_path):
         config = dedent("""\

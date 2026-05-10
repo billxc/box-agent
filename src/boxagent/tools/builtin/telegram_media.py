@@ -18,15 +18,15 @@ logger = logging.getLogger(__name__)
 
 def _resolve_telegram_token(ctx: ToolContext) -> str:
     """Look up the Telegram bot token for this context's bot."""
-    gw = ctx.gateway
-    if gw is None:
+    gateway = ctx.gateway
+    if gateway is None:
         return ""
-    cfg = gw.config.bots.get(ctx.bot_name)
-    if cfg and cfg.telegram_token:
-        return cfg.telegram_token
-    workgroup = gw.config.workgroups.get(ctx.bot_name)
+    config = gateway.config.bots.get(ctx.bot_name)
+    if config and config.telegram_token:
+        return config.telegram_token
+    workgroup = gateway.config.workgroups.get(ctx.bot_name)
     if workgroup:
-        return gw.config.telegram_bots.get(ctx.bot_name, "")
+        return gateway.config.telegram_bots.get(ctx.bot_name, "")
     return ""
 
 

@@ -93,13 +93,13 @@ from tests.unit.helpers import FakeProcess
 @pytest.fixture
 def callback():
     """Mock AgentCallback."""
-    cb = AsyncMock()
-    cb.on_stream = AsyncMock()
-    cb.on_tool_call = AsyncMock()
-    cb.on_error = AsyncMock()
-    cb.on_file = AsyncMock()
-    cb.on_image = AsyncMock()
-    return cb
+    callback = AsyncMock()
+    callback.on_stream = AsyncMock()
+    callback.on_tool_call = AsyncMock()
+    callback.on_error = AsyncMock()
+    callback.on_file = AsyncMock()
+    callback.on_image = AsyncMock()
+    return callback
 
 
 @pytest.fixture

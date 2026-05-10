@@ -20,10 +20,10 @@ class TestPeerServiceConstruction:
         topo = MagicMock()
         ps = PeerService(topology=topo, main_chat_id_provider=lambda b: b)
         assert ps.topology is topo
-        assert ps.workgroup_mgr is None
+        assert ps.workgroup_manager is None
 
-    def test_phase2_set_workgroup_mgr(self):
+    def test_phase2_set_workgroup_manager(self):
         ps = _make()
         wm = MagicMock()
-        ps.set_workgroup_mgr(wm)
-        assert ps.workgroup_mgr is wm
+        ps.set_workgroup_manager(wm)
+        assert ps.workgroup_manager is wm

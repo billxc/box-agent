@@ -15,7 +15,7 @@ import time
 
 
 WORKGROUP_CHAT_PREFIX = "workgroup:"
-_LEGACY_WORKGROUP_CHAT_PREFIX = "wg:"  # pre-2026-05-10; migrated by Storage on startup
+_LEGACY_WORKGROUP_CHAT_PREFIX = "workgroup:"  # pre-2026-05-10; migrated by Storage on startup
 
 _SPECIALIST_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,30}$")
 

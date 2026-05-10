@@ -15,7 +15,7 @@ def _make_router(**overrides):
         bot_name="test-bot",
         display_name="Test",
         node_id="node-1",
-        config_dir="/tmp/cfg",
+        config_dir="/tmp/config",
         local_dir="/tmp/local",
         telegram_token="abc",
         has_peer_channel=False,
@@ -53,8 +53,8 @@ def test_uses_backend_model_when_no_pool():
 
 def test_pool_overrides_model_and_workspace():
     pool = SimpleNamespace(
-        get_model=lambda cid: "pool-model",
-        get_workspace=lambda cid: "/tmp/pool-ws",
+        get_model=lambda chat_id: "pool-model",
+        get_workspace=lambda chat_id: "/tmp/pool-ws",
     )
     env = build_env(_make_msg(), _make_router(pool=pool))
     assert env.model == "pool-model"
@@ -63,8 +63,8 @@ def test_pool_overrides_model_and_workspace():
 
 def test_falls_back_to_router_workspace_when_pool_returns_none():
     pool = SimpleNamespace(
-        get_model=lambda cid: None,
-        get_workspace=lambda cid: None,
+        get_model=lambda chat_id: None,
+        get_workspace=lambda chat_id: None,
     )
     env = build_env(_make_msg(), _make_router(pool=pool))
     # Pool returns None → fall back to router.workspace

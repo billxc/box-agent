@@ -84,14 +84,14 @@ class AgentManager:
         Skipped bots are logged but not raised; an empty config is fine.
         """
         from boxagent.config import node_matches
-        for name, bot_cfg in self.config.bots.items():
-            if not node_matches(bot_cfg.enabled_on_nodes, node_id):
+        for name, bot_config in self.config.bots.items():
+            if not node_matches(bot_config.enabled_on_nodes, node_id):
                 logger.info(
                     "Bot '%s' skipped (enabled_on_nodes=%s, current=%s)",
-                    name, bot_cfg.enabled_on_nodes, node_id,
+                    name, bot_config.enabled_on_nodes, node_id,
                 )
                 continue
-            await self.start_bot(name, bot_cfg)
+            await self.start_bot(name, bot_config)
         await self.start_raw_bot()
 
     def build_scheduler_refs(self) -> dict:
@@ -106,14 +106,14 @@ class AgentManager:
         for name in self.routers:
             if name == "raw":
                 continue
-            bot_cfg = self.config.bots[name]
-            chat_id = str(bot_cfg.allowed_users[0]) if bot_cfg.allowed_users else ""
+            bot_config = self.config.bots[name]
+            chat_id = str(bot_config.allowed_users[0]) if bot_config.allowed_users else ""
             refs[name] = BotRef(
                 backend=self.backends[name],
                 channel=self.channels.get(name),
                 chat_id=chat_id,
-                ai_backend=bot_cfg.ai_backend,
-                telegram_token=bot_cfg.telegram_token,
+                ai_backend=bot_config.ai_backend,
+                telegram_token=bot_config.telegram_token,
             )
         return refs
 
@@ -130,15 +130,15 @@ class AgentManager:
             await asyncio.gather(*self.watchdog_tasks, return_exceptions=True)
         self.watchdog_tasks.clear()
 
-        for name, ch in self.channels.items():
+        for name, channel in self.channels.items():
             try:
-                await ch.stop()
+                await channel.stop()
             except Exception as e:
                 logger.error("Error stopping channel %s: %s", name, e)
 
-        for name, ch in self.web_channels.items():
+        for name, channel in self.web_channels.items():
             try:
-                await ch.stop()
+                await channel.stop()
             except Exception as e:
                 logger.error("Error stopping web channel %s: %s", name, e)
 
@@ -156,54 +156,54 @@ class AgentManager:
             except Exception as e:
                 logger.error("Error stopping pool %s: %s", name, e)
 
-    async def start_bot(self, name: str, bot_cfg: BotConfig) -> None:
+    async def start_bot(self, name: str, bot_config: BotConfig) -> None:
         session_id = None
-        if _supports_persistent_session(bot_cfg.ai_backend):
+        if _supports_persistent_session(bot_config.ai_backend):
             saved = self.storage.load_session(name)
             if isinstance(saved, dict):
                 session_id = saved.get("session_id")
             elif isinstance(saved, str):
                 session_id = saved
 
-        backend = create_backend(bot_cfg, session_id)
+        backend = create_backend(bot_config, session_id)
         backend.start()
         self.backends[name] = backend
 
         def _factory():
-            return create_backend(bot_cfg, None)
+            return create_backend(bot_config, None)
 
         pool = SessionPool(
             size=3,
-            default_model=bot_cfg.model,
-            default_workspace=bot_cfg.workspace,
+            default_model=bot_config.model,
+            default_workspace=bot_config.workspace,
             storage=self.storage,
             bot_name=name,
         )
         pool.start(_factory)
         self.pools[name] = pool
 
-        ws_path = Path(bot_cfg.workspace)
+        ws_path = Path(bot_config.workspace)
         git_created = ensure_git_repo(ws_path)
 
         linked: list[str] = []
-        if bot_cfg.extra_skill_dirs:
+        if bot_config.extra_skill_dirs:
             linked = sync_skills(
-                bot_cfg.workspace,
-                bot_cfg.extra_skill_dirs,
-                bot_cfg.ai_backend,
+                bot_config.workspace,
+                bot_config.extra_skill_dirs,
+                bot_config.ai_backend,
             )
             logger.info("Bot '%s' synced %d skill(s): %s", name, len(linked), linked)
 
-        display_name = bot_cfg.display_name or name
+        display_name = bot_config.display_name or name
 
         primary_channel = None
 
-        if bot_cfg.telegram_token:
+        if bot_config.telegram_token:
             from boxagent.transports.telegram import TelegramChannel
             channel = TelegramChannel(
-                token=bot_cfg.telegram_token,
-                allowed_users=bot_cfg.allowed_users,
-                tool_calls_display=bot_cfg.display_tool_calls,
+                token=bot_config.telegram_token,
+                allowed_users=bot_config.allowed_users,
+                tool_calls_display=bot_config.display_tool_calls,
             )
             primary_channel = channel
             self.channels[name] = channel
@@ -211,7 +211,7 @@ class AgentManager:
         router = Router(
             backend=backend,
             channel=primary_channel,
-            allowed_users=bot_cfg.allowed_users,
+            allowed_users=bot_config.allowed_users,
             storage=self.storage,
             pool=pool,
             bot_name=name,
@@ -220,12 +220,12 @@ class AgentManager:
             node_id=self.config.node_id,
             local_dir=self.storage.local_dir if self.storage else None,
             start_time=self.start_time,
-            workspace=bot_cfg.workspace,
-            extra_skill_dirs=bot_cfg.extra_skill_dirs,
-            ai_backend=bot_cfg.ai_backend,
+            workspace=bot_config.workspace,
+            extra_skill_dirs=bot_config.extra_skill_dirs,
+            ai_backend=bot_config.ai_backend,
             on_backend_switched=self.on_backend_switched,
             has_peer_channel=False,
-            telegram_token=bot_cfg.telegram_token,
+            telegram_token=bot_config.telegram_token,
         )
 
         if name in self.channels:
@@ -233,7 +233,7 @@ class AgentManager:
             self.channels[name].on_message = router.handle_message
             await self.channels[name].start()
 
-        if bot_cfg.web_enabled:
+        if bot_config.web_enabled:
             web_channel = WebChannel(bot_name=name)
             web_channel.on_message = router.handle_message
             self.web_channels[name] = web_channel
@@ -244,16 +244,16 @@ class AgentManager:
 
         skill_count = len(linked)
         channels_active = []
-        if bot_cfg.telegram_token:
+        if bot_config.telegram_token:
             channels_active.append("telegram")
-        if bot_cfg.web_enabled:
+        if bot_config.web_enabled:
             channels_active.append("web")
         info_lines = [
             f"\U0001f7e2 *{display_name}* is online",
             f"node: `{self.config.node_id or '(any)'}`",
-            f"model: `{bot_cfg.model or 'default'}`",
-            f"backend: `{bot_cfg.ai_backend}`",
-            f"workspace: `{bot_cfg.workspace}`",
+            f"model: `{bot_config.model or 'default'}`",
+            f"backend: `{bot_config.ai_backend}`",
+            f"workspace: `{bot_config.workspace}`",
             f"channels: {', '.join(channels_active)}",
             f"skills: {skill_count}",
             f"time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}",
@@ -262,16 +262,16 @@ class AgentManager:
             info_lines.append("⚠️ workspace was not a git repo, created .git for skill discovery")
         notify_text = "\n".join(info_lines)
 
-        tg_chat_id = str(bot_cfg.telegram_allowed_users[0]) if bot_cfg.telegram_token and bot_cfg.telegram_allowed_users else ""
+        tg_chat_id = str(bot_config.telegram_allowed_users[0]) if bot_config.telegram_token and bot_config.telegram_allowed_users else ""
         if tg_chat_id and name in self.channels:
-            async def _send_tg_notify(ch=self.channels[name], chat_id=tg_chat_id, text=notify_text, bot_name=name):
+            async def _send_tg_notify(channel=self.channels[name], chat_id=tg_chat_id, text=notify_text, bot_name=name):
                 try:
-                    await ch.send_text(chat_id, text)
+                    await channel.send_text(chat_id, text)
                 except Exception as e:
                     logger.warning("Failed to send Telegram startup notification for '%s': %s", bot_name, e)
             asyncio.create_task(_send_tg_notify())
 
-        async def restart_bot(n=name, bc=bot_cfg):
+        async def restart_bot(n=name, bc=bot_config):
             await self.restart_bot(n, bc)
 
         wd_chat_id = tg_chat_id
@@ -292,7 +292,7 @@ class AgentManager:
 
     def _raw_backend_factory(self, *, backend: str, workspace: str, model: str,
                              session_id: str | None, bot_name: str) -> AgentBackend:
-        cfg = BotConfig(
+        config = BotConfig(
             name=bot_name,
             ai_backend=backend or "claude-cli",
             workspace=workspace or "",
@@ -300,11 +300,11 @@ class AgentManager:
             yolo=True,
             passthrough=True,
         )
-        return create_backend(cfg, session_id)
+        return create_backend(config, session_id)
 
     async def start_raw_bot(self) -> None:
         name = "raw"
-        bot_cfg = BotConfig(
+        bot_config = BotConfig(
             name=name,
             ai_backend="claude-cli",
             workspace="",
@@ -313,7 +313,7 @@ class AgentManager:
             web_enabled=True,
             yolo=True,
         )
-        self.config.bots[name] = bot_cfg
+        self.config.bots[name] = bot_config
 
         pool = RawSessionPool(
             storage=self.storage,
@@ -340,7 +340,7 @@ class AgentManager:
             storage=self.storage,
             pool=pool,
             bot_name=name,
-            display_name=bot_cfg.display_name,
+            display_name=bot_config.display_name,
             config_dir=str(self.config_dir),
             node_id=self.config.node_id,
             local_dir=self.storage.local_dir if self.storage else None,
@@ -362,10 +362,10 @@ class AgentManager:
         self.routers[name] = router
         logger.info("Bot 'raw' (passthrough, web-only) registered")
 
-    async def restart_bot(self, name: str, bot_cfg: BotConfig) -> None:
+    async def restart_bot(self, name: str, bot_config: BotConfig) -> None:
         old_backend = self.backends.get(name)
         session_id = None
-        if old_backend and _supports_persistent_session(bot_cfg.ai_backend):
+        if old_backend and _supports_persistent_session(bot_config.ai_backend):
             session_id = old_backend.session_id
         if old_backend:
             try:
@@ -373,15 +373,15 @@ class AgentManager:
             except Exception:
                 pass
 
-        new_backend = create_backend(bot_cfg, session_id)
+        new_backend = create_backend(bot_config, session_id)
         new_backend.start()
         self.backends[name] = new_backend
 
-        if bot_cfg.extra_skill_dirs:
+        if bot_config.extra_skill_dirs:
             sync_skills(
-                bot_cfg.workspace,
-                bot_cfg.extra_skill_dirs,
-                bot_cfg.ai_backend,
+                bot_config.workspace,
+                bot_config.extra_skill_dirs,
+                bot_config.ai_backend,
             )
 
         if name in self.routers:
@@ -389,7 +389,7 @@ class AgentManager:
 
         if self.scheduler and name in self.scheduler.bot_refs:
             self.scheduler.bot_refs[name].backend = new_backend
-            self.scheduler.bot_refs[name].telegram_token = bot_cfg.telegram_token
+            self.scheduler.bot_refs[name].telegram_token = bot_config.telegram_token
 
         if name in self.watchdogs:
             self.watchdogs[name].backend = new_backend
