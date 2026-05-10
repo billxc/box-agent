@@ -121,7 +121,7 @@ class WebHttpServer:
             self.cluster_routes.register(web_app)
 
         # Static files last so the catch-all doesn't shadow API routes
-        web_static = Path(__file__).parent.parent.parent / "web" / "static"
+        web_static = Path(__file__).parent / "static"
         if web_static.is_dir():
             web_app.router.add_static("/", path=str(web_static), show_index=False)
 
@@ -189,7 +189,7 @@ class WebHttpServer:
 
     async def _handle_web_index(self, request: web.Request) -> web.Response:
         # Always serve the index page so users can paste ?token=... to log in.
-        index = Path(__file__).parent.parent.parent / "web" / "static" / "index.html"
+        index = Path(__file__).parent / "static" / "index.html"
         if not index.is_file():
             return web.Response(text="web UI not installed", status=404)
         return web.Response(body=index.read_bytes(), content_type="text/html")
