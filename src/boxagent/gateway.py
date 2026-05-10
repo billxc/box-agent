@@ -1,7 +1,7 @@
-"""Gateway core — composition root.
+"""Gateway — composition root + internal HTTP API host.
 
-Owns the dataclass state and the start/stop wiring; all behavior lives in
-the composed managers built in ``start()``:
+Owns lifecycle wiring; behavior lives in the composed managers built in
+``Gateway.start()``:
 
   - ``_bots``             AgentManager        (per-bot lifecycle + teardown)
   - ``_topology``         TopologyService     (cluster identity / peer list)
@@ -9,7 +9,8 @@ the composed managers built in ``start()``:
   - ``_cluster_rpc``      ClusterRpc          (host↔guest HTTP/SSE proxying)
   - ``_cluster_routes``   ClusterHttpRoutes   (cluster routes on web port)
   - ``_scheduler_routes`` SchedulerHttpRoutes (POST /api/schedule/run)
-  - ``_http_server``      HttpApiServer       (internal API + MCP HTTP)
+  - ``_internal_api``     InternalApiServer   (TCP aiohttp app, port file: api-port.txt)
+  - ``_mcp_server``       McpHttpServer       (uvicorn streamable-http MCP)
   - ``_web_server``       WebHttpServer       (Web UI aiohttp server)
 
 Workgroup HTTP routes live on the WorkgroupManager itself
@@ -28,6 +29,9 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+from aiohttp import web
 
 from boxagent.agent.agent_manager import AgentManager
 from boxagent.cluster.http_routes import ClusterHttpRoutes
@@ -35,8 +39,8 @@ from boxagent.cluster.rpc import ClusterRpc
 from boxagent.cluster.host_election import HostElection
 from boxagent.cluster.peer_service import PeerService
 from boxagent.cluster.topology_service import TopologyService
-from boxagent.gateway.http_api_server import HttpApiServer
 from boxagent.scheduler.http_routes import SchedulerHttpRoutes
+from boxagent.transports.mcp.server import McpHttpServer
 from boxagent.transports.web.server import WebHttpServer
 from boxagent.config import AppConfig
 from boxagent.utils import default_config_dir, default_local_dir, default_workspace_dir
@@ -44,7 +48,92 @@ from boxagent.sessions import Storage
 from boxagent.scheduler import Scheduler
 from boxagent.workgroup import WorkgroupManager
 
+if TYPE_CHECKING:
+    from boxagent.workgroup.http_routes import WorkgroupHttpRoutes
+
 logger = logging.getLogger(__name__)
+
+
+# ── Internal HTTP API server (workgroup / scheduler / peer routes) ──
+
+
+class InternalApiServer:
+    """TCP aiohttp app exposing the internal API used by IPC siblings.
+
+    Held by Gateway. Mounts whatever route adapters were provided
+    (workgroup, scheduler, peer); each adapter is optional.
+
+    Port resolved at bind time and written to ``api-port.txt`` so other
+    in-process siblings (the schedule CLI, doctor) can find us. Stale
+    ``api.sock`` and ``api-port.txt`` from a previous run are deleted at
+    start so the new process can re-bind cleanly.
+    """
+
+    def __init__(
+        self,
+        *,
+        config: AppConfig,
+        local_dir: Path,
+        peer: PeerService,
+        workgroup_routes: "WorkgroupHttpRoutes | None",
+        scheduler_routes: SchedulerHttpRoutes | None,
+    ) -> None:
+        self.config = config
+        self.local_dir = local_dir
+        self.peer = peer
+        self.workgroup_routes = workgroup_routes
+        self.scheduler_routes = scheduler_routes
+        self._runner: web.AppRunner | None = None
+
+    @property
+    def port_file(self) -> Path:
+        return self.local_dir / "api-port.txt"
+
+    def _clear_artifacts(self) -> None:
+        for f in (self.port_file, self.local_dir / "api.sock"):
+            if f.exists():
+                f.unlink(missing_ok=True)
+
+    async def start(self) -> None:
+        app = web.Application()
+        if self.scheduler_routes is not None:
+            app.router.add_post("/api/schedule/run", self.scheduler_routes.handle_schedule_run)
+        if self.workgroup_routes is not None:
+            wg = self.workgroup_routes
+            app.router.add_get("/api/workgroup/specialists", wg.handle_list_specialists)
+            app.router.add_get("/api/workgroup/specialist_status", wg.handle_specialist_status)
+            app.router.add_post("/api/workgroup/send", wg.handle_workgroup_send)
+            app.router.add_post("/api/workgroup/create_specialist", wg.handle_create_specialist)
+            app.router.add_post("/api/workgroup/reset_specialist", wg.handle_reset_specialist)
+            app.router.add_post("/api/workgroup/delete_specialist", wg.handle_delete_specialist)
+            app.router.add_post("/api/workgroup/cancel_task", wg.handle_cancel_task)
+        app.router.add_post("/api/peer/send", self.peer.handle_peer_send)
+        # NOTE: /api/wg/peer/recv lives on the Web UI port (see ClusterHttpRoutes)
+        # because guest_client forwards RPC frames to the web port.
+
+        runner = web.AppRunner(app)
+        await runner.setup()
+        self._runner = runner
+
+        self.local_dir.mkdir(parents=True, exist_ok=True)
+        self._clear_artifacts()
+
+        port = self.config.api_port or 0
+        tcp_site = web.TCPSite(runner, "127.0.0.1", port)
+        await tcp_site.start()
+        sockets = getattr(getattr(tcp_site, "_server", None), "sockets", None) or []
+        actual_port = sockets[0].getsockname()[1] if sockets else port
+        self.port_file.write_text(f"{actual_port}\n", encoding="utf-8")
+        logger.info("HTTP API listening on 127.0.0.1:%d", actual_port)
+
+    async def stop(self) -> None:
+        if self._runner:
+            await self._runner.cleanup()
+            self._runner = None
+        self.port_file.unlink(missing_ok=True)
+
+
+# ── Gateway ──
 
 
 @dataclass
@@ -64,7 +153,8 @@ class Gateway:
     _cluster_rpc: ClusterRpc | None = field(default=None, repr=False)
     _cluster_routes: ClusterHttpRoutes | None = field(default=None, repr=False)
     _scheduler_routes: SchedulerHttpRoutes | None = field(default=None, repr=False)
-    _http_server: HttpApiServer | None = field(default=None, repr=False)
+    _internal_api: InternalApiServer | None = field(default=None, repr=False)
+    _mcp_server: McpHttpServer | None = field(default=None, repr=False)
     _web_server: WebHttpServer | None = field(default=None, repr=False)
 
     async def start(self) -> None:
@@ -131,18 +221,24 @@ class Gateway:
         # Scheduler + its HTTP route adapter.
         self._start_scheduler()
 
-        # HttpApiServer needs workgroup_mgr.routes + scheduler_routes — built
-        # now that both upstream deps exist (no Phase-2 setter needed).
-        self._http_server = HttpApiServer(
+        # Internal API + MCP HTTP — both depend on workgroup_mgr.routes +
+        # scheduler_routes existing.
+        self._internal_api = InternalApiServer(
             config=self.config,
-            config_dir=self.config_dir,
             local_dir=self.local_dir,
             peer=self._peer,
             workgroup_routes=(self._workgroup_mgr.routes if self._workgroup_mgr else None),
             scheduler_routes=self._scheduler_routes,
-            mcp_gateway_context=self,
         )
-        await self._http_server.start()
+        await self._internal_api.start()
+
+        self._mcp_server = McpHttpServer(
+            config=self.config,
+            config_dir=self.config_dir,
+            local_dir=self.local_dir,
+            gateway=self,
+        )
+        await self._mcp_server.start()
 
         # Cluster: host election. host_priority list determines who is host
         # vs guest at runtime, with failover when primary disappears.
@@ -189,9 +285,10 @@ class Gateway:
         # immediately, regardless of how long the rest of the shutdown takes.
         if self._web_server is not None:
             await self._web_server.stop()
-        if self._http_server is not None:
-            await self._http_server.stop()
-            await self._http_server.stop_mcp()
+        if self._internal_api is not None:
+            await self._internal_api.stop()
+        if self._mcp_server is not None:
+            await self._mcp_server.stop()
 
         # Stop host election — it tears down whichever of guest_client /
         # cluster_tunnel / guest_registry it currently owns.

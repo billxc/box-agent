@@ -21,10 +21,13 @@ by the middleware below and read by the adapter at handler-call time.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
+import socket
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from mcp.server.fastmcp import FastMCP
@@ -118,3 +121,114 @@ def create_mcp_app(
     app = Starlette(routes=routes, lifespan=lifespan)
     app.add_middleware(_ContextMiddleware)
     return app
+
+
+# ── MCP HTTP host (uvicorn lifecycle + port-file management) ──
+
+
+class McpHttpServer:
+    """Run the MCP streamable-http server (uvicorn) and publish its port.
+
+    Held by Gateway. The port is written to ``{local_dir}/mcp-port.txt``
+    so each backend's per-turn launch (claude_process / codex_process)
+    can discover where to point its MCP client.
+    """
+
+    def __init__(
+        self,
+        *,
+        config: "AppConfig",
+        config_dir: Path,
+        local_dir: Path,
+        gateway: "Gateway",
+    ) -> None:
+        self.config = config
+        self.config_dir = config_dir
+        self.local_dir = local_dir
+        self._gateway = gateway
+        self._server = None
+        self._task: asyncio.Task | None = None
+
+    @property
+    def port_file(self) -> Path:
+        return self.local_dir / "mcp-port.txt"
+
+    def _pick_port(self) -> int:
+        """Pick a port. Preference order: configured > previous > 9390+."""
+        def _free(p: int) -> bool:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                try:
+                    s.bind(("127.0.0.1", p))
+                    return True
+                except OSError:
+                    return False
+
+        configured = getattr(self.config, "mcp_port", 0) or 0
+        if configured:
+            return configured
+
+        candidates: list[int] = []
+        if self.port_file.exists():
+            try:
+                prev = int(self.port_file.read_text(encoding="utf-8").strip())
+                if prev > 0:
+                    candidates.append(prev)
+            except Exception:
+                pass
+        for p in range(9390, 9500):
+            if p not in candidates:
+                candidates.append(p)
+
+        for p in candidates:
+            if _free(p):
+                return p
+        return 0
+
+    async def start(self) -> None:
+        try:
+            import uvicorn
+
+            starlette_app = create_mcp_app(
+                config_dir=str(self.config_dir),
+                local_dir=str(self.local_dir),
+                node_id=self.config.node_id,
+                gateway=self._gateway,
+            )
+            port = self._pick_port()
+            uvi_config = uvicorn.Config(
+                starlette_app,
+                host="127.0.0.1",
+                port=port,
+                log_level="warning",
+            )
+            server = uvicorn.Server(uvi_config)
+            self._server = server
+            self._task = asyncio.create_task(server.serve())
+
+            while not server.started:
+                await asyncio.sleep(0.05)
+
+            actual_port = server.servers[0].sockets[0].getsockname()[1]
+            self.port_file.write_text(f"{actual_port}\n", encoding="utf-8")
+            logger.info("MCP HTTP server listening on 127.0.0.1:%d", actual_port)
+        except Exception as e:
+            logger.error("Failed to start MCP HTTP server: %s", e)
+            self._server = None
+            self._task = None
+
+    async def stop(self) -> None:
+        if self._server:
+            self._server.should_exit = True
+        if self._task:
+            try:
+                await self._task
+            except Exception:
+                pass
+            self._task = None
+        self._server = None
+        self.port_file.unlink(missing_ok=True)
+
+
+if TYPE_CHECKING:
+    from boxagent.config import AppConfig

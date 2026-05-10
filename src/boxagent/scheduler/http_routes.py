@@ -1,7 +1,7 @@
 """Scheduler HTTP routes — POST /api/schedule/run.
 
 Composition class. Held by the scheduler subsystem (not Gateway). Built
-right after the ``Scheduler`` instance, then handed to ``HttpApiServer``
+right after the ``Scheduler`` instance, then handed to ``InternalApiServer``
 for route registration.
 
 Single-phase DI: needs config (for ``node_id``), config_dir (for
