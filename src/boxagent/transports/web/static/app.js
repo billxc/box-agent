@@ -47,6 +47,140 @@
 
   function botKey(machine, bot) { return `${machine}|${bot}`; }
   function curKey() { return botKey(state.botMachine, state.bot); }
+  function recentKey(machine, bot, chatId) { return `${machine}|${bot}|${chatId}`; }
+
+  // ── Recents (cross-bot, browser-local) ──
+  // Stored as an array in localStorage["ba.recents"], capped at RECENTS_MAX,
+  // newest first. Each entry: {machine, bot, chat_id, title, preview, ts,
+  // platform, display_name}. Click → switch bot+machine then open chat.
+  const RECENTS_MAX = 25;
+
+  function loadRecents() {
+    try {
+      const raw = JSON.parse(localStorage.getItem("ba.recents") || "[]");
+      return Array.isArray(raw) ? raw : [];
+    } catch { return []; }
+  }
+  function saveRecents(arr) {
+    localStorage.setItem("ba.recents", JSON.stringify(arr.slice(0, RECENTS_MAX)));
+  }
+  // Bump a chat to the top of recents. Called on switchChat + on every
+  // incoming/outgoing message so the most-active chat sits at the top.
+  function touchRecent(patch) {
+    if (!patch.machine || !patch.bot || !patch.chat_id) return;
+    const key = recentKey(patch.machine, patch.bot, patch.chat_id);
+    const all = loadRecents();
+    const idx = all.findIndex(r => recentKey(r.machine, r.bot, r.chat_id) === key);
+    const prev = idx >= 0 ? all[idx] : {};
+    if (idx >= 0) all.splice(idx, 1);
+    const merged = {
+      machine: patch.machine,
+      bot: patch.bot,
+      chat_id: patch.chat_id,
+      title: patch.title || prev.title || patch.chat_id,
+      preview: patch.preview != null ? patch.preview : (prev.preview || ""),
+      platform: patch.platform || prev.platform || "unknown",
+      display_name: patch.display_name || prev.display_name || patch.bot,
+      ts: patch.ts || Math.floor(Date.now() / 1000),
+    };
+    all.unshift(merged);
+    saveRecents(all);
+    renderRecents();
+  }
+  function removeRecent(machine, bot, chatId) {
+    const key = recentKey(machine, bot, chatId);
+    const all = loadRecents().filter(r => recentKey(r.machine, r.bot, r.chat_id) !== key);
+    saveRecents(all);
+    renderRecents();
+  }
+  function clearRecents() {
+    if (!confirm("Clear all recent chats from this browser?")) return;
+    saveRecents([]);
+    renderRecents();
+  }
+
+  function renderRecents() {
+    const ul = $("recents-list");
+    if (!ul) return;
+    ul.innerHTML = "";
+    const all = loadRecents();
+    if (all.length === 0) {
+      const li = document.createElement("li");
+      li.style.color = "var(--muted)";
+      li.style.cursor = "default";
+      li.textContent = "No recent chats";
+      ul.appendChild(li);
+      return;
+    }
+    const onlineMachines = new Set(
+      (state.machines || []).filter(m => m.online).map(m => m.machine_id),
+    );
+    for (const r of all) {
+      const li = document.createElement("li");
+      const isActive = state.bot === r.bot
+        && state.botMachine === r.machine
+        && state.chatId === r.chat_id;
+      if (isActive) li.classList.add("active");
+      if (state.machines.length && !onlineMachines.has(r.machine)) li.classList.add("offline");
+
+      const plat = document.createElement("span");
+      plat.className = "plat";
+      plat.title = r.platform;
+      plat.textContent = platformIcon(r.platform);
+
+      const body = document.createElement("div");
+      body.className = "rec-body";
+      const title = document.createElement("div");
+      title.className = "rec-title";
+      title.textContent = r.title || r.chat_id;
+      const meta = document.createElement("div");
+      meta.className = "rec-meta";
+      meta.textContent = `${r.display_name || r.bot} @ ${r.machine}${r.preview ? " · " + r.preview : ""}`;
+      body.appendChild(title);
+      body.appendChild(meta);
+
+      const time = document.createElement("span");
+      time.className = "rec-time";
+      time.textContent = r.ts ? formatRelative(r.ts) : "";
+
+      const del = document.createElement("button");
+      del.className = "rec-del";
+      del.textContent = "×";
+      del.title = "Remove from recents";
+      del.onclick = (e) => {
+        e.stopPropagation();
+        removeRecent(r.machine, r.bot, r.chat_id);
+      };
+
+      li.appendChild(plat);
+      li.appendChild(body);
+      li.appendChild(time);
+      li.appendChild(del);
+      li.onclick = () => openRecent(r);
+      ul.appendChild(li);
+    }
+  }
+
+  // Open a recent: switch bot+machine if needed, then open the chat.
+  // Falls back to a friendly alert if the target machine is offline.
+  async function openRecent(r) {
+    const m = state.machines.find(x => x.machine_id === r.machine);
+    if (m && !m.online) {
+      alert(`${r.machine} is offline`);
+      return;
+    }
+    if (state.bot !== r.bot || state.botMachine !== r.machine) {
+      // selectBot will load sessions and open last-opened chat; we override
+      // by setting ba.last so it lands on the recent chat instead.
+      localStorage.setItem("ba.last." + botKey(r.machine, r.bot), r.chat_id);
+      await selectBot(r.bot, r.machine);
+    } else if (state.chatId !== r.chat_id) {
+      await switchChat(r.chat_id);
+      closeSidebar();
+    } else {
+      closeSidebar();
+    }
+  }
 
   function loadSessions(machine, bot) {
     try {
@@ -302,6 +436,21 @@
     saveSessions(state.botMachine, state.bot, sessions);
     refreshSessionList();
     chatTitle.textContent = cur.title;
+    // Bump global recents too — keeps the cross-bot Recent panel fresh.
+    const botInfo = (state.machines || [])
+      .find(m => m.machine_id === state.botMachine)?.bots
+      ?.find(b => b.name === state.bot);
+    touchRecent({
+      machine: state.botMachine,
+      bot: state.bot,
+      chat_id: state.chatId,
+      title: cur.title,
+      preview: cur.preview,
+      platform: state.chatId.startsWith("web-") ? "web"
+        : state.chatId.startsWith("workgroup:") ? "workgroup"
+        : "other",
+      display_name: botInfo?.display_name || state.bot,
+    });
   }
 
   // ── Chat lifecycle ──
@@ -314,6 +463,26 @@
     const meta = (state.sessions[curKey()] || {})[chatId] || {};
     chatTitle.textContent = meta.title || chatId;
     localStorage.setItem("ba.last." + curKey(), chatId);
+
+    // Record this open in the cross-bot recents so the next visit can find
+    // it from the top-level Recent panel.
+    const botInfo = (state.machines || [])
+      .find(m => m.machine_id === state.botMachine)?.bots
+      ?.find(b => b.name === state.bot);
+    const serverList = state.serverSessions[curKey()] || [];
+    const serverMeta = serverList.find(s => s.chat_id === chatId);
+    touchRecent({
+      machine: state.botMachine,
+      bot: state.bot,
+      chat_id: chatId,
+      title: meta.title || (serverMeta ? defaultTitle(serverMeta) : chatId),
+      preview: serverMeta?.preview || meta.preview || "",
+      platform: serverMeta?.platform
+        || (chatId.startsWith("web-") ? "web"
+            : chatId.startsWith("workgroup:") ? "workgroup" : "other"),
+      display_name: botInfo?.display_name || state.bot,
+      ts: serverMeta?.last_ts || Math.floor(Date.now() / 1000),
+    });
 
     // Cover the chat panel with a mask so the fetch + swap + scroll-to-bottom
     // all happen invisibly. Old content stays in the DOM behind the mask.
@@ -539,6 +708,7 @@
     const { machines } = await r.json();
     state.machines = machines;
     renderMachines();
+    renderRecents();
     // Auto-pick a default bot on first load
     if (!state.bot) {
       const lastBot = localStorage.getItem("ba.lastBot");
@@ -749,6 +919,18 @@
   // ── UI events ──
   $("refresh-machines").onclick = () => loadMachines().catch(() => {});
   $("restart-all").onclick = () => restartCluster();
+  $("recents-clear").onclick = () => clearRecents();
+  const recentsSection = $("recents-section");
+  const recentsToggle = $("recents-toggle");
+  if (localStorage.getItem("ba.recentsCollapsed") === "1") {
+    recentsSection.classList.add("collapsed");
+    recentsToggle.textContent = "▸";
+  }
+  recentsToggle.onclick = () => {
+    const collapsed = recentsSection.classList.toggle("collapsed");
+    recentsToggle.textContent = collapsed ? "▸" : "▾";
+    localStorage.setItem("ba.recentsCollapsed", collapsed ? "1" : "0");
+  };
   const machinesSection = $("machines-section");
   const machinesToggle = $("machines-toggle");
   if (localStorage.getItem("ba.machinesCollapsed") === "1") {
@@ -883,6 +1065,7 @@
   }
 
   // ── Boot ──
+  renderRecents();  // populate from localStorage before machines come back
   loadMachines().then(startMachinePoll).catch((e) => {
     console.error(e);
     setConn("offline");
