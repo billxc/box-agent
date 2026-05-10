@@ -16,6 +16,34 @@
   const connDot = $("conn-state");
   const connLabel = $("conn-label");
   const sidebar = $("sidebar");
+  const recapBanner = $("recap-banner");
+
+  // Per-session dismissed-recap memory (browser-local). When user closes the
+  // banner we don't show it again for that chat unless the recap text changes.
+  function recapDismissKey(chatId) { return "ba.recap-dismissed." + curKey() + "|" + chatId; }
+  function showRecapBanner(recap, chatId) {
+    if (!recapBanner) return;
+    const textEl = recapBanner.querySelector(".recap-text");
+    if (!recap) {
+      recapBanner.classList.add("hidden");
+      textEl.textContent = "";
+      return;
+    }
+    const dismissed = localStorage.getItem(recapDismissKey(chatId));
+    if (dismissed === recap) {
+      recapBanner.classList.add("hidden");
+      return;
+    }
+    textEl.textContent = recap;
+    recapBanner.classList.remove("hidden");
+    recapBanner.classList.add("collapsed");
+    textEl.onclick = () => recapBanner.classList.toggle("collapsed");
+    const closeBtn = recapBanner.querySelector(".recap-close");
+    closeBtn.onclick = () => {
+      localStorage.setItem(recapDismissKey(chatId), recap);
+      recapBanner.classList.add("hidden");
+    };
+  }
 
   const state = {
     machines: [],         // [{machine_id, online, role, self, bots, last_seen}]
@@ -79,6 +107,7 @@
       chat_id: patch.chat_id,
       title: patch.title || prev.title || patch.chat_id,
       preview: patch.preview != null ? patch.preview : (prev.preview || ""),
+      recap: patch.recap != null ? patch.recap : (prev.recap || ""),
       platform: patch.platform || prev.platform || "unknown",
       display_name: patch.display_name || prev.display_name || patch.bot,
       ts: patch.ts || Math.floor(Date.now() / 1000),
@@ -129,22 +158,22 @@
       plat.textContent = platformIcon(r.platform);
 
       const body = document.createElement("div");
-      body.className = "rec-body";
+      body.className = "recent-body";
       const title = document.createElement("div");
-      title.className = "rec-title";
+      title.className = "recent-title";
       title.textContent = r.title || r.chat_id;
       const meta = document.createElement("div");
-      meta.className = "rec-meta";
+      meta.className = "recent-meta";
       meta.textContent = `${r.display_name || r.bot} @ ${r.machine}${r.preview ? " · " + r.preview : ""}`;
       body.appendChild(title);
       body.appendChild(meta);
 
       const time = document.createElement("span");
-      time.className = "rec-time";
+      time.className = "recent-time";
       time.textContent = r.ts ? formatRelative(r.ts) : "";
 
       const del = document.createElement("button");
-      del.className = "rec-del";
+      del.className = "recent-del";
       del.textContent = "×";
       del.title = "Remove from recents";
       del.onclick = (e) => {
@@ -312,6 +341,7 @@
         title: backendTitle || (local[s.chat_id] && local[s.chat_id].title) || defaultTitle(s),
         custom_title: s.custom_title || "",
         summary: s.summary || "",
+        recap: s.recap || "",
         session_id: s.session_id || "",
         preview: s.preview || "",
         ts: (s.last_ts ? s.last_ts * 1000 : 0) || (local[s.chat_id] && local[s.chat_id].ts) || 0,
@@ -356,24 +386,31 @@
       const li = document.createElement("li");
       if (meta.chat_id === state.chatId) li.classList.add("active");
       const title = document.createElement("div");
-      title.className = "sess-title";
+      title.className = "session-title";
       const mainBadge = meta.is_main ? `<span class="main-badge" title="Main session">★</span> ` : "";
       title.innerHTML = `${mainBadge}<span class="plat" title="${meta.platform}">${platformIcon(meta.platform)}</span> ${escapeHtml(meta.title)}`;
       const preview = document.createElement("div");
-      preview.className = "sess-preview";
+      preview.className = "session-preview";
       preview.textContent = meta.preview || "(no messages yet)";
       const actions = document.createElement("div");
-      actions.className = "sess-actions";
+      actions.className = "session-actions";
       if (!meta.is_main) {
         const setMain = document.createElement("a");
         setMain.href = "#";
-        setMain.className = "sess-action";
+        setMain.className = "session-action";
         setMain.textContent = "set as main";
         setMain.title = "Heartbeat ticks and incoming peer messages will route into this session";
         setMain.onclick = (e) => { e.stopPropagation(); e.preventDefault(); setMainSession(meta.chat_id); };
         actions.appendChild(setMain);
       }
       li.appendChild(title); li.appendChild(preview);
+      if (meta.recap) {
+        const recap = document.createElement("div");
+        recap.className = "session-recap";
+        recap.textContent = meta.recap;
+        recap.title = meta.recap;
+        li.appendChild(recap);
+      }
       if (actions.children.length) li.appendChild(actions);
       li.onclick = () => { switchChat(meta.chat_id); closeSidebar(); };
       sessionList.appendChild(li);
@@ -483,12 +520,15 @@
       chat_id: chatId,
       title: resolvedTitle,
       preview: serverMeta?.preview || meta.preview || "",
+      recap: serverMeta?.recap || "",
       platform: serverMeta?.platform
         || (chatId.startsWith("web-") ? "web"
             : chatId.startsWith("workgroup:") ? "workgroup" : "other"),
       display_name: botInfo?.display_name || state.bot,
       ts: serverMeta?.last_ts || Math.floor(Date.now() / 1000),
     });
+
+    showRecapBanner(serverMeta?.recap || "", chatId);
 
     // Cover the chat panel with a mask so the fetch + swap + scroll-to-bottom
     // all happen invisibly. Old content stays in the DOM behind the mask.
