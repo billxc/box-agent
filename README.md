@@ -128,6 +128,9 @@ bots:
     model: opus                  # backend-specific model name, passed through as-is
     agent: ""                    # used by claude-cli; ignored by codex-cli
     workspace: ~/projects
+    display_name: "My Bot"       # shown in web UI sidebar; defaults to bot name
+    yolo: true                   # bypass tool-approval prompts (security: full file/shell access)
+    web_enabled: true            # default true; set false to hide from web UI
     extra_skill_dirs:
       - ~/code/my-skills
     channels:
@@ -139,6 +142,22 @@ bots:
 ```
 
 Find your Telegram user ID by messaging [@userinfobot](https://t.me/userinfobot).
+
+### Bot config field reference
+
+| Field | Default | Notes |
+|---|---|---|
+| `ai_backend` | `claude-cli` | One of `claude-cli` / `codex-cli` / `agent-sdk-claude` / `agent-sdk-copilot` |
+| `model` | `""` | Backend-specific (`opus`, `sonnet`, `gpt-5.4`, etc.); `""` = backend default |
+| `agent` | `""` | Claude `--agent` flag; ignored by other backends |
+| `workspace` | `""` | Working directory for the backend process |
+| `display_name` | bot name | Web UI sidebar label |
+| `yolo` | `false` | **Security warning**: bypasses tool-approval prompts. For SDK backends, non-yolo currently denies all tool calls. |
+| `web_enabled` | `true` | Set `false` to opt this bot out of the web UI |
+| `passthrough` | `false` | Raw bot mode — skip BoxAgent system-prompt injection + MCP wiring (see `docs/archive/raw-bot.md`) |
+| `enabled_on_nodes` | `""` (any) | Comma-separated `node_id` list — only start bot on matching nodes (Node Filtering below) |
+| `extra_skill_dirs` | `[]` | Extra skill source dirs to symlink into the workspace |
+| `display.tool_calls` | `summary` | `silent` / `summary` / `detailed` — how tool calls render in chat |
 
 ### Centralizing Bot Tokens (optional)
 
@@ -207,13 +226,36 @@ Primary channel — best streaming, media handling, and mobile experience. Confi
 | `/model` | Show or switch model (e.g. `/model sonnet`) |
 | `/cancel` | Cancel the current running task |
 | `/resume` | List and resume a previous session |
-| `/sessions` | Browse all sessions with search and filters (e.g. `/sessions chromium 7d backend:codex-cli p2`) |
+| `/sessions` | Browse all sessions with search and filters (see grammar below) |
 | `/exec` | Execute a shell command (e.g. `/exec ls -la`, `/exec -t 60 make build`) |
 | `/verbose` | Cycle tool call display (silent/summary/detailed) |
 | `/sync_skills` | Re-sync linked skill directories |
+| `/cd` | Show or switch this bot's workspace (`/cd /path/to/repo`) |
+| `/backend` | Show or switch AI backend at runtime (e.g. `/backend codex-cli`) |
+| `/trust_workspace` | Mark current workspace trusted (Claude `~/.claude.json`) |
+| `/schedule` | List or manage scheduled tasks for this bot |
 | `/version` | Show BoxAgent version |
 
 Any other text message is sent to the configured backend as a prompt. Photos and documents are downloaded to temporary files and included as local file paths. Prefix with `@model` (e.g. `@opus explain this`) to use a specific model for one message.
+
+#### `/sessions` filter grammar
+
+```
+/sessions [keyword...] [Nd] [pN] [backend:X] [bot:X] [cwd:X] [grep:X] [--all]
+```
+
+| Token | Meaning |
+|---|---|
+| `keyword` | free-text match (case-insensitive, multiple words = AND) across summary/firstPrompt/preview/project/backend |
+| `Nd` | only sessions modified within last N days (e.g. `7d`, `30d`) |
+| `pN` | page N (10 results per page) |
+| `backend:claude-cli` / `backend:codex-cli` | filter by ai_backend |
+| `bot:<name>` | filter by bot name |
+| `cwd:<substring>` | filter by workspace path substring |
+| `grep:<text>` | full-text search over JSONL transcript content |
+| `--all` | bypass the default workspace filter (show across all workspaces) |
+
+Examples: `/sessions chromium 7d backend:codex-cli p2`, `/sessions grep:pineapple`, `/sessions --all bot:claw-mac`
 
 ### Web UI
 
@@ -244,7 +286,21 @@ Open `ios/BoxAgent/BoxAgent.xcodeproj` in Xcode, copy `Local.xcconfig.example` �
 
 ### MCP
 
-The agents themselves get a built-in MCP server exposing BoxAgent tools (send media, manage schedules, send messages between agents, browse sessions). This is what lets, e.g., a Claude session running inside BoxAgent send you a photo back to the same Telegram chat.
+The agents themselves get a built-in MCP server exposing BoxAgent tools. Tools are split into 4 endpoints (`/mcp/base`, `/mcp/admin`, `/mcp/telegram`, `/mcp/peer`) and attached per-bot based on capabilities (workgroup admin, telegram-enabled, peer-channel-enabled). Definitions in `src/boxagent/tools/builtin/`.
+
+#### Base (`/mcp/base`) — every bot
+
+| Tool | Description |
+|------|-------------|
+| `sessions_list` | Browse unified sessions with search and filters |
+| `schedule_list` | List scheduled tasks for this bot |
+| `schedule_show` | Show a scheduled task's full definition |
+| `schedule_add` | Create a new scheduled task (cron + prompt) |
+| `schedule_run` | Trigger a scheduled task immediately |
+| `schedule_logs` | Show recent run logs for a scheduled task |
+| `schedule_run_detail` | Show detailed log of a single past run |
+
+#### Telegram (`/mcp/telegram`) — bots with `telegram_token` set
 
 | Tool | Description |
 |------|-------------|
@@ -253,9 +309,25 @@ The agents themselves get a built-in MCP server exposing BoxAgent tools (send me
 | `send_video` | Send a video (mp4, etc.) |
 | `send_audio` | Send an audio file (mp3, ogg, etc.) |
 | `send_animation` | Send a GIF animation |
-| `sessions_list` | Browse unified sessions with search and filters |
-| `send_to_agent` | Workgroup admin → specialist task delegation |
-| `send_to_peer` | Workgroup admin → another admin (cross-node OK) |
+
+#### Workgroup admin (`/mcp/admin`) — only workgroup admins
+
+| Tool | Description |
+|------|-------------|
+| `send_to_agent` | Dispatch async task to a specialist (returns task_id) |
+| `list_specialists` | List all specialists in this workgroup |
+| `list_templates` | List available specialist templates (builtin + workgroup) |
+| `get_specialist_status` | Specialist's running state + recent transcript |
+| `create_specialist` | Spawn a new specialist at runtime (with optional template) |
+| `delete_specialist` | Tear down a specialist + its workspace |
+| `reset_specialist` | Clear a specialist's session for a fresh start |
+| `cancel_task` | Cancel a running specialist task |
+
+#### Peer (`/mcp/peer`) — workgroup admins (cluster RPC under the hood)
+
+| Tool | Description |
+|------|-------------|
+| `send_to_peer` | Send a message to another workgroup admin (same machine or remote via cluster) |
 
 These tools are injected automatically when a chat-backed turn is running. Isolate schedules do not currently receive Telegram media MCP injection.
 
@@ -276,20 +348,30 @@ Add to the shared `config.yaml`:
 
 ```yaml
 cluster:
-  host: mbp                         # node_id of the host machine
+  host: mbp                         # node_id of the primary host machine
   tunnel_name: boxagent-cluster     # devtunnel name to manage
   token: "<shared-cluster-secret>"
+
+  # Optional: failover host election
+  host_priority: [mbp, devbox-xl, macmini]   # tried in order; first online wins
+
+  # Optional: separate role tokens (otherwise both fall back to cluster.token)
+  guest_token: "..."                # what guests send in hello
+  host_token:  "..."                # what hosts accept
+
+  # Optional: HTTP cross-node trust header
+  web_trust_header: "X-Cluster-Trust: <secret>"  # forwarded by guest_client to host
 ```
 
-Each machine reads the same file; whichever has `node_id == cluster.host` becomes host, the rest auto-dial. The host's `/api/bots` then federates every connected guest's bots, and selecting a remote bot in the web UI proxies HTTP/SSE through the WebSocket transparently.
+Each machine reads the same file; whichever has `node_id` matching the highest-priority entry in `host_priority` (or `cluster.host` if `host_priority` not set) becomes host, the rest auto-dial. If the host disappears, the next priority on the list takes over (`HostElection` in `cluster/host_election.py`). The host's `/api/bots` then federates every connected guest's bots, and selecting a remote bot in the web UI proxies HTTP/SSE through the WebSocket transparently.
 
 **Three layers of auth**:
 
 1. Devtunnel JWT — only the same Microsoft account can mint a connect token (guests use the locally-logged-in `devtunnel` CLI on demand).
-2. `cluster.token` — required in the guest's hello frame; gates membership.
+2. `cluster.token` (or separate `guest_token`/`host_token`) — required in the guest's hello frame; gates membership.
 3. `web_token` — gates browser/RPC HTTP calls.
 
-Guests do not need their own public exposure (NAT-friendly outbound WS).
+Guests do not need their own public exposure (NAT-friendly outbound WS). The host devtunnel process is supervised — if it dies, BoxAgent respawns it.
 
 ## Workgroup (multi-agent)
 
@@ -304,20 +386,37 @@ workgroups:
     model: opus
     admin_workspace: ~/projects/team
     display_name: "My Team"
-    channels:
-      telegram:
-        bot_id: "123456789"
-        allowed_users: [YOUR_ID]
-    specialists:
+    yolo: true
+    heartbeat_interval_seconds: 900   # admin self-driver: see below
+    display_heartbeat: false           # show heartbeat events in web UI
+    allowed_users: [YOUR_ID]
+    specialists:                       # optional — can also create at runtime
       reviewer:
         ai_backend: claude-cli
         workspace: ~/projects/team/review
+        template: reviewer             # optional — see Templates below
       researcher:
         ai_backend: codex-cli
         workspace: ~/projects/team/research
 ```
 
-Cross-admin messaging (admin-to-admin, possibly across cluster nodes) uses `send_to_peer`. See `docs/workgroup-design.md` for full details.
+### Static vs dynamic specialists
+
+Specialists can be defined statically in `config.yaml` (above) **or** created at runtime by the admin via the `create_specialist` MCP tool. Dynamic specialists are persisted to `~/.boxagent/local/workgroup_specialists.yaml` and reload on next BoxAgent start.
+
+Use `delete_specialist` / `reset_specialist` MCP tools to manage them. Use `list_templates` to see available templates.
+
+### Heartbeat
+
+If `heartbeat_interval_seconds > 0`, the admin gets periodically nudged with a "what's the state of the world" prompt every N seconds — useful for proactive task orchestration (admin checks running tasks, peer messages, decides next steps without user input). Customize the heartbeat prompt by writing `HEARTBEAT.md` in the admin workspace.
+
+Set `display_heartbeat: true` to see heartbeat events in the web UI; default is silent.
+
+### Templates
+
+`workgroup/templates/` holds reusable specialist roles (admin / specialist starter workspaces, with skills + CLAUDE.md). Refer to a template by name in `SpecialistConfig.template`. Custom templates: drop a directory into `{workgroup_dir}/templates/`.
+
+Cross-admin messaging (admin-to-admin, possibly across cluster nodes) uses `send_to_peer`.
 
 ## Scheduled Tasks
 
