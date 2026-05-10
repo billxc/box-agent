@@ -7,14 +7,16 @@ from pathlib import Path
 import pytest
 
 from boxagent.sessions.browser import (
-    _truncate,
-    _relative_time,
-    _filter_sessions,
-    _matches_all_words,
-    _find_by_id_prefix,
-    _grep_sessions,
     format_sessions_list,
     parse_session_tokens,
+)
+from boxagent.sessions.browser.filters import (
+    _filter_sessions,
+    _find_by_id_prefix,
+    _grep_sessions,
+    _matches_all_words,
+    _relative_time,
+    _truncate,
 )
 
 

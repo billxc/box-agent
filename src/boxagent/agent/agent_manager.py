@@ -20,14 +20,13 @@ from boxagent.agent.claude_process import ClaudeProcess
 from boxagent.agent.protocol import AgentBackend, BACKEND_KINDS
 from boxagent.agent.workspace import ensure_git_repo, sync_skills
 from boxagent.config import AppConfig, BotConfig
-from boxagent.sessions import SessionPool, Storage
-from boxagent.sessions.raw_pool import RawSessionPool
+from boxagent.router import Router
+from boxagent.sessions import RawSessionPool, SessionPool, Storage
 from boxagent.transports.base import Channel
 from boxagent.transports.web import WebChannel
 from boxagent.watchdog import Watchdog
 
 if TYPE_CHECKING:
-    from boxagent.router import Router
     from boxagent.scheduler import Scheduler
 
 logger = logging.getLogger(__name__)
@@ -209,8 +208,7 @@ class AgentManager:
             primary_channel = channel
             self.channels[name] = channel
 
-        from boxagent import gateway as _gw_pkg
-        router = _gw_pkg.Router(
+        router = Router(
             backend=backend,
             channel=primary_channel,
             allowed_users=bot_cfg.allowed_users,
@@ -278,7 +276,7 @@ class AgentManager:
 
         wd_chat_id = tg_chat_id
 
-        wd = _gw_pkg.Watchdog(
+        wd = Watchdog(
             backend=backend,
             channel=primary_channel,
             chat_id=wd_chat_id,
@@ -305,7 +303,6 @@ class AgentManager:
         return create_backend(cfg, session_id)
 
     async def start_raw_bot(self) -> None:
-        from boxagent import gateway as _gw_pkg
         name = "raw"
         bot_cfg = BotConfig(
             name=name,
@@ -336,7 +333,7 @@ class AgentManager:
         )
         self.backends[name] = stub
 
-        router = _gw_pkg.Router(
+        router = Router(
             backend=stub,
             channel=None,
             allowed_users=[],

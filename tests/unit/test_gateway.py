@@ -3,8 +3,7 @@
 import asyncio
 import os
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 def _http_server_from(gw):
@@ -36,7 +35,7 @@ def _agent_mgr_from(gw):
 
 class TestGateway:
     def test_supports_persistent_session(self):
-        from boxagent.agent import _supports_persistent_session
+        from boxagent.agent.agent_manager import _supports_persistent_session
 
         assert _supports_persistent_session("claude-cli") is True
         assert _supports_persistent_session("codex-cli") is True
@@ -174,10 +173,10 @@ class TestGateway:
         bot_cfg.ai_backend = "claude-cli"
         bot_cfg.enabled_on_nodes = ""
 
-        with patch("boxagent.gateway.ClaudeProcess") as MockCLI, \
+        with patch("boxagent.agent.backend_factory.ClaudeProcess") as MockCLI, \
              patch("boxagent.transports.telegram.TelegramChannel") as MockChan, \
-             patch("boxagent.gateway.Router"), \
-             patch("boxagent.gateway.Watchdog") as MockWD:
+             patch("boxagent.agent.agent_manager.Router"), \
+             patch("boxagent.agent.agent_manager.Watchdog") as MockWD:
             mock_cli = MagicMock()
             MockCLI.return_value = mock_cli
             mock_channel = AsyncMock()
@@ -228,7 +227,7 @@ class TestGateway:
         bot_cfg.telegram_token = "token"
         bot_cfg.extra_skill_dirs = []
 
-        with patch("boxagent.gateway.ClaudeProcess") as MockCLI:
+        with patch("boxagent.agent.backend_factory.ClaudeProcess") as MockCLI:
             new_backend = MagicMock()
             MockCLI.return_value = new_backend
             mgr = _agent_mgr_from(gw)
@@ -263,8 +262,8 @@ class TestGateway:
 
         with patch("boxagent.agent.codex_process.CodexProcess") as MockCodex, \
              patch("boxagent.transports.telegram.TelegramChannel") as MockChan, \
-             patch("boxagent.gateway.Router"), \
-             patch("boxagent.gateway.Watchdog") as MockWD:
+             patch("boxagent.agent.agent_manager.Router"), \
+             patch("boxagent.agent.agent_manager.Watchdog") as MockWD:
             mock_cli = MagicMock()
             MockCodex.return_value = mock_cli
             MockChan.return_value = AsyncMock()
