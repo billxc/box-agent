@@ -244,7 +244,7 @@ class _SchedulerCallback:
     _error: str = ""
     _tool_calls: list[str] = field(default_factory=list)
 
-    async def on_stream(self, text: str) -> None:
+    async def on_stream(self, text: str, **_kwargs: object) -> None:
         self._text += text
 
     async def on_tool_call(
