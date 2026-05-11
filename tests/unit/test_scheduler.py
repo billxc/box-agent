@@ -930,7 +930,7 @@ async def test_isolate_prefers_telegram_bots_mapping_over_bot_name(tmp_path):
         mode="isolate", bot="my_test_bot", ai_backend="claude-cli", model="sonnet",
     )
     sched.default_workspace = "/ba/workspace"
-    with patch("boxagent.agent.claude_process.ClaudeProcess", FakeClaude), \
+    with patch("boxagent.agent.sdk_claude_process.AgentSDKClaude", FakeClaude), \
          patch.object(sched, '_notify_via_token', AsyncMock()) as mock_notify:
         result = await sched.execute_once(task)
 
@@ -1045,7 +1045,7 @@ async def test_isolate_run_logs_output_to_local_dir(tmp_path):
         id="echo-canary", cron="* * * * *", prompt="hello",
         mode="isolate", ai_backend="claude-cli", model="sonnet"
     )
-    with patch("boxagent.agent.claude_process.ClaudeProcess", FakeClaude):
+    with patch("boxagent.agent.sdk_claude_process.AgentSDKClaude", FakeClaude):
         result = await sched.execute_once(task)
 
     assert result == "logged output"
@@ -1075,7 +1075,7 @@ async def test_spawn_isolate_passes_yolo_to_claude(tmp_path):
         id="yolo-test", cron="* * * * *", prompt="hello",
         mode="isolate", ai_backend="claude-cli", model="sonnet", yolo=True,
     )
-    with patch("boxagent.agent.claude_process.ClaudeProcess", FakeClaude):
+    with patch("boxagent.agent.sdk_claude_process.AgentSDKClaude", FakeClaude):
         await sched.execute_once(task)
 
     assert captured["yolo"] is True

@@ -463,10 +463,10 @@ class Scheduler:
             yolo=task.yolo,
         )
 
-        if backend == "claude-cli":
-            from boxagent.agent.claude_process import ClaudeProcess
+        if backend in ("claude-cli", "agent-sdk-claude"):
+            from boxagent.agent.sdk_claude_process import AgentSDKClaude
 
-            backend = ClaudeProcess(
+            backend = AgentSDKClaude(
                 workspace=workspace,
                 model=task.model,
                 yolo=task.yolo,
@@ -475,14 +475,6 @@ class Scheduler:
             from boxagent.agent.codex_process import CodexProcess
 
             backend = CodexProcess(
-                workspace=workspace,
-                model=task.model,
-                yolo=task.yolo,
-            )
-        elif backend == "agent-sdk-claude":
-            from boxagent.agent.sdk_claude_process import AgentSDKClaude
-
-            backend = AgentSDKClaude(
                 workspace=workspace,
                 model=task.model,
                 yolo=task.yolo,
