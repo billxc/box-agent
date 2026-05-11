@@ -166,12 +166,21 @@ final class ChatViewModel {
                 text: "", isStreaming: true, timestamp: ts
             ))
         case .streamDelta:
-            if let idx = messages.indices.last, messages[idx].isStreaming {
+            // Locate by message_id — relying on "last streaming message" breaks
+            // once a toolCall (also isStreaming=true) lands between deltas.
+            let targetId = event.messageId
+            if let id = targetId, let idx = messages.lastIndex(where: { $0.id == id && $0.role == .assistant }) {
+                messages[idx].text = event.text ?? (messages[idx].text + (event.delta ?? ""))
+            } else if let idx = messages.lastIndex(where: { $0.role == .assistant && $0.isStreaming }) {
                 messages[idx].text = event.text ?? (messages[idx].text + (event.delta ?? ""))
             }
         case .streamEnd:
             isTyping = false
-            if let idx = messages.indices.last, messages[idx].isStreaming {
+            let targetId = event.messageId
+            if let id = targetId, let idx = messages.lastIndex(where: { $0.id == id && $0.role == .assistant }) {
+                messages[idx].text = event.text ?? messages[idx].text
+                messages[idx].isStreaming = false
+            } else if let idx = messages.lastIndex(where: { $0.role == .assistant && $0.isStreaming }) {
                 messages[idx].text = event.text ?? messages[idx].text
                 messages[idx].isStreaming = false
             }
