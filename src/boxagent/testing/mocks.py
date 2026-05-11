@@ -307,6 +307,7 @@ class MockChannel(Channel):
         *,
         stream_handle: StreamHandle | None = None,
         webhook_name: str = "",
+        parent_tool_id: str = "",
     ) -> bool:
         self.tool_calls.append(ToolCallRecord(
             chat_id=chat_id, tool_id=tool_id, name=name,
@@ -325,6 +326,7 @@ class MockChannel(Channel):
         output: object = None,
         stream_handle: StreamHandle | None = None,
         webhook_name: str = "",
+        parent_tool_id: str = "",
     ) -> bool:
         self.tool_updates.append(ToolUpdateRecord(
             chat_id=chat_id, tool_call_id=tool_call_id, title=title,

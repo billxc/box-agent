@@ -10,12 +10,20 @@ class AgentCallback(Protocol):
     to route agent output to the user.
     """
 
-    async def on_stream(self, text: str) -> None:
-        """Called for each text chunk during streaming."""
+    async def on_stream(self, text: str, parent_tool_id: str = "") -> None:
+        """Called for each text chunk during streaming.
+
+        Args:
+            text: The chunk text.
+            parent_tool_id: Non-empty when this chunk belongs to a subagent
+                spawned by a Task tool — channels can render it as
+                subordinate (e.g. collapsed/grayed) rather than top-level.
+        """
         ...
 
     async def on_tool_call(
-        self, name: str, input: dict, result: str, tool_id: str = ""
+        self, name: str, input: dict, result: str, tool_id: str = "",
+        parent_tool_id: str = "",
     ) -> None:
         """Called when a tool call is detected.
 
@@ -26,6 +34,8 @@ class AgentCallback(Protocol):
             tool_id: Stable per-call id from the upstream backend (used by
                 channels that render call/result as a paired card; empty when
                 the backend doesn't expose one).
+            parent_tool_id: Non-empty when this call was made inside a
+                subagent — channels render it nested under the parent.
         """
         ...
 
@@ -36,6 +46,7 @@ class AgentCallback(Protocol):
         status: str | None = None,
         input: Any = None,
         output: Any = None,
+        parent_tool_id: str = "",
     ) -> None:
         """Called when a backend exposes richer tool call lifecycle updates."""
         ...

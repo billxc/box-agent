@@ -109,6 +109,7 @@ class Channel(Protocol):
         *,
         stream_handle: StreamHandle | None = None,
         webhook_name: str = "",
+        parent_tool_id: str = "",
     ) -> bool:
         """Render a tool call (paired call+result, fired once at completion)."""
         ...
@@ -124,6 +125,7 @@ class Channel(Protocol):
         output: object = None,
         stream_handle: StreamHandle | None = None,
         webhook_name: str = "",
+        parent_tool_id: str = "",
     ) -> bool:
         """Render a tool lifecycle update (status: pending/in_progress/completed/failed)."""
         ...

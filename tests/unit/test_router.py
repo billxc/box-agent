@@ -136,7 +136,7 @@ class TestChannelCallback:
         channel.send_text = AsyncMock()
         channel.format_tool_call = lambda name, inp: f"tool:{name}"
 
-        async def _on_tool_call(chat_id, tool_id, name, inp, result, *, stream_handle=None, webhook_name=""):
+        async def _on_tool_call(chat_id, tool_id, name, inp, result, *, stream_handle=None, webhook_name="", parent_tool_id=""):
             fmt = channel.format_tool_call(name, inp)
             await channel.stream_update(stream_handle, f"\n{fmt}\n")
             return True

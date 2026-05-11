@@ -190,6 +190,9 @@ body.sidebar-dragging * { user-select: none !important; }
 .tool-card-result.ok { border-left: 3px solid #2ea043; }
 .tool-card-result.failed { border-left: 3px solid #cf222e; }
 .tool-card-result.hidden { display: none; }
+/* Subagent (Task spawn) tool calls — indent + dim so they read as nested. */
+.tool-card.subagent { margin-left: 24px; opacity: 0.7; border-style: dashed; font-size: 11px; }
+.tool-card.subagent > .tool-card-header::before { content: "↳ "; color: var(--muted); }
 .machine.collapsed .caret::before { content: "▸"; }
 .machine:not(.collapsed) .caret::before { content: "▾"; }
 

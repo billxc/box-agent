@@ -629,7 +629,7 @@
         break;
       }
       case "tool_call": {
-        renderToolCall(ev.tool_id, ev.name || "tool", ev.args || {});
+        renderToolCall(ev.tool_id, ev.name || "tool", ev.args || {}, ev.parent_tool_id || "");
         scrollDown();
         break;
       }
@@ -691,7 +691,7 @@
     card.resultEl.classList.toggle("failed", !ok);
   }
 
-  function renderToolCall(toolId, name, args) {
+  function renderToolCall(toolId, name, args, parentToolId = "") {
     if (!toolId) toolId = `t${Math.random().toString(36).slice(2, 10)}`;
     let card = state.toolCards[toolId];
     if (card) {
@@ -702,6 +702,7 @@
       return;
     }
     card = _buildToolCard(toolId, name, args);
+    if (parentToolId) card.el.classList.add("subagent");
     document.getElementById("messages").appendChild(card.el);
     state.toolCards[toolId] = card;
   }

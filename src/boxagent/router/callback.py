@@ -103,7 +103,7 @@ class ChannelCallback:
                 pass
             self._handle = None
 
-    async def on_stream(self, text: str) -> None:
+    async def on_stream(self, text: str, parent_tool_id: str = "") -> None:
         if self._closed:
             if not self._late_stream_warned:
                 logger.warning(
@@ -111,6 +111,12 @@ class ChannelCallback:
                     self.chat_id,
                 )
                 self._late_stream_warned = True
+            return
+        # Subagent text (from a Task spawn) is internal chatter — would
+        # pollute the main assistant bubble if appended. Drop it on the
+        # floor; the parent Task tool result is what surfaces the
+        # subagent's outcome.
+        if parent_tool_id:
             return
         async with self._stream_lock:
             if self._closed:
@@ -133,7 +139,10 @@ class ChannelCallback:
                 )
             await self.channel.stream_update(self._handle, prefix + text)
 
-    async def on_tool_call(self, name: str, input: dict, result: str, tool_id: str = ""):
+    async def on_tool_call(
+        self, name: str, input: dict, result: str, tool_id: str = "",
+        parent_tool_id: str = "",
+    ):
         if self._closed:
             return
         # Polymorphic: each channel renders tool calls its own way.
@@ -142,6 +151,7 @@ class ChannelCallback:
         used_stream = await self.channel.on_tool_call(
             self.chat_id, tool_id, name, input, result,
             stream_handle=self._handle, webhook_name=self.webhook_name,
+            parent_tool_id=parent_tool_id,
         )
         if used_stream:
             self._needs_paragraph_break_after_tool = True
@@ -155,6 +165,7 @@ class ChannelCallback:
         status: str | None = None,
         input: object = None,
         output: object = None,
+        parent_tool_id: str = "",
     ):
         if self._closed:
             return
@@ -162,6 +173,7 @@ class ChannelCallback:
             self.chat_id, tool_call_id, title,
             status=status, input=input, output=output,
             stream_handle=self._handle, webhook_name=self.webhook_name,
+            parent_tool_id=parent_tool_id,
         )
         if used_stream:
             self._needs_paragraph_break_after_tool = True

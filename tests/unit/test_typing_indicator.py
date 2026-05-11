@@ -24,7 +24,7 @@ def mock_channel():
 
     # Mimic the polymorphic on_tool_call that TelegramChannel
     # provides: format_tool_call → stream_update OR send_text.
-    async def _on_tool_call(chat_id, tool_id, name, inp, result, *, stream_handle=None, webhook_name=""):
+    async def _on_tool_call(chat_id, tool_id, name, inp, result, *, stream_handle=None, webhook_name="", parent_tool_id=""):
         fmt = channel.format_tool_call(name, inp)
         if not fmt:
             return False

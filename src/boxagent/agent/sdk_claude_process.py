@@ -115,9 +115,10 @@ class AgentSDKClaude(AgentBackend):
                 if isinstance(msg, AssistantMessage):
                     if msg.session_id:
                         self.session_id = msg.session_id
+                    parent_tool_id = getattr(msg, "parent_tool_use_id", None) or ""
                     for block in msg.content:
                         if isinstance(block, TextBlock):
-                            await callback.on_stream(block.text)
+                            await callback.on_stream(block.text, parent_tool_id=parent_tool_id)
                         elif isinstance(block, ToolUseBlock):
                             tool_names[block.id] = block.name
                             tool_inputs[block.id] = dict(block.input)
@@ -129,11 +130,13 @@ class AgentSDKClaude(AgentBackend):
                                 title=block.name,
                                 status="in_progress",
                                 input=block.input,
+                                parent_tool_id=parent_tool_id,
                             )
 
                 elif isinstance(msg, UserMessage):
                     # The SDK echoes tool_result blocks back as UserMessage
                     # content (mirroring the API's pairing convention).
+                    parent_tool_id = getattr(msg, "parent_tool_use_id", None) or ""
                     if isinstance(msg.content, list):
                         for block in msg.content:
                             if isinstance(block, ToolResultBlock):
@@ -146,6 +149,7 @@ class AgentSDKClaude(AgentBackend):
                                     input=input_dict,
                                     result=result_text,
                                     tool_id=tool_id,
+                                    parent_tool_id=parent_tool_id,
                                 )
 
                 elif isinstance(msg, SystemMessage):

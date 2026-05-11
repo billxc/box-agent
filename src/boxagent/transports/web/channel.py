@@ -130,7 +130,7 @@ class WebChannel(Channel):
 
     async def on_tool_call(
         self, chat_id: str, tool_id: str, name: str, input: dict, result: str,
-        *, stream_handle=None, webhook_name: str = "",
+        *, stream_handle=None, webhook_name: str = "", parent_tool_id: str = "",
     ) -> bool:
         """Publish a tool_call card event. If ``result`` is non-empty (Codex
         single-shot), immediately publish the matching tool_result too."""
@@ -139,6 +139,7 @@ class WebChannel(Channel):
             "tool_id": tool_id or self._allocate_id(),
             "name": name,
             "args": input,
+            "parent_tool_id": parent_tool_id,
         })
         if result:
             self._publish(chat_id, {
@@ -146,13 +147,14 @@ class WebChannel(Channel):
                 "tool_id": tool_id,
                 "ok": True,
                 "summary": result[:200],
+                "parent_tool_id": parent_tool_id,
             })
         return False  # never streams into a text handle
 
     async def on_tool_update(
         self, chat_id: str, tool_call_id: str, title: str,
         status: str | None = None, input: object = None, output: object = None,
-        *, stream_handle=None, webhook_name: str = "",
+        *, stream_handle=None, webhook_name: str = "", parent_tool_id: str = "",
     ) -> bool:
         """Map a tool lifecycle update to a structured tool_result event."""
         if status == "completed":
@@ -161,6 +163,7 @@ class WebChannel(Channel):
                 "tool_id": tool_call_id,
                 "ok": True,
                 "summary": str(output)[:200] if output else "",
+                "parent_tool_id": parent_tool_id,
             })
         elif status == "failed":
             self._publish(chat_id, {
@@ -168,6 +171,7 @@ class WebChannel(Channel):
                 "tool_id": tool_call_id,
                 "ok": False,
                 "error": str(output)[:200] if output else title,
+                "parent_tool_id": parent_tool_id,
             })
         # pending / in_progress: nothing to render on result side.
         return False

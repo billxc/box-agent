@@ -295,6 +295,7 @@ class TelegramChannel(Channel):
     async def on_tool_call(
         self, chat_id: str, tool_id: str, name: str, input: dict, result: str,
         *, stream_handle: StreamHandle | None = None, webhook_name: str = "",
+        parent_tool_id: str = "",
     ) -> bool:
         fmt = self.format_tool_call(name, input)
         if not fmt:
@@ -311,6 +312,7 @@ class TelegramChannel(Channel):
         self, chat_id: str, tool_call_id: str, title: str,
         status: str | None = None, input: object = None, output: object = None,
         *, stream_handle: StreamHandle | None = None, webhook_name: str = "",
+        parent_tool_id: str = "",
     ) -> bool:
         if status in {"pending", "in_progress"}:
             key = (chat_id, tool_call_id)
