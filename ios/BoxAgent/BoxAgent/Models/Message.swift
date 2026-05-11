@@ -18,6 +18,7 @@ struct ChatMessage: Identifiable {
     var toolId: String?
     var toolName: String?
     var toolArgsJSON: String?
+    var parentToolId: String?
 
     var toolOk: Bool?
     var toolSummary: String?
@@ -47,5 +48,6 @@ struct SSEEvent: Sendable {
     let toolOk: Bool?
     let toolSummary: String?
     let toolError: String?
+    let parentToolId: String?
     let timestamp: Double?
 }

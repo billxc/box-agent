@@ -189,7 +189,8 @@ final class ChatViewModel {
                 id: event.toolId ?? nextId(), role: .toolCall,
                 text: "", isStreaming: true, timestamp: ts,
                 toolId: event.toolId, toolName: event.toolName,
-                toolArgsJSON: event.toolArgsJSON
+                toolArgsJSON: event.toolArgsJSON,
+                parentToolId: event.parentToolId
             ))
         case .toolResult:
             if let idx = messages.lastIndex(where: { $0.toolId == event.toolId && $0.role == .toolCall }) {
@@ -201,7 +202,9 @@ final class ChatViewModel {
                 messages.append(ChatMessage(
                     id: "result-\(event.toolId ?? nextId())", role: .toolResult,
                     text: "", isStreaming: false, timestamp: ts,
-                    toolId: event.toolId, toolOk: event.toolOk,
+                    toolId: event.toolId,
+                    parentToolId: event.parentToolId,
+                    toolOk: event.toolOk,
                     toolSummary: event.toolSummary, toolError: event.toolError
                 ))
             }

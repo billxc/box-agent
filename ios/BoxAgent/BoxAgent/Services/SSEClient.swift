@@ -73,6 +73,7 @@ final class SSEClient: @unchecked Sendable {
             toolOk: obj["ok"] as? Bool,
             toolSummary: obj["summary"] as? String,
             toolError: obj["error"] as? String,
+            parentToolId: obj["parent_tool_id"] as? String,
             timestamp: obj["ts"] as? Double
         )
     }

@@ -3,14 +3,21 @@ import SwiftUI
 struct ToolCallView: View {
     let message: ChatMessage
 
+    private var isSubagent: Bool { !(message.parentToolId ?? "").isEmpty }
+    private var subagentPrefix: String { isSubagent ? "↳ " : "" }
+
     var body: some View {
-        if message.role == .toolResult {
-            toolResultCard
-        } else if message.toolOk != nil {
-            completedToolCallCard
-        } else {
-            pendingToolCallCard
+        Group {
+            if message.role == .toolResult {
+                toolResultCard
+            } else if message.toolOk != nil {
+                completedToolCallCard
+            } else {
+                pendingToolCallCard
+            }
         }
+        .opacity(isSubagent ? 0.6 : 1.0)
+        .padding(.leading, isSubagent ? 28 : 0)
     }
 
     private var pendingToolCallCard: some View {
@@ -18,7 +25,7 @@ struct ToolCallView: View {
             Image(systemName: "wrench.and.screwdriver")
                 .foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 2) {
-                Text(message.toolName ?? "tool")
+                Text("\(subagentPrefix)\(message.toolName ?? "tool")")
                     .font(.caption.weight(.semibold).monospaced())
                 if let args = message.toolArgsJSON {
                     Text(args.prefix(80))
@@ -45,7 +52,7 @@ struct ToolCallView: View {
             Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle.fill")
                 .foregroundStyle(ok ? .green : .red)
             VStack(alignment: .leading, spacing: 2) {
-                Text(message.toolName ?? "tool")
+                Text("\(subagentPrefix)\(message.toolName ?? "tool")")
                     .font(.caption.weight(.semibold).monospaced())
                 if let summary = message.toolSummary ?? message.toolError {
                     Text(summary.prefix(120))
