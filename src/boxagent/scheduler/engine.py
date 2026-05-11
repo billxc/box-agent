@@ -248,7 +248,7 @@ class _SchedulerCallback:
         self._text += text
 
     async def on_tool_call(
-        self, name: str, input: dict, result: str, tool_id: str = ""
+        self, name: str, input: dict, result: str, tool_id: str = "", **_kwargs: object,
     ) -> None:
         self._tool_calls.append(name)
 
@@ -259,16 +259,17 @@ class _SchedulerCallback:
         status: str | None = None,
         input: object = None,
         output: object = None,
+        **_kwargs: object,
     ) -> None:
         pass
 
-    async def on_error(self, error: str) -> None:
+    async def on_error(self, error: str, **_kwargs: object) -> None:
         self._error = error
 
-    async def on_file(self, path: str, caption: str = "") -> None:
+    async def on_file(self, path: str, caption: str = "", **_kwargs: object) -> None:
         pass
 
-    async def on_image(self, path: str, caption: str = "") -> None:
+    async def on_image(self, path: str, caption: str = "", **_kwargs: object) -> None:
         pass
 
     async def send_result(self) -> None:
