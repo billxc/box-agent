@@ -57,6 +57,8 @@ logger = logging.getLogger(__name__)
 
 TopologyChangeCb = Callable[[str | None], Awaitable[None]]
 BotProviderCb = Callable[[], list[dict]]
+RegistryReadyCb = Callable[[GuestRegistry], None]
+GuestClientReadyCb = Callable[[GuestClient], None]
 
 
 @dataclass
@@ -66,6 +68,8 @@ class HostElection:
     config: "AppConfig"
     on_topology_change: TopologyChangeCb | None = None
     bot_provider: BotProviderCb | None = None
+    on_registry_ready: RegistryReadyCb | None = None
+    on_guest_client_ready: GuestClientReadyCb | None = None
     probe_interval: float = 10.0
 
     state: str = "init"  # "init" | "host" | "guest" | "standalone"
@@ -266,6 +270,11 @@ class HostElection:
                 local_web_port=self.config.web_port or 9292,
                 local_web_token=self.config.web_token or "",
             )
+            if self.on_registry_ready is not None:
+                try:
+                    self.on_registry_ready(self.registry)
+                except Exception:
+                    logger.exception("on_registry_ready hook failed")
 
             self.state = "host"
             self.current_upstream = ""
@@ -293,6 +302,11 @@ class HostElection:
                 bot_provider=self.bot_provider or (lambda: []),
             )
             self.client.start()
+            if self.on_guest_client_ready is not None:
+                try:
+                    self.on_guest_client_ready(self.client)
+                except Exception:
+                    logger.exception("on_guest_client_ready hook failed")
             logger.info(
                 "host election: guest mode — dialing tunnel '%s' (upstream=%s)",
                 self.config.cluster_tunnel, upstream or "?",

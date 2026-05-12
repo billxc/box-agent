@@ -160,6 +160,7 @@ class Gateway:
     _event_bus: "EventBus | None" = field(default=None, repr=False)
     _telegram_notifier: "object | None" = field(default=None, repr=False)
     _retention_sweeper: "object | None" = field(default=None, repr=False)
+    _event_syncer: "object | None" = field(default=None, repr=False)
 
     async def start(self) -> None:
         self._start_time = time.time()
@@ -200,6 +201,11 @@ class Gateway:
         from boxagent.events.retention import RetentionSweeper
         self._retention_sweeper = RetentionSweeper(event_store)
         self._retention_sweeper.start()
+
+        # EventSyncer: cross-machine replication. Wired into HostElection
+        # below so peers attach as soon as the registry/guest_client appear.
+        from boxagent.events.sync import EventSyncer
+        self._event_syncer = EventSyncer(event_store, self._event_bus)
 
         log.info(Category.SYSTEM_STARTUP, "gateway starting",
                  machine_id=machine_id, node_id=self.config.node_id)        # Phase 1: build managers. AgentManager owns its bot-state dicts;
@@ -285,10 +291,17 @@ class Gateway:
         # Cluster: host election. host_priority list determines who is host
         # vs guest at runtime, with failover when primary disappears.
         if self.config.cluster_tunnel:
+            from boxagent.events.sync_wiring import (
+                install_guest_client_hooks,
+                install_registry_hooks,
+            )
+            syncer = self._event_syncer
             self._host_election = HostElection(
                 config=self.config,
                 on_topology_change=self._topology.on_topology_change,
                 bot_provider=self._topology.local_bot_descriptors,
+                on_registry_ready=lambda registry: install_registry_hooks(syncer, registry),
+                on_guest_client_ready=lambda client: install_guest_client_hooks(syncer, client),
             )
             # Phase 2: topology can now resolve guest_registry / guest_client.
             self._topology.set_host_election(self._host_election)
@@ -366,6 +379,12 @@ class Gateway:
 
             log.info(Category.SYSTEM_SHUTDOWN, "gateway stopped")
             log.unbind()
+            if self._event_syncer is not None:
+                try:
+                    self._event_syncer.close()
+                except Exception:
+                    logger.exception("Error closing event syncer")
+                self._event_syncer = None
             if self._retention_sweeper is not None:
                 try:
                     await self._retention_sweeper.stop()
