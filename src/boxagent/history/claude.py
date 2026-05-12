@@ -92,10 +92,31 @@ class ClaudeAgentHistory:
 
     @staticmethod
     def _has_compact_boundary(jsonl_path: Path) -> bool:
+        """Detect a real top-level ``compact_boundary`` system entry.
+
+        Substring matching on the raw line text would false-positive on
+        any tool_result that quotes the string ``"compact_boundary"`` —
+        e.g. SDK source pasted into the transcript. Parse each line and
+        check the actual top-level fields.
+        """
         try:
             with jsonl_path.open("r", encoding="utf-8", errors="replace") as f:
                 for line in f:
-                    if '"compact_boundary"' in line or '"isCompactSummary":true' in line or '"isCompactSummary": true' in line:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(entry, dict):
+                        continue
+                    if (
+                        entry.get("type") == "system"
+                        and entry.get("subtype") == "compact_boundary"
+                    ):
+                        return True
+                    if entry.get("isCompactSummary"):
                         return True
         except OSError:
             return False

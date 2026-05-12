@@ -150,3 +150,39 @@ def test_read_messages_picks_up_pre_compact_entries(fake_project):
     assert "pre-compact question" in texts
     assert "pre-compact answer" in texts
     assert "post-compact answer" in texts
+
+
+def test_has_compact_boundary_ignores_tool_result_string_match(fake_project):
+    """Tool results that quote ``compact_boundary`` must not trigger raw path.
+
+    Earlier substring-match implementation false-positived on any line
+    containing ``"compact_boundary"`` — e.g. SDK source pasted into a
+    transcript via Read/Bash output. Real boundaries are top-level
+    ``{"type": "system", "subtype": "compact_boundary"}``.
+    """
+    project_dir, cwd = fake_project
+    sid = "55555555-5555-5555-5555-555555555555"
+    jsonl = project_dir / f"{sid}.jsonl"
+    _write_jsonl(jsonl, [
+        {"type": "user", "uuid": "u1", "sessionId": sid,
+         "message": {"role": "user", "content": "look at this code"}},
+        {"type": "user", "uuid": "u2", "parentUuid": "u1", "sessionId": sid,
+         "message": {"role": "user", "content": [
+             {"type": "tool_result", "tool_use_id": "t1",
+              "content": 'def f(): return "compact_boundary"  # not a real boundary'},
+         ]}},
+    ])
+    assert ClaudeAgentHistory._has_compact_boundary(jsonl) is False
+
+
+def test_has_compact_boundary_detects_real_system_entry(fake_project):
+    project_dir, cwd = fake_project
+    sid = "66666666-6666-6666-6666-666666666666"
+    jsonl = project_dir / f"{sid}.jsonl"
+    _write_jsonl(jsonl, [
+        {"type": "user", "uuid": "u1", "sessionId": sid,
+         "message": {"role": "user", "content": "hi"}},
+        {"type": "system", "uuid": "s1", "subtype": "compact_boundary",
+         "sessionId": sid, "compactMetadata": {"trigger": "auto"}},
+    ])
+    assert ClaudeAgentHistory._has_compact_boundary(jsonl) is True
