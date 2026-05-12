@@ -26,12 +26,22 @@ class _FakeRegistry:
 
 
 @dataclass
-class _FakeSession:
-    machine_id: str
+class _FakeWs:
     sent: list = field(default_factory=list)
+    closed: bool = False
 
     async def send_json(self, frame):
         self.sent.append(frame)
+
+
+@dataclass
+class _FakeSession:
+    machine_id: str
+    ws: _FakeWs = field(default_factory=_FakeWs)
+
+    @property
+    def sent(self):
+        return self.ws.sent
 
 
 @dataclass
@@ -40,10 +50,11 @@ class _FakeGuestClient:
     on_unknown_frame: Callable[[dict], Awaitable[bool]] | None = None
     on_connect: Callable[[object], None] | None = None
     on_disconnect: Callable[[], None] | None = None
-    sent: list = field(default_factory=list)
+    _ws: _FakeWs = field(default_factory=_FakeWs)
 
-    async def _send_to_host(self, frame):
-        self.sent.append(frame)
+    @property
+    def sent(self):
+        return self._ws.sent
 
 
 # ---------- registry side ----------
@@ -167,4 +178,59 @@ async def test_guest_client_hook_detaches_on_disconnect(tmp_path):
     bus.publish("info", "c", "after disconnect")
     await asyncio.sleep(0.05)
     assert all(f.get("type") != "event_batch" for f in client.sent)
+    syncer.close()
+
+
+# ---------- integration with REAL registry / guest_client objects ----------
+#
+# These pin the wiring to the actual attribute paths
+# (`session.ws.send_json`, `client._ws.send_json`). If someone renames
+# either, fakes wouldn't catch it but these tests will.
+
+class _RecordingWs:
+    def __init__(self):
+        self.sent = []
+        self.closed = False
+
+    async def send_json(self, frame):
+        self.sent.append(frame)
+
+
+@pytest.mark.asyncio
+async def test_real_registry_wiring_uses_session_ws(tmp_path):
+    from boxagent.cluster.registry import GuestRegistry, GuestSession
+
+    store = EventStore(tmp_path / "e.db")
+    bus = EventBus(store, "host")
+    syncer = EventSyncer(store, bus, debounce_seconds=0.01)
+    registry = GuestRegistry(expected_token="t")
+    install_registry_hooks(syncer, registry)
+
+    ws = _RecordingWs()
+    session = GuestSession(machine_id="g1", ws=ws)  # type: ignore[arg-type]
+    registry.on_guest_attached("g1", session)
+    await asyncio.sleep(0.02)
+
+    assert any(f.get("type") == "event_resync" for f in ws.sent)
+    syncer.close()
+
+
+@pytest.mark.asyncio
+async def test_real_guest_client_wiring_uses_underscore_ws(tmp_path):
+    from boxagent.cluster.guest_client import GuestClient
+
+    store = EventStore(tmp_path / "e.db")
+    bus = EventBus(store, "g1")
+    syncer = EventSyncer(store, bus, debounce_seconds=0.01)
+    client = GuestClient(
+        host_url="", host_token="", machine_id="g1", local_web_port=0,
+    )
+    install_guest_client_hooks(syncer, client)
+
+    ws = _RecordingWs()
+    client._ws = ws  # type: ignore[assignment]
+    client.on_connect(client)
+    await asyncio.sleep(0.02)
+
+    assert any(f.get("type") == "event_resync" for f in ws.sent)
     syncer.close()

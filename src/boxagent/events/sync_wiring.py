@@ -9,7 +9,7 @@ def install_registry_hooks(syncer: EventSyncer, registry) -> None:
 
     def _on_attached(machine_id: str, session) -> None:
         async def send_frame(frame):
-            await session.send_json(frame)
+            await session.ws.send_json(frame)
         syncer.attach_peer(machine_id, send_frame)
 
     def _on_detached(machine_id: str) -> None:
@@ -29,7 +29,10 @@ def install_guest_client_hooks(syncer: EventSyncer, client) -> None:
 
     def _on_connect(connected_client) -> None:
         async def send_frame(frame):
-            await connected_client._send_to_host(frame)
+            ws = connected_client._ws
+            if ws is None or ws.closed:
+                return
+            await ws.send_json(frame)
         syncer.attach_peer(HOST_KEY, send_frame)
 
     def _on_disconnect() -> None:
