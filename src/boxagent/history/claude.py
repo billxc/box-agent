@@ -47,6 +47,12 @@ logger = logging.getLogger(__name__)
 class ClaudeAgentHistory:
     """``AgentHistory`` implementation built on top of ``claude_agent_sdk``."""
 
+    def __init__(self, claude_dir: Path | None = None) -> None:
+        # Only used by ``_list_projects_sync`` for fast directory enumeration.
+        # Per-session reads still go through the SDK, which uses its own
+        # path resolution.
+        self._projects_dir = claude_dir or (Path.home() / ".claude" / "projects")
+
     # ── Public API ────────────────────────────────────────────────
 
     async def list_projects(self) -> list[ProjectInfo]:
@@ -202,30 +208,63 @@ class ClaudeAgentHistory:
     # ── Sync internals (run via to_thread) ───────────────────────
 
     def _list_projects_sync(self) -> list[ProjectInfo]:
-        try:
-            infos = sdk_list_sessions()
-        except Exception as e:
-            logger.warning("SDK list_sessions(global) failed: %s", e)
+        # Direct directory scan instead of ``sdk_list_sessions()`` (which
+        # parses every jsonl globally). On hosts with thousands of session
+        # files the SDK call took >30s and tripped the cluster RPC timeout
+        # (returning 504 to /api/claude/projects). We only need cwd +
+        # session_count + last_ts for the project picker, so we read just
+        # the first line of the most-recently-modified jsonl per directory
+        # to extract cwd; everything else comes from filesystem stat.
+        projects_dir = self._projects_dir
+        if not projects_dir.is_dir():
             return []
-        # Bucket by cwd. SDK already gives us cwd per session — no
-        # filesystem scan needed.
-        buckets: dict[str, list[SDKSessionInfo]] = {}
-        for info in infos:
-            cwd = info.cwd or ""
-            buckets.setdefault(cwd, []).append(info)
         out: list[ProjectInfo] = []
-        for cwd, items in buckets.items():
-            last_ms = max((i.last_modified or 0) for i in items)
-            label = (cwd or "(no cwd)").rstrip("/").rsplit("/", 1)[-1] or cwd
+        for entry in projects_dir.iterdir():
+            if not entry.is_dir():
+                continue
+            files = [f for f in entry.glob("*.jsonl") if f.is_file()]
+            if not files:
+                continue
+            mtimes = [(f, f.stat().st_mtime) for f in files]
+            mtimes.sort(key=lambda pair: pair[1], reverse=True)
+            cwd = self._peek_cwd(mtimes[0][0])
+            project_id = cwd or entry.name
+            label = (
+                (cwd or entry.name).rstrip("/").rsplit("/", 1)[-1]
+                or (cwd or entry.name)
+            )
             out.append(ProjectInfo(
-                project_id=cwd,
-                label=label or "(no cwd)",
+                project_id=project_id,
+                label=label,
                 cwd=cwd,
-                session_count=len(items),
-                last_ts=last_ms / 1000.0 if last_ms else 0.0,
+                session_count=len(files),
+                last_ts=mtimes[0][1],
             ))
         out.sort(key=lambda p: p.last_ts, reverse=True)
         return out
+
+    @staticmethod
+    def _peek_cwd(jsonl: Path) -> str:
+        # Scan the first few lines for a ``cwd`` field. The SDK writes cwd
+        # on the session_meta header and most subsequent entries, so the
+        # first line usually matches; we cap at 5 to stay cheap if the
+        # header schema ever shifts.
+        try:
+            with jsonl.open() as fh:
+                for _ in range(5):
+                    line = fh.readline()
+                    if not line:
+                        break
+                    try:
+                        record = json.loads(line)
+                    except (ValueError, json.JSONDecodeError):
+                        continue
+                    cwd = record.get("cwd")
+                    if isinstance(cwd, str) and cwd:
+                        return cwd
+        except OSError as e:
+            logger.debug("peek_cwd(%s) failed: %s", jsonl, e)
+        return ""
 
     def _list_sessions_sync(self, project_id: str) -> list[SessionInfo]:
         try:

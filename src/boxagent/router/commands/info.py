@@ -15,6 +15,30 @@ if TYPE_CHECKING:
 TOOL_DISPLAY_MODES = ["silent", "summary", "detailed"]
 
 
+def _fmt_tokens(n: int) -> str:
+    if n >= 1000:
+        return f"{n // 1000}k"
+    return str(n)
+
+
+def _format_usage_line(usage) -> str:
+    """Render usage dict as ``Last turn: in 12k · out 3k · cache 45k``.
+
+    Returns "" when usage is missing or empty.
+    """
+    if not isinstance(usage, dict) or not usage:
+        return ""
+    parts = []
+    if isinstance(usage.get("input_tokens"), int):
+        parts.append(f"in {_fmt_tokens(usage['input_tokens'])}")
+    if isinstance(usage.get("output_tokens"), int):
+        parts.append(f"out {_fmt_tokens(usage['output_tokens'])}")
+    cache = usage.get("cache_read_input_tokens", 0)
+    if isinstance(cache, int) and cache:
+        parts.append(f"cache {_fmt_tokens(cache)}")
+    return "Last turn: " + " · ".join(parts) if parts else ""
+
+
 @command("/status", help="Show bot state and uptime", category=CommandCategory.INFO)
 async def cmd_status(router: "Router", msg: "IncomingMessage", channel: "Channel") -> None:
     chat_id = msg.chat_id
@@ -23,12 +47,25 @@ async def cmd_status(router: "Router", msg: "IncomingMessage", channel: "Channel
     minutes, seconds = divmod(remainder, 60)
     uptime_str = f"{hours}h {minutes}m {seconds}s"
 
+    session_info = None
     if router.pool and chat_id:
         session = router.pool.get_session_id(chat_id) or "none"
         model = router.pool.get_model(chat_id) or "default"
         active = router.pool.get_active(chat_id)
         state = getattr(active, "state", "idle") if active else "idle"
         workspace = router.pool.get_workspace(chat_id) or router.workspace
+        session_id = router.pool.get_session_id(chat_id) or ""
+        if session_id:
+            from boxagent.sessions.info_builder import build_session_info
+            try:
+                session_info = await build_session_info(
+                    session_id=session_id,
+                    backend_kind=router.ai_backend or "",
+                    model=router.pool.get_model(chat_id) or "",
+                    workspace=router.pool.get_workspace(chat_id) or "",
+                )
+            except Exception:
+                session_info = None
     else:
         state = getattr(router.backend, "state", "unknown")
         session = getattr(router.backend, "session_id", None) or "none"
@@ -52,6 +89,18 @@ async def cmd_status(router: "Router", msg: "IncomingMessage", channel: "Channel
         lines.append("Yolo: on")
     if tool_display:
         lines.append(f"Tool display: {tool_display}")
+    if session_info is not None:
+        usage_line = _format_usage_line(session_info.last_turn_usage)
+        if usage_line:
+            lines.append(usage_line)
+        if session_info.context_window and session_info.context_used:
+            pct = round(session_info.context_used / session_info.context_window * 100)
+            lines.append(
+                f"Context: {_fmt_tokens(session_info.context_used)}/"
+                f"{_fmt_tokens(session_info.context_window)} ({pct}%)"
+            )
+        if session_info.message_count:
+            lines.append(f"Messages: {session_info.message_count}")
     lines.append(f"Uptime: {uptime_str}")
 
     await channel.send_text(chat_id, "\n".join(lines))

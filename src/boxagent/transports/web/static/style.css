@@ -262,7 +262,10 @@ body.sidebar-dragging * { user-select: none !important; }
   position: sticky; top: 0; z-index: 5;
 }
 #menu-open { display: none; }
-#chat-title { flex: 1; font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#chat-title { font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.title-stack { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; line-height: 1.15; }
+.session-info { font-size: 11px; color: var(--muted, #888); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.session-info.hidden { display: none; }
 
 #recap-banner {
   display: flex; align-items: flex-start; gap: 10px;

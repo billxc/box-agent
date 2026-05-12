@@ -168,3 +168,21 @@ class CodexProcess(BaseCLIProcess):
                     title=display_name,
                     status="in_progress",
                 )
+
+        elif event_type == "turn.completed":
+            pass
+
+def _normalize_codex_usage(usage: dict) -> dict[str, int]:
+    # Codex schema: {input_tokens, cached_input_tokens, output_tokens}.
+    # Map cached_input_tokens → cache_read_input_tokens for parity with
+    # Claude's naming so renderers can stay backend-agnostic.
+    out: dict[str, int] = {}
+    for src, dst in (
+        ("input_tokens", "input_tokens"),
+        ("output_tokens", "output_tokens"),
+        ("cached_input_tokens", "cache_read_input_tokens"),
+    ):
+        value = usage.get(src)
+        if isinstance(value, (int, float)):
+            out[dst] = int(value)
+    return out

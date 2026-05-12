@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from claude_agent_sdk import ClaudeAgentOptions, query
 from claude_agent_sdk.types import (
     AssistantMessage,
+    ResultMessage,
     SystemMessage,
     TextBlock,
     ToolResultBlock,
@@ -177,6 +178,9 @@ class AgentSDKClaude(AgentBackend):
                             msg.data.get("compact_metadata") or {},
                         )
 
+                elif isinstance(msg, ResultMessage):
+                    pass
+
         except asyncio.CancelledError:
             self._cancelled = True
             # Re-raise so the caller (Router) sees the cancellation; the
@@ -275,6 +279,14 @@ class AgentSDKClaude(AgentBackend):
                 "append": append_system_prompt,
             }
         return options
+
+    @staticmethod
+    def _normalize_usage(usage: dict[str, Any]) -> dict[str, int]:
+        keys = (
+            "input_tokens", "output_tokens",
+            "cache_read_input_tokens", "cache_creation_input_tokens",
+        )
+        return {k: int(usage[k]) for k in keys if isinstance(usage.get(k), (int, float))}
 
     @staticmethod
     def _stringify_tool_result(content: Any) -> str:

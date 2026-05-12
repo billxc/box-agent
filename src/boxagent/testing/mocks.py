@@ -186,7 +186,6 @@ class MockBackend(AgentBackend):
     async def wait_idle(self) -> None:
         await self._idle_event.wait()
 
-
 # ── MockChannel ────────────────────────────────────────────────────────
 
 

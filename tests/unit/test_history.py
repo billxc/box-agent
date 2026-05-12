@@ -134,3 +134,71 @@ class TestDataclasses:
         s = SessionInfo(session_id="sid")
         assert s.project_id == ""
         assert s.custom_title is None
+
+
+class TestClaudeListProjectsFastScan:
+    """``_list_projects_sync`` must NOT call ``sdk_list_sessions()`` —
+    that path parses every jsonl globally and timed out on hosts with
+    thousands of session files (cluster RPC 504). It should scan dirs
+    + read just the first line of the newest jsonl per dir for cwd."""
+
+    @pytest.mark.asyncio
+    async def test_returns_one_project_per_dir_with_cwd_from_first_line(self, tmp_path):
+        import json
+
+        proj_a = tmp_path / "-Users-bill-code-foo"
+        proj_a.mkdir()
+        (proj_a / "s1.jsonl").write_text(
+            json.dumps({"type": "user", "cwd": "/Users/bill/code/foo"}) + "\n"
+            + json.dumps({"type": "assistant"}) + "\n"
+        )
+        (proj_a / "s2.jsonl").write_text(
+            json.dumps({"type": "user", "cwd": "/Users/bill/code/foo"}) + "\n"
+        )
+        proj_b = tmp_path / "-tmp-bar"
+        proj_b.mkdir()
+        (proj_b / "s3.jsonl").write_text(
+            json.dumps({"type": "user", "cwd": "/tmp/bar"}) + "\n"
+        )
+        (tmp_path / "empty-dir").mkdir()
+
+        h = ClaudeAgentHistory(claude_dir=tmp_path)
+        projects = await h.list_projects()
+        by_id = {p.project_id: p for p in projects}
+        assert set(by_id) == {"/Users/bill/code/foo", "/tmp/bar"}
+        assert by_id["/Users/bill/code/foo"].session_count == 2
+        assert by_id["/Users/bill/code/foo"].label == "foo"
+        assert by_id["/tmp/bar"].session_count == 1
+
+    @pytest.mark.asyncio
+    async def test_missing_cwd_falls_back_to_dir_name(self, tmp_path):
+        proj = tmp_path / "weird-dir"
+        proj.mkdir()
+        (proj / "x.jsonl").write_text('{"type": "user"}\n')
+        h = ClaudeAgentHistory(claude_dir=tmp_path)
+        projects = await h.list_projects()
+        assert len(projects) == 1
+        assert projects[0].project_id == "weird-dir"
+        assert projects[0].cwd == ""
+
+    @pytest.mark.asyncio
+    async def test_missing_root_returns_empty(self, tmp_path):
+        h = ClaudeAgentHistory(claude_dir=tmp_path / "nope")
+        assert await h.list_projects() == []
+
+    @pytest.mark.asyncio
+    async def test_does_not_call_sdk_list_sessions(self, tmp_path, monkeypatch):
+        import json
+        from boxagent.history import claude as claude_mod
+
+        proj = tmp_path / "p"
+        proj.mkdir()
+        (proj / "a.jsonl").write_text(json.dumps({"cwd": "/p"}) + "\n")
+
+        def boom(*a, **kw):
+            raise AssertionError("sdk_list_sessions must not be called for project listing")
+
+        monkeypatch.setattr(claude_mod, "sdk_list_sessions", boom)
+        h = ClaudeAgentHistory(claude_dir=tmp_path)
+        projects = await h.list_projects()
+        assert len(projects) == 1

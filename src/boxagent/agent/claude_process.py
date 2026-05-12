@@ -231,3 +231,10 @@ class ClaudeProcess(BaseCLIProcess):
                 return
             if "session_id" in event:
                 self.session_id = event["session_id"]
+
+def _normalize_usage(usage: dict) -> dict[str, int]:
+    keys = (
+        "input_tokens", "output_tokens",
+        "cache_read_input_tokens", "cache_creation_input_tokens",
+    )
+    return {k: int(usage[k]) for k in keys if isinstance(usage.get(k), (int, float))}
