@@ -12,8 +12,10 @@ hand the cwd back.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from claude_agent_sdk import (
@@ -22,6 +24,7 @@ from claude_agent_sdk import (
     get_session_info as sdk_get_session_info,
     get_session_messages,
     list_sessions as sdk_list_sessions,
+    project_key_for_directory,
     rename_session as sdk_rename_session,
 )
 
@@ -73,6 +76,23 @@ class ClaudeAgentHistory:
             )
             return []
         return self._convert_messages(messages)
+
+    async def walk_compact_chain(
+        self, session_id: str, project_id: str = "",
+    ) -> list[str]:
+        """Walk pre-compact ancestor sessions via JSONL ``parentUuid`` linkage.
+
+        SDK's ``get_session_messages`` deliberately stops at compact
+        boundaries (``_build_conversation_chain`` ignores
+        ``logicalParentUuid``). For full transcript reconstruction we read
+        the head ``isCompactSummary`` entry's ``parentUuid`` and locate
+        the prior session whose JSONL contains a row with that ``uuid``,
+        recursing back to the chain root.
+
+        Returns ancestor session_ids oldest-first, excluding the input
+        ``session_id``. Empty if there is no compaction predecessor.
+        """
+        return await asyncio.to_thread(self._walk_compact_chain_sync, session_id, project_id)
 
     # ── Sync API for callers already inside an event loop ─────────
     # Mirrors codex.py: ``loaders._load_all_unified_sessions`` runs
@@ -126,6 +146,102 @@ class ClaudeAgentHistory:
         out = [self._sdk_to_session_info(info, project_id) for info in infos]
         out.sort(key=lambda s: s.last_ts, reverse=True)
         return out
+
+    # ── Compact-chain walking ─────────────────────────────────────
+
+    def _project_dir_for(self, session_id: str, project_id: str) -> Path | None:
+        """Locate the ``~/.claude/projects/<key>/`` dir holding the session."""
+        cwd = project_id
+        if not cwd:
+            try:
+                info = sdk_get_session_info(session_id, None)
+            except Exception:
+                info = None
+            if info is None:
+                return None
+            cwd = info.cwd or ""
+        if not cwd:
+            return None
+        try:
+            key = project_key_for_directory(cwd)
+        except Exception:
+            return None
+        candidate = Path.home() / ".claude" / "projects" / key
+        return candidate if candidate.is_dir() else None
+
+    @staticmethod
+    def _read_compact_parent_uuid(jsonl_path: Path) -> str:
+        """Return ``parentUuid`` of the head ``isCompactSummary`` entry, or ''."""
+        try:
+            with jsonl_path.open("r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(entry, dict):
+                        continue
+                    if entry.get("isCompactSummary"):
+                        parent = entry.get("parentUuid")
+                        return parent if isinstance(parent, str) else ""
+                    # First user/assistant entry that isn't a compact summary
+                    # means this session is not compaction-derived.
+                    if entry.get("type") in ("user", "assistant"):
+                        return ""
+        except OSError:
+            return ""
+        return ""
+
+    @staticmethod
+    def _find_session_containing_uuid(project_dir: Path, target_uuid: str) -> str:
+        """Return the session_id of whichever JSONL contains ``target_uuid``."""
+        if not target_uuid:
+            return ""
+        target_token = f'"uuid":"{target_uuid}"'
+        target_token_alt = f'"uuid": "{target_uuid}"'
+        try:
+            entries = list(project_dir.iterdir())
+        except OSError:
+            return ""
+        for entry in entries:
+            if entry.suffix != ".jsonl":
+                continue
+            try:
+                with entry.open("r", encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        if target_token in line or target_token_alt in line:
+                            return entry.stem
+            except OSError:
+                continue
+        return ""
+
+    def _walk_compact_chain_sync(self, session_id: str, project_id: str) -> list[str]:
+        project_dir = self._project_dir_for(session_id, project_id)
+        if project_dir is None:
+            return []
+
+        chain: list[str] = []
+        seen: set[str] = {session_id}
+        current = session_id
+        # Bound iterations to avoid pathological cycles or runaway scans.
+        for _ in range(20):
+            jsonl = project_dir / f"{current}.jsonl"
+            if not jsonl.exists():
+                break
+            parent_uuid = self._read_compact_parent_uuid(jsonl)
+            if not parent_uuid:
+                break
+            prev_sid = self._find_session_containing_uuid(project_dir, parent_uuid)
+            if not prev_sid or prev_sid in seen:
+                break
+            seen.add(prev_sid)
+            chain.append(prev_sid)
+            current = prev_sid
+        chain.reverse()  # oldest-first
+        return chain
 
     @staticmethod
     def _sdk_to_session_info(info: SDKSessionInfo, project_id: str) -> SessionInfo:

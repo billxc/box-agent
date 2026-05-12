@@ -166,9 +166,40 @@ class Storage:
             })
         return out
 
-    def clear_session(self, bot_id: str, chat_id: str = "") -> None:
+    def clear_session(self, bot_id: str, chat_id: str = "", *, preserve_chain: bool = False) -> None:
+        """Clear the active session_id for a bot/chat.
+
+        With ``preserve_chain=True`` the current session_id is pushed onto
+        ``previous_session_ids`` (and other entry fields kept) so that
+        ``/compact`` can start a fresh Claude session while history readers
+        can still walk back into the old transcript. Without it, the entry
+        is dropped entirely (``/new`` semantics).
+        """
+        key = self._session_key(bot_id, chat_id)
         sessions = self._load_sessions()
-        sessions.pop(self._session_key(bot_id, chat_id), None)
+        if not preserve_chain:
+            sessions.pop(key, None)
+            self._save_sessions(sessions)
+            return
+
+        old = sessions.get(key)
+        if not isinstance(old, dict):
+            sessions.pop(key, None)
+            self._save_sessions(sessions)
+            return
+
+        old_sid = str(old.get("session_id", "") or "")
+        prev_chain: list[str] = []
+        raw_prev = old.get("previous_session_ids") or []
+        if isinstance(raw_prev, list):
+            prev_chain = [str(s) for s in raw_prev if isinstance(s, str) and s]
+        if old_sid and old_sid not in prev_chain:
+            prev_chain.insert(0, old_sid)
+
+        new_entry = {k: v for k, v in old.items() if k not in ("session_id", "previous_session_ids")}
+        if prev_chain:
+            new_entry["previous_session_ids"] = prev_chain[:20]
+        sessions[key] = new_entry
         self._save_sessions(sessions)
 
     # --- Main session per bot/workgroup ---

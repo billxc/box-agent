@@ -323,7 +323,10 @@ async def cmd_compact(router: "Router", msg: "IncomingMessage", channel: "Channe
     else:
         await router._reset_backend_session()
     if router.storage:
-        router.storage.clear_session(router.bot_name, chat_id=chat_id)
+        # preserve_chain so the next save_session keeps the old sid in
+        # previous_session_ids — history readers (web UI, A-path walker)
+        # can still surface pre-compact transcript content.
+        router.storage.clear_session(router.bot_name, chat_id=chat_id, preserve_chain=True)
 
     router._resume_contexts.pop(chat_id, None)
     router._compact_summaries[chat_id] = summary

@@ -82,6 +82,32 @@ class TestSessionTracking:
         storage.save_session("bot", "sid_c", chat_id="c1")
         assert storage.load_session("bot", "c1")["previous_session_ids"] == ["sid_b", "sid_a"]
 
+    def test_clear_session_preserve_chain_keeps_history(self, storage):
+        """preserve_chain=True drops session_id but pushes it onto previous_session_ids."""
+        storage.save_session("bot", "sid_a", chat_id="c1", model="opus", workspace="/tmp/x")
+        storage.save_session("bot", "sid_b", chat_id="c1", model="opus", workspace="/tmp/x")
+
+        storage.clear_session("bot", chat_id="c1", preserve_chain=True)
+        entry = storage.load_session("bot", "c1")
+        assert isinstance(entry, dict)
+        assert entry.get("session_id", "") == ""
+        assert entry["previous_session_ids"] == ["sid_b", "sid_a"]
+        assert entry.get("model") == "opus"
+        assert entry.get("workspace") == "/tmp/x"
+
+        # Next save (post-/compact fresh session) chains the prior tip too
+        storage.save_session("bot", "sid_c", chat_id="c1")
+        entry = storage.load_session("bot", "c1")
+        assert entry["session_id"] == "sid_c"
+        assert entry["previous_session_ids"] == ["sid_b", "sid_a"]
+
+    def test_clear_session_default_drops_entry(self, storage):
+        """Without preserve_chain the entry is removed (/new semantics)."""
+        storage.save_session("bot", "sid_a", chat_id="c1")
+        storage.save_session("bot", "sid_b", chat_id="c1")
+        storage.clear_session("bot", chat_id="c1")
+        assert storage.load_session("bot", "c1") is None
+
     def test_chain_is_per_chat_not_per_bot(self, storage):
         storage.save_session("bot", "sid_x", chat_id="c1")
         storage.save_session("bot", "sid_y", chat_id="c2")

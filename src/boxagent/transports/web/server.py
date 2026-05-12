@@ -587,6 +587,24 @@ class WebHttpServer:
             if saved_backend in ("claude-cli", "agent-sdk-claude") and sids:
                 from boxagent.history import get_history
                 history_impl = get_history(saved_backend)
+                # Walk the SDK's compact chain off whichever session is the
+                # oldest one we already know about — catches cases where
+                # storage's previous_session_ids missed a hop (cross-machine
+                # restore, manual /resume of a native session, native
+                # auto-compact while storage was unavailable).
+                walk_method = getattr(history_impl, "walk_compact_chain", None)
+                if walk_method is not None and sids:
+                    try:
+                        ancestors = await walk_method(sids[-1])
+                    except Exception:  # walking is best-effort
+                        ancestors = []
+                    if ancestors:
+                        existing = set(sids)
+                        # ancestors are oldest-first; we render newest-first → reverse
+                        for sid in reversed(ancestors):
+                            if sid not in existing:
+                                sids.append(sid)
+                                existing.add(sid)
                 # SDK can find a session without us knowing the project
                 # — pass empty project_id and let it search.
                 for sid in sids:

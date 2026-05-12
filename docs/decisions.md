@@ -114,6 +114,14 @@
 
 **已知遗憾**: Resume 别人之前 compact 出来的原生 Claude session 时，那段更早的历史 Claude 自己 JSONL 里没存 parent 关系，无从恢复。
 
+## 2026-05-12: 修复 /compact 丢失旧 session（yait #88）
+
+**决定**: 两层修复。
+1. `Storage.clear_session` 加 `preserve_chain=True`：清掉 `session_id` 但把它推进 `previous_session_ids`，其余字段（model/workspace/backend）保留。`/compact` 命令用这个，`/new` 仍用默认 drop。
+2. `ClaudeAgentHistory.walk_compact_chain(sid)`：读 jsonl 头部 `isCompactSummary` 的 `parentUuid`，扫 project dir 找包含此 uuid 的 jsonl → 上一个 sid，递归。`/api/history` 在 storage chain 之后追加 walker 找到的祖先 sid（去重），覆盖跨机器、native auto-compact、用户手选 native session 等 storage chain 缺失的场景。
+
+**原因**: bb7f40c 的 chain 机制依赖 storage entry 不被中途清掉；`/compact` 命令调 `clear_session` 把它和 chain 一起删了，旧 session 从此孤立。SDK `get_session_messages` 有意不跨 compact 边界（`_build_conversation_chain` 不 follow `logicalParentUuid`），所以光修 storage 还不够鲁棒，加 walker 兜底。
+
 ---
 
 ## 2026-05-02: Claude 原生 session 浏览 + 恢复

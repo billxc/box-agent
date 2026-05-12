@@ -258,7 +258,7 @@ class TestCompactCommand:
 
         assert cli.reset_session_count == 1
         assert cli.session_id is None
-        mock_storage.clear_session.assert_called_once_with("test-bot", chat_id="123")
+        mock_storage.clear_session.assert_called_once_with("test-bot", chat_id="123", preserve_chain=True)
         # Final summary lands either as a sent_text or as the closing
         # stream chunk depending on the channel path.
         final_text = (mock_channel.sent_texts[-1][1] if mock_channel.sent_texts else "") + \
