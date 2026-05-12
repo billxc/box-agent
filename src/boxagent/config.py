@@ -119,6 +119,14 @@ class AppConfig:
     bots: dict[str, BotConfig] = field(default_factory=dict)
     workgroups: dict[str, WorkgroupConfig] = field(default_factory=dict)
     telegram_bots: dict[str, str] = field(default_factory=dict)
+    # Standalone Telegram push notifier — decoupled from chat bots. Sends a
+    # message to `notify_telegram_chat_id` whenever an event matching
+    # `notify_telegram_levels` (and optionally `notify_telegram_categories`)
+    # is published. Empty token disables.
+    notify_telegram_token: str = ""
+    notify_telegram_chat_id: str = ""
+    notify_telegram_levels: list[str] = field(default_factory=lambda: ["error", "notify"])
+    notify_telegram_categories: list[str] = field(default_factory=list)
 
 
 def _validate_workgroups(
@@ -219,6 +227,23 @@ def load_config(
 
     telegram_bots = _load_telegram_bots(config_dir)
 
+    notify_config = effective_raw.get("notify", {}) or {}
+    notify_telegram = (notify_config.get("telegram") or {}) if isinstance(notify_config, dict) else {}
+    notify_telegram_token = str(notify_telegram.get("token", "") or "")
+    notify_telegram_token = os.environ.get("BOXAGENT_NOTIFY_TELEGRAM_TOKEN", notify_telegram_token)
+    notify_telegram_chat_id = str(notify_telegram.get("chat_id", "") or "")
+    notify_telegram_chat_id = os.environ.get("BOXAGENT_NOTIFY_TELEGRAM_CHAT_ID", notify_telegram_chat_id)
+    raw_levels = notify_telegram.get("levels")
+    notify_telegram_levels = (
+        [str(level).strip().lower() for level in raw_levels if str(level).strip()]
+        if isinstance(raw_levels, list) else ["error", "notify"]
+    )
+    raw_categories = notify_telegram.get("categories") or []
+    notify_telegram_categories = (
+        [str(c).strip() for c in raw_categories if str(c).strip()]
+        if isinstance(raw_categories, list) else []
+    )
+
     bots: dict[str, BotConfig] = {}
     for bot_name, bot_raw in effective_raw.get("bots", {}).items():
         # Skip bots not enabled on this node (avoids validating placeholder bot_ids)
@@ -261,6 +286,10 @@ def load_config(
         bots=bots,
         workgroups=workgroups,
         telegram_bots=telegram_bots,
+        notify_telegram_token=notify_telegram_token,
+        notify_telegram_chat_id=notify_telegram_chat_id,
+        notify_telegram_levels=notify_telegram_levels,
+        notify_telegram_categories=notify_telegram_categories,
     )
 
 

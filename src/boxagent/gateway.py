@@ -158,6 +158,7 @@ class Gateway:
     _mcp_server: McpHttpServer | None = field(default=None, repr=False)
     _web_server: WebHttpServer | None = field(default=None, repr=False)
     _event_bus: "EventBus | None" = field(default=None, repr=False)
+    _telegram_notifier: "object | None" = field(default=None, repr=False)
 
     async def start(self) -> None:
         self._start_time = time.time()
@@ -179,6 +180,22 @@ class Gateway:
         event_store = EventStore(self.local_dir / "events.db")
         self._event_bus = EventBus(store=event_store, machine_id=machine_id)
         log.bind(self._event_bus)
+
+        # Standalone Telegram push: subscribes to the bus, posts to bot API.
+        # Decoupled from chat-bot tokens; uses notify.telegram.* config.
+        from boxagent.events.telegram_notifier import TelegramNotifier
+        self._telegram_notifier = TelegramNotifier(
+            token=self.config.notify_telegram_token,
+            chat_id=self.config.notify_telegram_chat_id,
+            levels=self.config.notify_telegram_levels,
+            categories=self.config.notify_telegram_categories,
+        )
+        if self._telegram_notifier.enabled:
+            self._telegram_notifier.attach(self._event_bus)
+            logger.info("telegram notifier enabled (chat_id=%s, levels=%s)",
+                        self.config.notify_telegram_chat_id,
+                        self.config.notify_telegram_levels)
+
         log.info(Category.SYSTEM_STARTUP, "gateway starting",
                  machine_id=machine_id, node_id=self.config.node_id)        # Phase 1: build managers. AgentManager owns its bot-state dicts;
         # everyone else who needs to read them gets the dict by reference.
@@ -344,6 +361,13 @@ class Gateway:
 
             log.info(Category.SYSTEM_SHUTDOWN, "gateway stopped")
             log.unbind()
+            if self._telegram_notifier is not None:
+                self._telegram_notifier.detach(self._event_bus)
+                try:
+                    await self._telegram_notifier.aclose()
+                except Exception:
+                    logger.exception("Error closing telegram notifier")
+                self._telegram_notifier = None
             try:
                 self._event_bus.close()
             except Exception:
