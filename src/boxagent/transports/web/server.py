@@ -156,6 +156,7 @@ class WebHttpServer:
         app.router.add_get("/api/sessions", self._handle_web_sessions)
         app.router.add_post("/api/sessions/set_main", self._handle_set_main_session)
         app.router.add_post("/api/sessions/rename", self._handle_rename_session)
+        app.router.add_get("/api/session_info", self._handle_web_session_info)
         app.router.add_get("/api/version", self._handle_version)
         app.router.add_post("/api/admin/restart", self._handle_admin_restart)
         app.router.add_post("/api/admin/cluster_restart", self._handle_admin_cluster_restart)
@@ -652,6 +653,54 @@ class WebHttpServer:
             history = history[-(offset + limit):len(history) - offset if offset else None]
         return web.json_response({"ok": True, "total": total, "history": history})
 
+    async def _handle_web_session_info(self, request: web.Request) -> web.Response:
+        """SessionInfo for one ``session_id`` (chat-decoupled).
+
+        Required: ``session_id``, ``backend_kind``, ``machine`` (for
+        cluster_rpc dispatch). Optional: ``model`` (for context_window
+        lookup), ``workspace`` (helps locate Codex transcripts).
+        """
+        if not self._authorized(request):
+            return self._unauthorized()
+        session_id = request.query.get("session_id", "")
+        backend_kind = request.query.get("backend_kind", "")
+        machine = request.query.get("machine", "")
+        model = request.query.get("model", "")
+        workspace = request.query.get("workspace", "")
+        if not session_id or not backend_kind or not machine:
+            return web.json_response(
+                {"ok": False, "error": "missing session_id/backend_kind/machine"},
+                status=400,
+            )
+        if machine != self.topology.local_machine_id():
+            response = await self.cluster_rpc.dispatch_machine_request(
+                machine, "GET", "/api/session_info", request,
+            )
+            if response is not None:
+                return response
+        from boxagent.sessions.info_builder import build_session_info
+        try:
+            info = await build_session_info(
+                session_id=session_id,
+                backend_kind=backend_kind,
+                model=model,
+                workspace=workspace,
+            )
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return web.json_response({"ok": True, "info": {
+            "session_id": info.session_id,
+            "backend_kind": info.backend_kind,
+            "model": info.model,
+            "workspace": info.workspace,
+            "last_turn_usage": info.last_turn_usage,
+            "message_count": info.message_count,
+            "last_ts": info.last_ts,
+            "context_window": info.context_window,
+            "context_used": info.context_used,
+            "extra": info.extra,
+        }})
+
     async def _handle_web_send(self, request: web.Request) -> web.Response:
         if not self._authorized(request):
             return self._unauthorized()
@@ -740,9 +789,26 @@ class WebHttpServer:
         from boxagent.history import get_history
         history = get_history("claude-cli")
         projects = await history.list_projects()
+        total = len(projects)
+        try:
+            limit = int(request.query.get("limit", "30"))
+        except ValueError:
+            limit = 30
+        try:
+            offset = int(request.query.get("offset", "0"))
+        except ValueError:
+            offset = 0
+        offset = max(offset, 0)
+        if limit > 0:
+            page = projects[offset:offset + limit]
+        else:
+            page = projects[offset:]
         return web.json_response({
             "ok": True,
-            "projects": [_project_to_dict(p) for p in projects],
+            "projects": [_project_to_dict(p) for p in page],
+            "total": total,
+            "offset": offset,
+            "has_more": offset + len(page) < total,
         })
 
     async def _handle_claude_sessions(self, request: web.Request) -> web.Response:

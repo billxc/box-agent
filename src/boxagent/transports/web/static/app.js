@@ -10,6 +10,7 @@
   const sessionList = $("session-list");
   const sessionsOf = $("sessions-of");
   const chatTitle = $("chat-title");
+  const sessionInfoEl = $("session-info");
   const composer = $("composer");
   const input = $("input");
   const sendBtn = $("send");
@@ -495,6 +496,56 @@
   }
 
   // ── Chat lifecycle ──
+
+  function fmtTokens(n) {
+    if (!n) return "0";
+    if (n >= 1000) return Math.floor(n / 1000) + "k";
+    return String(n);
+  }
+
+  function renderSessionInfo(info) {
+    if (!info) {
+      sessionInfoEl.classList.add("hidden");
+      sessionInfoEl.textContent = "";
+      return;
+    }
+    const parts = [];
+    if (info.backend_kind) parts.push(info.backend_kind);
+    if (info.context_window && info.context_used) {
+      const pct = Math.round((info.context_used / info.context_window) * 100);
+      parts.push(`ctx ${fmtTokens(info.context_used)}/${fmtTokens(info.context_window)} (${pct}%)`);
+    }
+    sessionInfoEl.textContent = parts.join(" · ");
+    sessionInfoEl.classList.toggle("hidden", parts.length === 0);
+  }
+
+  async function refreshSessionInfo() {
+    if (!state.botMachine) { renderSessionInfo(null); return; }
+    const serverList = state.serverSessions[curKey()] || [];
+    const serverMeta = serverList.find(s => s.chat_id === state.chatId);
+    const sessionId = serverMeta && serverMeta.session_id;
+    if (!sessionId) { renderSessionInfo(null); return; }
+    const botInfo = (state.machines || [])
+      .find(m => m.machine_id === state.botMachine)?.bots
+      ?.find(b => b.name === state.bot);
+    const backendKind = botInfo?.backend || "";
+    const model = botInfo?.model || "";
+    if (!backendKind) { renderSessionInfo(null); return; }
+    try {
+      const r = await api(
+        `session_info?session_id=${encodeURIComponent(sessionId)}` +
+        `&backend_kind=${encodeURIComponent(backendKind)}` +
+        `&machine=${encodeURIComponent(state.botMachine)}` +
+        `&model=${encodeURIComponent(model)}`
+      );
+      if (!r.ok) { renderSessionInfo(null); return; }
+      const data = await r.json();
+      renderSessionInfo(data.info || null);
+    } catch (_) {
+      renderSessionInfo(null);
+    }
+  }
+
   async function switchChat(chatId) {
     if (state.es) { state.es.close(); state.es = null; }
     state.chatId = chatId;
@@ -507,6 +558,7 @@
     const backendTitle = serverMeta && (serverMeta.custom_title || serverMeta.summary);
     const resolvedTitle = backendTitle || meta.title || (serverMeta ? defaultTitle(serverMeta) : chatId);
     chatTitle.textContent = resolvedTitle;
+    refreshSessionInfo();
     localStorage.setItem("ba.last." + curKey(), chatId);
 
     // Record this open in the cross-bot recents so the next visit can find
@@ -625,6 +677,7 @@
         fetchServerSessions(state.botMachine, state.bot).then((list) => {
           state.serverSessions[curKey()] = list;
           refreshSessionList();
+          refreshSessionInfo();
         });
         break;
       }
@@ -1191,21 +1244,52 @@
     pickerProjects.innerHTML = "<li class='muted'>Loading…</li>";
     pickerCount.textContent = "";
     try {
-      const r = await api(`claude/projects?machine=${encodeURIComponent(state.botMachine)}`);
-      const { projects } = await r.json();
-      pickerProjects.innerHTML = "";
-      pickerCount.textContent = `${projects.length} projects`;
-      for (const p of projects) {
-        const li = document.createElement("li");
-        li.innerHTML = `<div class="grow"><div class="row1">📁 ${escapeHtml(p.label)}</div><div class="row2">${escapeHtml(p.cwd || p.encoded)}</div></div><span class="meta">${p.session_count} · ${formatTs(p.last_ts)}</span>`;
-        li.onclick = () => showSessions(p);
-        pickerProjects.appendChild(li);
-      }
-      if (projects.length === 0) {
-        pickerProjects.innerHTML = "<li class='muted'>No Claude sessions found at ~/.claude/projects/</li>";
-      }
+      await loadProjectsPage(0, /*replace=*/ true);
     } catch (e) {
       pickerProjects.innerHTML = `<li class='muted'>Error: ${escapeHtml(e.message)}</li>`;
+    }
+  }
+
+  const PROJECTS_PAGE_SIZE = 30;
+
+  async function loadProjectsPage(offset, replace) {
+    const r = await api(
+      `claude/projects?machine=${encodeURIComponent(state.botMachine)}` +
+      `&offset=${offset}&limit=${PROJECTS_PAGE_SIZE}`,
+    );
+    const { projects, total, has_more } = await r.json();
+    const existingMore = pickerProjects.querySelector(".load-more");
+    if (existingMore) existingMore.remove();
+    if (replace) pickerProjects.innerHTML = "";
+    if (replace && projects.length === 0) {
+      pickerProjects.innerHTML = "<li class='muted'>No Claude sessions found at ~/.claude/projects/</li>";
+      pickerCount.textContent = "0 projects";
+      return;
+    }
+    for (const p of projects) {
+      const li = document.createElement("li");
+      li.innerHTML = `<div class="grow"><div class="row1">📁 ${escapeHtml(p.label)}</div><div class="row2">${escapeHtml(p.cwd || p.encoded)}</div></div><span class="meta">${p.session_count} · ${formatTs(p.last_ts)}</span>`;
+      li.onclick = () => showSessions(p);
+      pickerProjects.appendChild(li);
+    }
+    const shown = pickerProjects.querySelectorAll("li:not(.load-more):not(.muted)").length;
+    pickerCount.textContent = `${shown} / ${total} projects`;
+    if (has_more) {
+      const li = document.createElement("li");
+      li.className = "load-more muted";
+      li.style.cursor = "pointer";
+      li.style.textAlign = "center";
+      li.textContent = "Load more…";
+      li.onclick = async () => {
+        li.textContent = "Loading…";
+        li.onclick = null;
+        try {
+          await loadProjectsPage(offset + PROJECTS_PAGE_SIZE, /*replace=*/ false);
+        } catch (e) {
+          li.textContent = `Error: ${e.message}`;
+        }
+      };
+      pickerProjects.appendChild(li);
     }
   }
 
