@@ -109,3 +109,44 @@ def test_walk_compact_chain_recurses_through_multiple_compactions(fake_project):
     chain = history._walk_compact_chain_sync(sid_c, cwd)
     # oldest-first
     assert chain == [sid_a, sid_b]
+
+
+def test_read_messages_picks_up_pre_compact_entries(fake_project):
+    """When jsonl contains compact_boundary, raw-read returns ALL entries.
+
+    SDK's get_session_messages stops at compact_boundary; our fallback
+    bypasses it and surfaces both pre- and post-compact user/assistant
+    content (yait #89).
+    """
+    project_dir, cwd = fake_project
+    sid = "44444444-4444-4444-4444-444444444444"
+    _write_jsonl(project_dir / f"{sid}.jsonl", [
+        {"type": "user", "uuid": "u1", "sessionId": sid,
+         "timestamp": "2026-05-12T10:00:00Z",
+         "message": {"role": "user", "content": "pre-compact question"}},
+        {"type": "assistant", "uuid": "a1", "parentUuid": "u1", "sessionId": sid,
+         "timestamp": "2026-05-12T10:00:01Z",
+         "message": {"role": "assistant", "content": "pre-compact answer"}},
+        {"type": "system", "uuid": "s1", "sessionId": sid,
+         "subtype": "compact_boundary",
+         "timestamp": "2026-05-12T10:00:02Z"},
+        {"type": "user", "uuid": "u2", "parentUuid": "a1", "sessionId": sid,
+         "isCompactSummary": True,
+         "timestamp": "2026-05-12T10:00:03Z",
+         "message": {"role": "user", "content": "[summary]"}},
+        {"type": "assistant", "uuid": "a2", "parentUuid": "u2", "sessionId": sid,
+         "timestamp": "2026-05-12T10:00:04Z",
+         "message": {"role": "assistant", "content": "post-compact answer"}},
+    ])
+
+    history = ClaudeAgentHistory()
+    messages = history._read_messages_sync(sid, cwd)
+    texts = []
+    for msg in messages:
+        raw = msg.message if isinstance(msg.message, dict) else {}
+        content = raw.get("content")
+        if isinstance(content, str):
+            texts.append(content)
+    assert "pre-compact question" in texts
+    assert "pre-compact answer" in texts
+    assert "post-compact answer" in texts

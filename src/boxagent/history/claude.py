@@ -65,17 +65,95 @@ class ClaudeAgentHistory:
     async def read_messages(
         self, session_id: str, project_id: str = "",
     ) -> list[Message]:
+        # When Claude's native /compact (manual or auto) fires, the new
+        # summary + post-compact entries land in the SAME jsonl as the
+        # pre-compact ones, but SDK's get_session_messages stops at the
+        # compact_boundary entry. Detect that and read raw so the web UI
+        # can still surface pre-compact content (yait #89).
         try:
             messages = await asyncio.to_thread(
-                get_session_messages, session_id, project_id or None,
+                self._read_messages_sync, session_id, project_id,
             )
         except Exception as e:
             logger.warning(
-                "SDK get_session_messages failed sid=%s cwd=%s: %s",
+                "read_messages failed sid=%s cwd=%s: %s",
                 session_id, project_id, e,
             )
             return []
         return self._convert_messages(messages)
+
+    def _read_messages_sync(
+        self, session_id: str, project_id: str,
+    ) -> list[SessionMessage]:
+        jsonl_path = self._jsonl_path_for(session_id, project_id)
+        if jsonl_path is not None and self._has_compact_boundary(jsonl_path):
+            return self._read_session_raw(jsonl_path)
+        return get_session_messages(session_id, project_id or None)
+
+    @staticmethod
+    def _has_compact_boundary(jsonl_path: Path) -> bool:
+        try:
+            with jsonl_path.open("r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if '"compact_boundary"' in line or '"isCompactSummary":true' in line or '"isCompactSummary": true' in line:
+                        return True
+        except OSError:
+            return False
+        return False
+
+    @staticmethod
+    def _read_session_raw(jsonl_path: Path) -> list[SessionMessage]:
+        """Parse a session JSONL into ``SessionMessage`` objects directly.
+
+        Mirrors SDK's ``_is_visible_message`` filter (skip isMeta /
+        isSidechain / teamName) but keeps **all** user/assistant entries
+        regardless of compact boundaries — that's the whole point of this
+        path. ``timestamp`` is attached so ``_msg_timestamp`` orders the
+        merged list correctly.
+        """
+        out: list[SessionMessage] = []
+        try:
+            with jsonl_path.open("r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(entry, dict):
+                        continue
+                    entry_type = entry.get("type")
+                    if entry_type not in ("user", "assistant"):
+                        continue
+                    if entry.get("isMeta") or entry.get("isSidechain") or entry.get("teamName"):
+                        continue
+                    raw_message = entry.get("message")
+                    msg = SessionMessage(
+                        type=entry_type,  # type: ignore[arg-type]
+                        uuid=entry.get("uuid", "") or "",
+                        session_id=entry.get("sessionId", "") or "",
+                        message=raw_message,
+                        parent_tool_use_id=None,
+                    )
+                    # Attach timestamp/cwd/git_branch the same way the
+                    # _sdk_patch monkey patch does for SDK output, so
+                    # _msg_timestamp can sort entries chronologically.
+                    msg.timestamp = entry.get("timestamp")  # type: ignore[attr-defined]
+                    msg.cwd = entry.get("cwd")  # type: ignore[attr-defined]
+                    msg.git_branch = entry.get("gitBranch")  # type: ignore[attr-defined]
+                    out.append(msg)
+        except OSError:
+            return []
+        return out
+
+    def _jsonl_path_for(self, session_id: str, project_id: str) -> Path | None:
+        project_dir = self._project_dir_for(session_id, project_id)
+        if project_dir is None:
+            return None
+        candidate = project_dir / f"{session_id}.jsonl"
+        return candidate if candidate.is_file() else None
 
     async def walk_compact_chain(
         self, session_id: str, project_id: str = "",
