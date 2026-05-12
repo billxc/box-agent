@@ -65,3 +65,36 @@ async def test_tool_success_does_not_log_error(bus):
 
     await ok({}, _ctx())
     assert [e for e in bus.query() if e.category == "agent.tool_error"] == []
+
+
+@pytest.mark.asyncio
+async def test_tool_error_records_args_for_distinguishability(bus):
+    @boxagent_tool(name="t_args", group="peer",
+                   description="x", schema={})
+    async def fails(args, ctx):
+        return "Error: gateway not available"
+
+    await fails({"target": "mbp", "message": "hi", "wait": True}, _ctx())
+    await fails({"target": "devbox-xl", "message": "hi", "wait": True}, _ctx())
+
+    events = [e for e in bus.query() if e.category == "agent.tool_error"]
+    assert len(events) == 2
+    targets = {e.meta["args"]["target"] for e in events}
+    assert targets == {"mbp", "devbox-xl"}
+
+
+@pytest.mark.asyncio
+async def test_tool_error_redacts_secrets_and_truncates(bus):
+    @boxagent_tool(name="t_secret", group="peer",
+                   description="x", schema={})
+    async def fails(args, ctx):
+        return "Error: nope"
+
+    long_msg = "x" * 500
+    await fails({"token": "shh", "password": "p", "message": long_msg}, _ctx())
+
+    events = [e for e in bus.query() if e.category == "agent.tool_error"]
+    args = events[0].meta["args"]
+    assert args["token"] == "<redacted>"
+    assert args["password"] == "<redacted>"
+    assert len(args["message"]) < 250 and "…" in args["message"]

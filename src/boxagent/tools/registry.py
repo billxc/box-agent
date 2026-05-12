@@ -101,6 +101,30 @@ class ToolDef:
 _TOOLS: list[ToolDef] = []
 
 
+def _summarize_args(args: dict) -> dict:
+    """Best-effort short, non-sensitive snapshot of tool args for error logs.
+
+    Strings over 200 chars are truncated. Bytes / non-JSON types are
+    stringified. Keys whose name suggests a secret are redacted.
+    """
+    if not isinstance(args, dict):
+        return {"_repr": repr(args)[:300]}
+    REDACT = {"token", "password", "secret", "api_key", "authorization"}
+    out: dict = {}
+    for k, v in args.items():
+        kl = str(k).lower()
+        if any(s in kl for s in REDACT):
+            out[k] = "<redacted>"
+            continue
+        if isinstance(v, str):
+            out[k] = v if len(v) <= 200 else v[:200] + f"…(+{len(v)-200})"
+        elif isinstance(v, (int, float, bool)) or v is None:
+            out[k] = v
+        else:
+            out[k] = repr(v)[:200]
+    return out
+
+
 def boxagent_tool(
     *,
     name: str,
@@ -117,6 +141,7 @@ def boxagent_tool(
 
         async def wrapped(args: dict, ctx: "ToolContext"):
             from boxagent.log import Category, log
+            args_summary = _summarize_args(args)
             try:
                 result = await fn(args, ctx)
             except Exception as e:
@@ -127,6 +152,7 @@ def boxagent_tool(
                     tool=name,
                     bot=getattr(ctx, "bot_name", None),
                     chat_id=getattr(ctx, "chat_id", None),
+                    args=args_summary,
                     exception=type(e).__name__,
                     traceback=_tb.format_exc(limit=20),
                 )
@@ -138,6 +164,7 @@ def boxagent_tool(
                     tool=name,
                     bot=getattr(ctx, "bot_name", None),
                     chat_id=getattr(ctx, "chat_id", None),
+                    args=args_summary,
                 )
             return result
 
