@@ -114,15 +114,42 @@ def boxagent_tool(
     def decorator(fn: ToolHandler) -> ToolHandler:
         if any(t.name == name for t in _TOOLS):
             raise ValueError(f"Duplicate boxagent_tool name: {name!r}")
+
+        async def wrapped(args: dict, ctx: "ToolContext"):
+            from boxagent.log import Category, log
+            try:
+                result = await fn(args, ctx)
+            except Exception as e:
+                import traceback as _tb
+                log.error(
+                    Category.AGENT_TOOL_ERROR,
+                    f"tool {name} raised: {type(e).__name__}: {e}",
+                    tool=name,
+                    bot=getattr(ctx, "bot_name", None),
+                    chat_id=getattr(ctx, "chat_id", None),
+                    exception=type(e).__name__,
+                    traceback=_tb.format_exc(limit=20),
+                )
+                raise
+            if isinstance(result, str) and result.lstrip().lower().startswith("error:"):
+                log.error(
+                    Category.AGENT_TOOL_ERROR,
+                    f"tool {name} returned: {result[:300]}",
+                    tool=name,
+                    bot=getattr(ctx, "bot_name", None),
+                    chat_id=getattr(ctx, "chat_id", None),
+                )
+            return result
+
         _TOOLS.append(ToolDef(
             name=name,
             group=group,
             description=description,
             schema=schema or {},
-            handler=fn,
+            handler=wrapped,
             requires=list(requires or []),
         ))
-        return fn
+        return wrapped
 
     return decorator
 

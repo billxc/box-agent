@@ -87,7 +87,7 @@ async def test_log_event_missing_category_is_error(bound_bus):
     store, _ = bound_bus
     out = await log_event({"message": "x"}, _ctx())
     assert "error" in out.lower()
-    assert store.query() == []
+    assert [e for e in store.query() if e.category != "agent.tool_error"] == []
 
 
 @pytest.mark.asyncio
@@ -95,4 +95,4 @@ async def test_log_event_missing_message_is_error(bound_bus):
     store, _ = bound_bus
     out = await log_event({"category": "x"}, _ctx())
     assert "error" in out.lower()
-    assert store.query() == []
+    assert [e for e in store.query() if e.category != "agent.tool_error"] == []

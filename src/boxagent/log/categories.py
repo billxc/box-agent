@@ -27,6 +27,7 @@ class Category:
     AGENT_TURN = "agent.turn"
     AGENT_TOOL_CALL = "agent.tool_call"
     AGENT_TOOL_RESULT = "agent.tool_result"
+    AGENT_TOOL_ERROR = "agent.tool_error"
 
     CLUSTER_PEER_UP = "cluster.peer.up"
     CLUSTER_PEER_DOWN = "cluster.peer.down"
