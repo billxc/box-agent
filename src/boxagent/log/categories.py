@@ -33,3 +33,5 @@ class Category:
 
     SYSTEM_STARTUP = "system.startup"
     SYSTEM_SHUTDOWN = "system.shutdown"
+
+    WEB_ERROR = "web.error"

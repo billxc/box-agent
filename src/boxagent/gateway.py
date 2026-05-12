@@ -96,7 +96,8 @@ class InternalApiServer:
                 f.unlink(missing_ok=True)
 
     async def start(self) -> None:
-        app = web.Application()
+        from boxagent.web_error_middleware import error_logging_middleware
+        app = web.Application(middlewares=[error_logging_middleware])
         if self.scheduler_routes is not None:
             app.router.add_post("/api/schedule/run", self.scheduler_routes.handle_schedule_run)
         if self.workgroup_routes is not None:

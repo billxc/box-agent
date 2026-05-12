@@ -120,7 +120,8 @@ class WebHttpServer:
 
     async def start(self) -> None:
         """Build and start the Web UI aiohttp server (own port)."""
-        web_app = web.Application()
+        from boxagent.web_error_middleware import error_logging_middleware
+        web_app = web.Application(middlewares=[error_logging_middleware])
 
         # Web UI / API routes
         self._register_routes(web_app)
