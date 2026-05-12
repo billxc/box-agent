@@ -294,14 +294,47 @@ async def cmd_compact(router: "Router", msg: "IncomingMessage", channel: "Channe
 
     user_hint = msg.text.strip().partition(" ")[2].strip()
 
-    summary_prompt = (
-        "Please provide a concise summary of our entire conversation so far. "
-        "Include: key topics discussed, decisions made, important context, "
-        "and any pending tasks. Format as bullet points. "
-        "This summary will be used to continue in a new session."
-    )
+    # Structured prompt aligned with Claude CLI's /compact output format so a
+    # future session can pick up cold. TODO: when claude-agent-sdk exposes a
+    # native /compact that preserves pre-compact transcript visibility, swap
+    # this for the SDK call (yait #88 / #89 context).
+    hint_section = ""
     if user_hint:
-        summary_prompt += f"\n\nAdditional instructions: {user_hint}"
+        hint_section = (
+            "\n\nUser-provided focus (prioritize preserving detail on this "
+            f"when summarizing):\n{user_hint}\n"
+        )
+
+    summary_prompt = (
+        "Your task is to create a detailed summary of the conversation so far, "
+        "paying close attention to the user's explicit requests and your "
+        "previous actions. This summary will be used to continue the "
+        "conversation in a new session, so it must capture every detail "
+        "needed to pick up cold without losing context."
+        f"{hint_section}\n"
+        "Structure your summary using these exact sections:\n\n"
+        "1. Primary Request and Intent: What the user is trying to accomplish, "
+        "in their own words where possible. Capture the sequence of explicit "
+        "requests.\n"
+        "2. Key Technical Concepts: Technologies, frameworks, libraries, "
+        "patterns, and domain concepts that came up.\n"
+        "3. Files and Code Sections: Every file read, created, or modified — "
+        "with paths and a brief note on why it matters. Include important "
+        "code snippets verbatim if they encode decisions.\n"
+        "4. Errors and fixes: Errors encountered, how they were diagnosed, "
+        "and the fix applied. Include user corrections to your approach.\n"
+        "5. Problem Solving: Problems solved and ongoing troubleshooting.\n"
+        "6. All user messages: List every non-tool-result user message "
+        "verbatim so intent isn't lost to summarization.\n"
+        "7. Pending Tasks: Anything explicitly asked for that isn't done yet.\n"
+        "8. Current Work: What was happening immediately before this compact "
+        "— file paths, function names, last edit.\n"
+        "9. Optional Next Step: The single next action that directly "
+        "continues the most recent user request. Quote the user's words "
+        "showing the request.\n\n"
+        "Be thorough and precise. Prefer specifics (file paths, line "
+        "numbers, exact identifiers) over generic descriptions."
+    )
 
     collector = TextCollector()
     await channel.show_typing(chat_id)

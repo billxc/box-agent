@@ -310,7 +310,7 @@ class TestCompactCommand:
 
         assert len(cli.sends) == 1
         assert "帮我重点保存数据库相关的内容" in cli.sends[-1].message
-        assert "Additional instructions" in cli.sends[-1].message
+        assert "User-provided focus" in cli.sends[-1].message
 
     async def test_compact_without_hint_no_additional(self, mock_channel, mock_storage):
         """Plain /compact has no additional instructions."""
@@ -327,7 +327,7 @@ class TestCompactCommand:
         await r.handle_message(msg("/compact"))
 
         assert len(cli.sends) == 1
-        assert "Additional instructions" not in cli.sends[-1].message
+        assert "User-provided focus" not in cli.sends[-1].message
 
 
 class TestModelCommand:

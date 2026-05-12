@@ -124,6 +124,18 @@
 
 ---
 
+## 2026-05-12: /compact prompt 对齐 Claude CLI 结构 + raw-read 兜底（yait #89）
+
+**决定**: 两件事一起记。
+1. `cmd_compact` 的 summary prompt 从简短模板换成 Claude CLI 风格的 9 段结构化输出（Primary Request / Key Concepts / Files / Errors / Problem Solving / All user messages / Pending Tasks / Current Work / Optional Next Step），user hint 注入到顶部 "User-provided focus"。
+2. `ClaudeAgentHistory.read_messages` 加 raw-read fallback：jsonl 含 `compact_boundary` / `isCompactSummary` 时绕过 SDK `get_session_messages`，直接逐行解析（过滤 isMeta/isSidechain/teamName，对齐 `_sdk_patch.py` 注入 timestamp/cwd/git_branch）。覆盖 SDK 自身 autocompact 把数据写进同一 jsonl 但 SDK reader 看不见的场景。
+
+**原因**: 我们的 `/compact` 一直是自己的实现（生成 summary → 重置 session → 把 summary 带进新 session），没切到 SDK native。SDK native 当前不暴露"包含 pre-compact 的完整 transcript"接口，且行为（in-place 改 sid 还是 fork）跨版本不稳。先继续用我们自己的，prompt 对齐 CLI 拿到更高质量 summary；raw-read 兜 SDK autocompact 的展示丢失。
+
+**TODO**: 等 `claude-agent-sdk` 提供原生 `/compact` 且 reader 能跨边界（或给 `include_compacted=True` 之类的 flag）时，把 `cmd_compact` 切到 SDK 调用，删掉 `_read_session_raw` / `_has_compact_boundary` / `walk_compact_chain` 三段兜底代码。
+
+---
+
 ## 2026-05-02: Claude 原生 session 浏览 + 恢复
 
 **决定**: 新增 `sessions/claude_native.py`，扫 `~/.claude/projects/*/`，按项目分组 + 懒加载列出全部原生 session。Web UI sidebar 提供 "Resume Claude session..." 选择器，选中后 host BoxAgent 把对应 `session_id` + 原始 cwd workspace 写到 `sessions.yaml` 下 `bot:claude-<sid>`，next turn 时 Claude CLI 用 `--resume` 接续。
