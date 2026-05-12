@@ -159,6 +159,7 @@ class Gateway:
     _web_server: WebHttpServer | None = field(default=None, repr=False)
     _event_bus: "EventBus | None" = field(default=None, repr=False)
     _telegram_notifier: "object | None" = field(default=None, repr=False)
+    _retention_sweeper: "object | None" = field(default=None, repr=False)
 
     async def start(self) -> None:
         self._start_time = time.time()
@@ -195,6 +196,10 @@ class Gateway:
             logger.info("telegram notifier enabled (chat_id=%s, levels=%s)",
                         self.config.notify_telegram_chat_id,
                         self.config.notify_telegram_levels)
+
+        from boxagent.events.retention import RetentionSweeper
+        self._retention_sweeper = RetentionSweeper(event_store)
+        self._retention_sweeper.start()
 
         log.info(Category.SYSTEM_STARTUP, "gateway starting",
                  machine_id=machine_id, node_id=self.config.node_id)        # Phase 1: build managers. AgentManager owns its bot-state dicts;
@@ -361,6 +366,12 @@ class Gateway:
 
             log.info(Category.SYSTEM_SHUTDOWN, "gateway stopped")
             log.unbind()
+            if self._retention_sweeper is not None:
+                try:
+                    await self._retention_sweeper.stop()
+                except Exception:
+                    logger.exception("Error stopping retention sweeper")
+                self._retention_sweeper = None
             if self._telegram_notifier is not None:
                 self._telegram_notifier.detach(self._event_bus)
                 try:
