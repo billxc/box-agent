@@ -62,3 +62,19 @@ class AgentCallback(Protocol):
     async def on_image(self, path: str, caption: str = "") -> None:
         """Called when the agent produces an image. V1: no-op stub."""
         ...
+
+    async def on_compact_event(
+        self, event: str, metadata: dict | None = None,
+    ) -> None:
+        """Called when the backend reports an autocompact lifecycle event.
+
+        Args:
+            event: One of ``"compacting"`` (started), ``"compacted"``
+                (finished, before boundary entry written), or ``"boundary"``
+                (boundary entry written, ``metadata`` populated).
+            metadata: For ``"boundary"`` events, the SDK's ``compact_metadata``
+                dict — keys include ``trigger`` (``"auto"`` / ``"manual"``),
+                ``pre_tokens``, ``post_tokens``, ``duration_ms``. ``None`` for
+                ``"compacting"`` / ``"compacted"``.
+        """
+        ...

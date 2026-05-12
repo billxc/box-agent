@@ -50,6 +50,9 @@ class TextCollector:
     async def on_image(self, path: str, caption: str = ""):
         pass
 
+    async def on_compact_event(self, event: str, metadata: dict | None = None):
+        pass
+
 
 @dataclass
 class ChannelCallback:
@@ -197,6 +200,39 @@ class ChannelCallback:
 
     async def on_image(self, path: str, caption: str = ""):
         pass
+
+    async def on_compact_event(self, event: str, metadata: dict | None = None):
+        """Surface autocompact lifecycle to the user.
+
+        SDK autocompact takes ~2 minutes; without a notification the chat
+        looks frozen. Send "compacting..." on start and the actual ratio
+        on boundary (which carries the metadata).
+        """
+        if self._closed:
+            return
+        if event == "compacting":
+            try:
+                await self.channel.send_text(
+                    self.chat_id,
+                    "⏳ Context full — Claude is auto-compacting (this may take a minute)...",
+                    webhook_name=self.webhook_name,
+                )
+            except Exception:
+                logger.exception("Failed to send compacting notice")
+        elif event == "boundary" and metadata:
+            pre = int(metadata.get("pre_tokens", 0) or 0)
+            post = int(metadata.get("post_tokens", 0) or 0)
+            duration_s = int((metadata.get("duration_ms", 0) or 0) / 1000)
+            trigger = metadata.get("trigger", "auto")
+            try:
+                await self.channel.send_text(
+                    self.chat_id,
+                    f"✅ Compacted ({trigger}): {pre // 1000}k → {post // 1000}k "
+                    f"tokens in {duration_s}s",
+                    webhook_name=self.webhook_name,
+                )
+            except Exception:
+                logger.exception("Failed to send compacted notice")
 
 
 def log_turn(path: Path, bot: str, chat_id: str, user_text: str, assistant_text: str):

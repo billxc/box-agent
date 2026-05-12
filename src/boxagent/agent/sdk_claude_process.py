@@ -160,6 +160,22 @@ class AgentSDKClaude(AgentBackend):
                         text = str(msg.data.get("message", "")) or msg.subtype
                         if msg.subtype == "error":
                             await callback.on_error(text)
+                    elif msg.subtype == "status":
+                        # Autocompact lifecycle: SDK emits two status events
+                        # — first {"status": "compacting"} when it kicks off,
+                        # then {"status": null, "compact_result": "success"}
+                        # when done. We forward both so the channel can show
+                        # progress (compacts can take 2+ minutes).
+                        status = msg.data.get("status")
+                        if status == "compacting":
+                            await callback.on_compact_event("compacting")
+                        elif msg.data.get("compact_result") == "success":
+                            await callback.on_compact_event("compacted")
+                    elif msg.subtype == "compact_boundary":
+                        await callback.on_compact_event(
+                            "boundary",
+                            msg.data.get("compact_metadata") or {},
+                        )
 
         except asyncio.CancelledError:
             self._cancelled = True

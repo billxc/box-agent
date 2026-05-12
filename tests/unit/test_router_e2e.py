@@ -169,3 +169,40 @@ async def test_failed_turn_is_visible_to_backend_observers(world):
 
     assert world.backend.last_turn_failed
     assert world.backend.last_turn_error == "backend exploded"
+
+
+# ── Autocompact lifecycle notifications ───────────────────────────────
+
+
+async def test_compact_lifecycle_events_surface_to_channel(world):
+    """SDK autocompact "compacting" + "boundary" events become user notices.
+
+    sdk_claude_process.py forwards SDK SystemMessage(subtype="status",
+    status="compacting") and SystemMessage(subtype="compact_boundary",
+    compact_metadata={...}) as callback.on_compact_event(...). The
+    ChannelCallback turns those into channel.send_text so the user sees
+    progress during the ~2-minute compact, plus a result summary.
+    """
+    async def emit_compact(message, callback, **_):
+        await callback.on_compact_event("compacting")
+        await callback.on_compact_event("compacted")
+        await callback.on_compact_event("boundary", {
+            "trigger": "auto",
+            "pre_tokens": 712652,
+            "post_tokens": 9588,
+            "duration_ms": 165512,
+        })
+        await callback.on_stream("done")
+
+    world.backend.script_handler(emit_compact)
+    await world.channel.deliver(_msg("anything"))
+
+    notice_texts = [t for _chat, t in world.channel.sent_texts]
+    assert any("auto-compacting" in t for t in notice_texts), notice_texts
+    boundary_notices = [t for t in notice_texts if "Compacted" in t]
+    assert boundary_notices, notice_texts
+    summary = boundary_notices[-1]
+    assert "712k" in summary
+    assert "9k" in summary
+    assert "165s" in summary
+    assert "auto" in summary

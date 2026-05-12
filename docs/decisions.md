@@ -136,6 +136,21 @@
 
 ---
 
+## 2026-05-12: SDK autocompact 生命周期事件透出到前端
+
+**决定**: 实测发现 `claude_agent_sdk` 在 autocompact 触发时会向 query stream 推 3 条 `SystemMessage`：
+1. `subtype="status", status="compacting"` — compact 开始
+2. `subtype="status", compact_result="success"` — compact 完成
+3. `subtype="compact_boundary", compact_metadata={trigger, pre_tokens, post_tokens, duration_ms}` — boundary 写完
+
+新增 `AgentCallback.on_compact_event(event, metadata)` 协议方法（`event ∈ {"compacting", "compacted", "boundary"}`），`AgentSDKClaude` 在 SystemMessage 分支识别 3 类事件并转发。`ChannelCallback` 把 `compacting` 渲染成 "⏳ Context full — Claude is auto-compacting (this may take a minute)..."，把 `boundary` 渲染成 "✅ Compacted (auto): 712k → 9k tokens in 165s"。
+
+**原因**: 实测 autocompact 一次耗时 ~165 秒（preTokens=712k，postTokens=9.5k）。期间 query stream 静默，用户以为 bot 卡死。前端必须有进度提示。
+
+**只对 SDK 后端有效**：CLI subprocess 那条路解析的是另一种消息流（已废弃，10 号已重定向到 SDK）。Codex 后端有不同的 autocompact 概念，本次不处理。
+
+---
+
 ## 2026-05-02: Claude 原生 session 浏览 + 恢复
 
 **决定**: 新增 `sessions/claude_native.py`，扫 `~/.claude/projects/*/`，按项目分组 + 懒加载列出全部原生 session。Web UI sidebar 提供 "Resume Claude session..." 选择器，选中后 host BoxAgent 把对应 `session_id` + 原始 cwd workspace 写到 `sessions.yaml` 下 `bot:claude-<sid>`，next turn 时 Claude CLI 用 `--resume` 接续。
