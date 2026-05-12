@@ -9,6 +9,7 @@ backend-appropriate transport.
 # boxagent.tools.registry._TOOLS. Do NOT remove these imports — they're
 # the registration trigger.
 from boxagent.tools.builtin import admin  # noqa: F401
+from boxagent.tools.builtin import log_event  # noqa: F401
 from boxagent.tools.builtin import peer  # noqa: F401
 from boxagent.tools.builtin import schedule  # noqa: F401
 from boxagent.tools.builtin import sessions  # noqa: F401
