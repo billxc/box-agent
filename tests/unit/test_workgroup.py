@@ -432,6 +432,73 @@ class TestHeartbeatReadMd:
 
 
 # ---------------------------------------------------------------------------
+# HeartbeatManager — log facade emission
+# ---------------------------------------------------------------------------
+
+
+import pytest
+from unittest.mock import AsyncMock
+
+
+@pytest.mark.asyncio
+async def test_tick_emits_heartbeat_tick(tmp_path):
+    from boxagent.events.bus import EventBus
+    from boxagent.events.storage import EventStore
+    from boxagent.log import log
+
+    store = EventStore(tmp_path / "e.db")
+    bus = EventBus(store, machine_id="m1")
+    log.bind(bus)
+    try:
+        (tmp_path / "HEARTBEAT.md").write_text("- check things")
+        admin_router = AsyncMock()
+        admin_router.dispatch_sync = AsyncMock()
+        hb = HeartbeatManager(
+            workgroup_name="wg1", admin_pool=None, admin_router=admin_router,
+            workspace=str(tmp_path), interval_seconds=60,
+        )
+        # Avoid the fork path — return a non-silent decision so dispatch fires.
+        hb._fork_and_decide = AsyncMock(return_value=("do something", {}))
+        hb._write_heartbeat_log = lambda *a, **kw: None
+        await hb._tick()
+        cats = [e.category for e in store.query()]
+        assert "workgroup.heartbeat.tick" in cats
+        assert "workgroup.heartbeat.drive" in cats
+        tick = next(e for e in store.query() if e.category == "workgroup.heartbeat.tick")
+        assert tick.meta.get("workgroup") == "wg1"
+    finally:
+        log.unbind()
+        bus.close()
+
+
+@pytest.mark.asyncio
+async def test_tick_silent_decision_emits_pause(tmp_path):
+    from boxagent.events.bus import EventBus
+    from boxagent.events.storage import EventStore
+    from boxagent.log import log
+
+    store = EventStore(tmp_path / "e.db")
+    bus = EventBus(store, machine_id="m1")
+    log.bind(bus)
+    try:
+        (tmp_path / "HEARTBEAT.md").write_text("- check things")
+        hb = HeartbeatManager(
+            workgroup_name="wg1", admin_pool=None, admin_router=AsyncMock(),
+            workspace=str(tmp_path), interval_seconds=60,
+        )
+        hb._fork_and_decide = AsyncMock(return_value=("NO_REPLY", {}))  # silent reply
+        hb._write_heartbeat_log = lambda *a, **kw: None
+        await hb._tick()
+        cats = [e.category for e in store.query()]
+        assert "workgroup.heartbeat.tick" in cats
+        assert "workgroup.heartbeat.pause" in cats
+        assert "workgroup.heartbeat.drive" not in cats
+    finally:
+        log.unbind()
+        bus.close()
+
+
+# ---------------------------------------------------------------------------
 # HeartbeatManager — write_heartbeat_log
 # ---------------------------------------------------------------------------
 

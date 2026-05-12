@@ -449,6 +449,71 @@ async def test_fire_append_unknown_bot(tmp_path):
     assert "t1" not in sched._executing  # cleaned up even on error
 
 
+async def test_fire_emits_scheduler_run_event(tmp_path):
+    """When a task fires successfully, log facade should emit scheduler.run."""
+    from boxagent.events.bus import EventBus
+    from boxagent.events.storage import EventStore
+    from boxagent.log import log
+
+    store = EventStore(tmp_path / "events.db")
+    bus = EventBus(store, machine_id="m1")
+    log.bind(bus)
+    try:
+        mock_cli = AsyncMock()
+        mock_cli.send = AsyncMock()
+        mock_channel = AsyncMock()
+        sched = _make_scheduler(tmp_path, bot_refs={
+            "b": BotRef(backend=mock_cli, channel=mock_channel, chat_id="1"),
+        })
+        task = ScheduleTask(
+            id="t1", cron="0 9 * * *", prompt="hi", mode="append", bot="b",
+        )
+        sched._executing.add("t1")
+        await sched._fire(task)
+        events = store.query()
+        cats = [e.category for e in events]
+        assert "scheduler.run" in cats
+        run_event = next(e for e in events if e.category == "scheduler.run")
+        assert run_event.meta.get("task_id") == "t1"
+        assert run_event.meta.get("mode") == "append"
+    finally:
+        log.unbind()
+        bus.close()
+
+
+async def test_fire_emits_scheduler_fail_on_exception(tmp_path):
+    """When a task raises, log facade should emit scheduler.fail."""
+    from boxagent.events.bus import EventBus
+    from boxagent.events.storage import EventStore
+    from boxagent.log import log
+
+    store = EventStore(tmp_path / "events.db")
+    bus = EventBus(store, machine_id="m1")
+    log.bind(bus)
+    try:
+        mock_cli = AsyncMock()
+        mock_cli.send = AsyncMock(side_effect=RuntimeError("boom"))
+        mock_channel = AsyncMock()
+        sched = _make_scheduler(tmp_path, bot_refs={
+            "b": BotRef(backend=mock_cli, channel=mock_channel, chat_id="1"),
+        })
+        task = ScheduleTask(
+            id="t1", cron="0 9 * * *", prompt="hi", mode="append", bot="b",
+        )
+        sched._executing.add("t1")
+        await sched._fire(task)
+        events = store.query()
+        cats = [e.category for e in events]
+        assert "scheduler.fail" in cats
+        fail_event = next(e for e in events if e.category == "scheduler.fail")
+        assert fail_event.meta.get("task_id") == "t1"
+        assert "boom" in fail_event.message or "boom" in str(fail_event.meta)
+        assert fail_event.level == "error"
+    finally:
+        log.unbind()
+        bus.close()
+
+
 # --- Scheduler.run_forever ---
 
 # In these tests we patch asyncio.sleep to skip the wait-to-boundary,

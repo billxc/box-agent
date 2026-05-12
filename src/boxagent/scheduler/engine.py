@@ -358,10 +358,22 @@ class Scheduler:
 
     async def _fire(self, task: ScheduleTask) -> None:
         """Execute a task and remove from executing set when done."""
+        from boxagent.log import Category, log
+
         try:
             await self._run_task(task)
+            log.info(
+                Category.SCHEDULER_RUN, f"task {task.id} fired",
+                task_id=task.id, mode=task.mode, bot=task.bot or None,
+                cron=task.cron,
+            )
         except Exception as e:
             logger.error("Schedule '%s' failed: %s", task.id, e)
+            log.error(
+                Category.SCHEDULER_FAIL, f"task {task.id} failed: {e}",
+                task_id=task.id, mode=task.mode, bot=task.bot or None,
+                error=str(e),
+            )
             env_info = self._format_env_info(task)
             await self._notify(task, f"🤖 *{task.id}* Error: {e}\n{env_info}")
         finally:

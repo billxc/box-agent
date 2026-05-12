@@ -165,6 +165,8 @@ class HeartbeatManager:
 
     async def _tick(self) -> None:
         """Single heartbeat cycle."""
+        from boxagent.log import Category, log
+
         if self._is_ticking:
             logger.debug("Heartbeat skipped for '%s' (previous still running)", self.workgroup_name)
             return
@@ -176,6 +178,10 @@ class HeartbeatManager:
 
         self._is_ticking = True
         logger.info("Heartbeat triggered for '%s'", self.workgroup_name)
+        log.debug(
+            Category.HEARTBEAT_TICK, f"heartbeat tick for {self.workgroup_name}",
+            workgroup=self.workgroup_name,
+        )
 
         try:
             # Display heartbeat prompt (if configured)
@@ -193,6 +199,10 @@ class HeartbeatManager:
 
             if is_silent_reply(decision):
                 logger.debug("Heartbeat silent reply from '%s'", self.workgroup_name)
+                log.debug(
+                    Category.HEARTBEAT_PAUSE, f"heartbeat silent for {self.workgroup_name}",
+                    workgroup=self.workgroup_name,
+                )
                 if self.display_heartbeat and self.web_channel:
                     await self._send_display("_Heartbeat: nothing to do._")
                 return
@@ -201,6 +211,12 @@ class HeartbeatManager:
             logger.info(
                 "Heartbeat action for '%s': %s",
                 self.workgroup_name, decision[:200],
+            )
+            log.info(
+                Category.HEARTBEAT_DRIVE,
+                f"heartbeat drive for {self.workgroup_name}",
+                workgroup=self.workgroup_name,
+                decision_preview=decision[:200],
             )
             if self.display_heartbeat and self.web_channel:
                 preview = decision[:500] + "..." if len(decision) > 500 else decision
