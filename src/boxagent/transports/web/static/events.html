@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BoxAgent Events</title>
+<link rel="stylesheet" href="events.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="title">📋 Events</div>
+  <nav class="topnav">
+    <a href="/">Chat</a>
+    <a href="events.html" class="active">Events</a>
+  </nav>
+  <div class="actions">
+    <label><input type="checkbox" id="unread-only"> Unread only</label>
+    <button id="mark-all-read">Mark all read</button>
+    <button id="reload">↻</button>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="sidebar">
+    <div class="filter-group">
+      <label>Levels</label>
+      <div id="level-filter" class="chips">
+        <label><input type="checkbox" value="debug"> debug</label>
+        <label><input type="checkbox" value="info" checked> info</label>
+        <label><input type="checkbox" value="warning" checked> warning</label>
+        <label><input type="checkbox" value="error" checked> error</label>
+        <label><input type="checkbox" value="notify" checked> notify</label>
+      </div>
+    </div>
+    <div class="filter-group">
+      <label>Search</label>
+      <input type="text" id="search" placeholder="message contains...">
+    </div>
+    <div class="filter-group">
+      <label>Categories</label>
+      <div id="category-tree" class="tree"></div>
+    </div>
+  </aside>
+
+  <section class="content">
+    <div id="status" class="status"></div>
+    <ul id="events-list" class="events-list"></ul>
+    <button id="load-more" class="load-more" hidden>Load older</button>
+  </section>
+</main>
+
+<script src="events.js"></script>
+</body>
+</html>

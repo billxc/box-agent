@@ -100,6 +100,7 @@ class WebHttpServer:
         self.cluster_routes = cluster_routes
         # Phase 2 dep
         self.workgroup_manager = None
+        self.event_bus = None
         # Internal state — process-local preview cache (sid → {mtime, ...})
         # used by /api/sessions to avoid re-reading transcript JSONL every poll.
         self.session_meta_cache: dict = {}
@@ -107,6 +108,9 @@ class WebHttpServer:
 
     def set_workgroup_manager(self, workgroup_manager) -> None:
         self.workgroup_manager = workgroup_manager
+
+    def set_event_bus(self, event_bus) -> None:
+        self.event_bus = event_bus
 
     @property
     def web_port_file(self) -> Path:
@@ -167,6 +171,12 @@ class WebHttpServer:
         app.router.add_get("/api/claude/sessions", self._handle_claude_sessions)
         app.router.add_get("/api/claude/transcript", self._handle_claude_transcript)
         app.router.add_post("/api/claude/resume", self._handle_claude_resume)
+        # Event log routes (commit #4)
+        app.router.add_get("/api/events", self._handle_events_query)
+        app.router.add_get("/api/events/stream", self._handle_events_stream)
+        app.router.add_get("/api/events/categories", self._handle_events_categories)
+        app.router.add_post("/api/events/{event_id}/read", self._handle_events_mark_read)
+        app.router.add_post("/api/events/read_all", self._handle_events_read_all)
 
     # ── Auth ──
 
@@ -915,3 +925,156 @@ class WebHttpServer:
             "backend": backend if self.storage else "",
             "workspace": workspace if self.storage else "",
         })
+
+    # ── Event log handlers (commit #4) ──
+
+    @staticmethod
+    def _event_to_dict(event) -> dict:
+        return {
+            "id": event.id,
+            "origin_machine": event.origin_machine,
+            "origin_seq": event.origin_seq,
+            "ts": event.ts,
+            "level": event.level,
+            "category": event.category,
+            "message": event.message,
+            "bot": event.bot,
+            "meta": event.meta,
+            "read_at": event.read_at,
+        }
+
+    def _events_query_args(self, request: web.Request) -> dict:
+        q = request.query
+        kwargs: dict = {}
+        if q.get("bot"):
+            kwargs["bot"] = q["bot"]
+        if q.get("levels"):
+            kwargs["levels"] = [s for s in q["levels"].split(",") if s]
+        if q.get("machines"):
+            kwargs["machines"] = [s for s in q["machines"].split(",") if s]
+        if q.get("category_prefix"):
+            kwargs["category_prefix"] = q["category_prefix"]
+        if q.get("since"):
+            try:
+                kwargs["since"] = float(q["since"])
+            except ValueError:
+                pass
+        if q.get("until"):
+            try:
+                kwargs["until"] = float(q["until"])
+            except ValueError:
+                pass
+        if q.get("search"):
+            kwargs["search"] = q["search"]
+        if q.get("unread_only") in ("1", "true"):
+            kwargs["unread_only"] = True
+        if q.get("limit"):
+            try:
+                kwargs["limit"] = max(1, min(int(q["limit"]), 1000))
+            except ValueError:
+                pass
+        if q.get("before_id"):
+            try:
+                kwargs["before_id"] = int(q["before_id"])
+            except ValueError:
+                pass
+        return kwargs
+
+    async def _handle_events_query(self, request: web.Request) -> web.Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        if self.event_bus is None:
+            return web.json_response({"ok": True, "events": []})
+        kwargs = self._events_query_args(request)
+        kwargs.setdefault("limit", 200)
+        events = self.event_bus._store.query(**kwargs)
+        next_cursor = events[-1].id if len(events) >= kwargs["limit"] else None
+        return web.json_response({
+            "ok": True,
+            "events": [self._event_to_dict(e) for e in events],
+            "next_cursor": next_cursor,
+        })
+
+    async def _handle_events_categories(self, request: web.Request) -> web.Response:
+        """Distinct categories for the tree-nav builder."""
+        if not self._authorized(request):
+            return self._unauthorized()
+        if self.event_bus is None:
+            return web.json_response({"ok": True, "categories": []})
+        cur = self.event_bus._store._conn.execute(
+            "SELECT category, COUNT(*) FROM events GROUP BY category ORDER BY category"
+        )
+        rows = [{"category": r[0], "count": r[1]} for r in cur.fetchall()]
+        return web.json_response({"ok": True, "categories": rows})
+
+    async def _handle_events_mark_read(self, request: web.Request) -> web.Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        if self.event_bus is None:
+            return web.json_response({"ok": True, "updated": 0})
+        try:
+            event_id = int(request.match_info["event_id"])
+        except (KeyError, ValueError):
+            return web.json_response({"ok": False, "error": "bad event_id"}, status=400)
+        n = self.event_bus._store.mark_read([event_id])
+        return web.json_response({"ok": True, "updated": n})
+
+    async def _handle_events_read_all(self, request: web.Request) -> web.Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        if self.event_bus is None:
+            return web.json_response({"ok": True, "updated": 0})
+        body = await request.json() if request.body_exists else {}
+        kwargs = {}
+        if isinstance(body, dict):
+            for k in ("bot", "levels", "machines", "category_prefix", "since", "until"):
+                if k in body:
+                    kwargs[k] = body[k]
+        kwargs["unread_only"] = True
+        events = self.event_bus._store.query(**kwargs, limit=10000)
+        ids = [e.id for e in events if e.id is not None]
+        n = self.event_bus._store.mark_read(ids)
+        return web.json_response({"ok": True, "updated": n})
+
+    async def _handle_events_stream(self, request: web.Request) -> web.StreamResponse:
+        if not self._authorized(request):
+            return self._unauthorized()
+        from boxagent.events.web_stream import EventStreamSubscriber
+        import json as _json
+
+        response = web.StreamResponse(
+            status=200,
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+        await response.prepare(request)
+
+        if self.event_bus is None:
+            await response.write(b"event: ready\ndata: {}\n\n")
+            return response
+
+        q = request.query
+        sub = EventStreamSubscriber(
+            bus=self.event_bus,
+            levels=([s for s in q["levels"].split(",") if s] if q.get("levels") else None),
+            machines=([s for s in q["machines"].split(",") if s] if q.get("machines") else None),
+            bot=q.get("bot") or None,
+            category_prefix=q.get("category_prefix") or None,
+        )
+        try:
+            await response.write(b"event: ready\ndata: {}\n\n")
+            while True:
+                try:
+                    event = await asyncio.wait_for(sub.queue.get(), timeout=15.0)
+                    payload = _json.dumps(self._event_to_dict(event), ensure_ascii=False)
+                    await response.write(f"event: event\ndata: {payload}\n\n".encode("utf-8"))
+                except asyncio.TimeoutError:
+                    await response.write(b": ping\n\n")
+        except (asyncio.CancelledError, ConnectionResetError):
+            pass
+        finally:
+            sub.close()
+        return response

@@ -180,8 +180,7 @@ class Gateway:
         self._event_bus = EventBus(store=event_store, machine_id=machine_id)
         log.bind(self._event_bus)
         log.info(Category.SYSTEM_STARTUP, "gateway starting",
-                 machine_id=machine_id, node_id=self.config.node_id)
-        # Phase 1: build managers. AgentManager owns its bot-state dicts;
+                 machine_id=machine_id, node_id=self.config.node_id)        # Phase 1: build managers. AgentManager owns its bot-state dicts;
         # everyone else who needs to read them gets the dict by reference.
         self._bots = AgentManager(
             config=self.config,
@@ -211,6 +210,7 @@ class Gateway:
             cluster_rpc=self._cluster_rpc,
             cluster_routes=self._cluster_routes,
         )
+        self._web_server.set_event_bus(self._event_bus)
         logger.info("Gateway starting (node=%s)", self.config.node_id or "(any)")
 
         # Web UI first so the page is reachable while the rest boots.
