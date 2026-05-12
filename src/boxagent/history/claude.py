@@ -28,6 +28,17 @@ from claude_agent_sdk import (
     rename_session as sdk_rename_session,
 )
 
+# Internal SDK helpers — used so we can detect compact_boundary and emit
+# entries in raw file order without re-implementing file location, JSONL
+# parsing, or the visible-entry filter (yait #89). If SDK rename happens
+# we'll see ImportError at startup, which is louder than silent skew.
+from claude_agent_sdk._internal.sessions import (  # noqa: PLC2701
+    _is_visible_message as _sdk_is_visible_message,
+    _parse_transcript_entries as _sdk_parse_transcript_entries,
+    _read_session_file as _sdk_read_session_file,
+    _to_session_message as _sdk_to_session_message,
+)
+
 from boxagent.history.protocol import Message, ProjectInfo, SessionInfo
 
 logger = logging.getLogger(__name__)
@@ -85,10 +96,40 @@ class ClaudeAgentHistory:
     def _read_messages_sync(
         self, session_id: str, project_id: str,
     ) -> list[SessionMessage]:
-        jsonl_path = self._jsonl_path_for(session_id, project_id)
-        if jsonl_path is not None and self._has_compact_boundary(jsonl_path):
-            return self._read_session_raw(jsonl_path)
-        return get_session_messages(session_id, project_id or None)
+        # Use SDK's file locator (handles worktree paths and Bun/Node hash
+        # prefix fallbacks for free) + JSONL parser, then decide whether
+        # to defer to the SDK chain walker or emit raw file order.
+        content = _sdk_read_session_file(session_id, project_id or None)
+        if not content:
+            return []
+        entries = _sdk_parse_transcript_entries(content)
+        if not self._has_compact_boundary_entries(entries):
+            return get_session_messages(session_id, project_id or None)
+        out: list[SessionMessage] = []
+        for entry in entries:
+            if not _sdk_is_visible_message(entry):
+                continue
+            msg = _sdk_to_session_message(entry)
+            # Mirror _sdk_patch.py field injection so _msg_timestamp can
+            # sort entries chronologically.
+            msg.timestamp = entry.get("timestamp")  # type: ignore[attr-defined]
+            msg.cwd = entry.get("cwd")  # type: ignore[attr-defined]
+            msg.git_branch = entry.get("gitBranch")  # type: ignore[attr-defined]
+            out.append(msg)
+        return out
+
+    @staticmethod
+    def _has_compact_boundary_entries(entries: list[dict]) -> bool:
+        """True if any entry is a real compact_boundary or isCompactSummary."""
+        for entry in entries:
+            if (
+                entry.get("type") == "system"
+                and entry.get("subtype") == "compact_boundary"
+            ):
+                return True
+            if entry.get("isCompactSummary"):
+                return True
+        return False
 
     @staticmethod
     def _has_compact_boundary(jsonl_path: Path) -> bool:
@@ -121,53 +162,6 @@ class ClaudeAgentHistory:
         except OSError:
             return False
         return False
-
-    @staticmethod
-    def _read_session_raw(jsonl_path: Path) -> list[SessionMessage]:
-        """Parse a session JSONL into ``SessionMessage`` objects directly.
-
-        Mirrors SDK's ``_is_visible_message`` filter (skip isMeta /
-        isSidechain / teamName) but keeps **all** user/assistant entries
-        regardless of compact boundaries — that's the whole point of this
-        path. ``timestamp`` is attached so ``_msg_timestamp`` orders the
-        merged list correctly.
-        """
-        out: list[SessionMessage] = []
-        try:
-            with jsonl_path.open("r", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        entry = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if not isinstance(entry, dict):
-                        continue
-                    entry_type = entry.get("type")
-                    if entry_type not in ("user", "assistant"):
-                        continue
-                    if entry.get("isMeta") or entry.get("isSidechain") or entry.get("teamName"):
-                        continue
-                    raw_message = entry.get("message")
-                    msg = SessionMessage(
-                        type=entry_type,  # type: ignore[arg-type]
-                        uuid=entry.get("uuid", "") or "",
-                        session_id=entry.get("sessionId", "") or "",
-                        message=raw_message,
-                        parent_tool_use_id=None,
-                    )
-                    # Attach timestamp/cwd/git_branch the same way the
-                    # _sdk_patch monkey patch does for SDK output, so
-                    # _msg_timestamp can sort entries chronologically.
-                    msg.timestamp = entry.get("timestamp")  # type: ignore[attr-defined]
-                    msg.cwd = entry.get("cwd")  # type: ignore[attr-defined]
-                    msg.git_branch = entry.get("gitBranch")  # type: ignore[attr-defined]
-                    out.append(msg)
-        except OSError:
-            return []
-        return out
 
     def _jsonl_path_for(self, session_id: str, project_id: str) -> Path | None:
         project_dir = self._project_dir_for(session_id, project_id)
