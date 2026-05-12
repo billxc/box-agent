@@ -250,7 +250,7 @@ class ClaudeAgentHistory:
         # first line usually matches; we cap at 5 to stay cheap if the
         # header schema ever shifts.
         try:
-            with jsonl.open() as fh:
+            with jsonl.open(encoding="utf-8", errors="replace") as fh:
                 for _ in range(5):
                     line = fh.readline()
                     if not line:
