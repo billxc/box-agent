@@ -280,3 +280,62 @@ def test_max_origin_seq_survives_reopen(tmp_path):
     next_event = s2.insert_local("m1", Level.INFO, "c", "m")
     assert next_event.origin_seq == 4
     s2.close()
+
+
+# ---------- sync helpers ----------
+
+def test_known_machines_lists_all_origins(store):
+    store.insert_local("m1", Level.INFO, "c", "x")
+    store.insert_local("m2", Level.INFO, "c", "y")
+    store.insert_local("m1", Level.INFO, "c", "z")
+    assert set(store.known_machines()) == {"m1", "m2"}
+
+
+def test_known_machines_empty_on_fresh_store(store):
+    assert store.known_machines() == []
+
+
+def test_max_seq_per_machine_returns_top_per_origin(store):
+    store.insert_local("m1", Level.INFO, "c", "x")
+    store.insert_local("m1", Level.INFO, "c", "y")
+    store.insert_local("m2", Level.INFO, "c", "z")
+    assert store.max_seq_per_machine() == {"m1": 2, "m2": 1}
+
+
+def test_events_after_seq_returns_only_newer(store):
+    store.insert_local("m1", Level.INFO, "c", "a")
+    store.insert_local("m1", Level.INFO, "c", "b")
+    store.insert_local("m1", Level.INFO, "c", "c")
+    out = store.events_after_seq("m1", 1)
+    assert [e.message for e in out] == ["b", "c"]
+    assert all(e.origin_seq > 1 for e in out)
+
+
+def test_events_after_seq_orders_ascending_by_seq(store):
+    store.insert_local("m1", Level.INFO, "c", "a")
+    store.insert_local("m1", Level.INFO, "c", "b")
+    out = store.events_after_seq("m1", 0)
+    assert [e.origin_seq for e in out] == [1, 2]
+
+
+def test_events_after_seq_filters_by_since_ts(store):
+    now = time.time()
+    store.insert_local("m1", Level.INFO, "c", "old", ts=now - 10000)
+    store.insert_local("m1", Level.INFO, "c", "new", ts=now)
+    out = store.events_after_seq("m1", 0, since_ts=now - 1)
+    assert [e.message for e in out] == ["new"]
+
+
+def test_events_after_seq_respects_limit(store):
+    for i in range(5):
+        store.insert_local("m1", Level.INFO, "c", f"e{i}")
+    out = store.events_after_seq("m1", 0, limit=2)
+    assert len(out) == 2
+    assert [e.origin_seq for e in out] == [1, 2]
+
+
+def test_events_after_seq_isolates_by_machine(store):
+    store.insert_local("m1", Level.INFO, "c", "x")
+    store.insert_local("m2", Level.INFO, "c", "y")
+    out = store.events_after_seq("m1", 0)
+    assert [e.origin_machine for e in out] == ["m1"]

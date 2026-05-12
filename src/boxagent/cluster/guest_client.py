@@ -7,7 +7,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Callable
+from typing import AsyncIterator, Awaitable, Callable
 
 import aiohttp
 from aiohttp import ClientSession, WSMsgType
@@ -38,6 +38,14 @@ class GuestClient:
     tunnel_name: str = ""   # devtunnel id, derived from host_url if empty
     bot_provider: Callable[[], list[dict]] = field(default=lambda: [])
     reconnect_delay: float = 3.0
+    # Optional hook for frames the client doesn't natively handle (e.g.
+    # event_batch / event_resync from the events syncer). Called with the
+    # raw payload; should return True if consumed.
+    on_unknown_frame: Callable[[dict], Awaitable[bool]] | None = None
+    # Optional hooks fired when the WS connection is established / lost so the
+    # syncer can attach/detach its peer (key: "host").
+    on_connect: Callable[["GuestClient"], None] | None = None
+    on_disconnect: Callable[[], None] | None = None
 
     _task: asyncio.Task | None = None
     _stop: bool = False
@@ -228,7 +236,19 @@ class GuestClient:
                         "bots": self.bot_provider(),
                     })
                     logger.info("guest: hello sent (machine_id=%s)", self.machine_id)
-                    await self._serve(ws)
+                    if self.on_connect is not None:
+                        try:
+                            self.on_connect(self)
+                        except Exception as e:
+                            logger.warning("guest: on_connect failed: %s", e)
+                    try:
+                        await self._serve(ws)
+                    finally:
+                        if self.on_disconnect is not None:
+                            try:
+                                self.on_disconnect()
+                            except Exception as e:
+                                logger.warning("guest: on_disconnect failed: %s", e)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -299,6 +319,11 @@ class GuestClient:
                     raw = payload.get("peers") or []
                     self.remote_peers = [p for p in raw if isinstance(p, dict) and p.get("name")]
                     logger.debug("guest: peers_snapshot received (%d peers)", len(self.remote_peers))
+                elif self.on_unknown_frame is not None:
+                    try:
+                        await self.on_unknown_frame(payload)
+                    except Exception as e:
+                        logger.warning("guest: on_unknown_frame failed: %s", e)
             elif msg.type in (WSMsgType.CLOSED, WSMsgType.ERROR):
                 break
 

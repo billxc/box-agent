@@ -167,6 +167,14 @@ class GuestRegistry:
     # the changed) guests so each guest learns about the other workgroups in the
     # cluster. None = no push.
     on_topology_change: Callable[[str | None], Awaitable[None]] | None = None
+    # Optional: called for any unknown frame type from a guest. Returns True
+    # if the frame was consumed. Used by the events syncer to handle
+    # event_batch / event_resync frames without bloating the registry.
+    on_unknown_frame: Callable[[str, dict], Awaitable[bool]] | None = None
+    # Optional: called when a guest hello/welcome handshake completes, so the
+    # syncer can attach a peer keyed by machine_id.
+    on_guest_attached: Callable[[str, "GuestSession"], None] | None = None
+    on_guest_detached: Callable[[str], None] | None = None
     # Loopback config so the host can serve guest→host reverse RPCs by re-issuing
     # the request against its own web server (mirrors the guest-side pattern
     # in guest_client._handle_rpc). Injected by gateway after web app starts.
@@ -367,6 +375,11 @@ class GuestRegistry:
                     self.sessions[machine_id] = session
                     logger.info("guest '%s' connected with %d bot(s)", machine_id, len(bots))
                     await ws.send_json({"type": "welcome"})
+                    if self.on_guest_attached is not None:
+                        try:
+                            self.on_guest_attached(machine_id, session)
+                        except Exception as e:
+                            logger.warning("on_guest_attached failed: %s", e)
                     if self.on_topology_change is not None:
                         try:
                             await self.on_topology_change(machine_id)
@@ -413,6 +426,11 @@ class GuestRegistry:
                             await self.on_topology_change(session.machine_id)
                         except Exception as e:
                             logger.warning("on_topology_change(bots_update) failed: %s", e)
+                elif self.on_unknown_frame is not None:
+                    try:
+                        await self.on_unknown_frame(session.machine_id, payload)
+                    except Exception as e:
+                        logger.warning("on_unknown_frame(%s) failed: %s", t, e)
         finally:
             if session is not None and not session._closed:
                 self.sessions.pop(session.machine_id, None)
@@ -426,6 +444,11 @@ class GuestRegistry:
                     "last_seen": time.time(),
                 }
                 logger.info("guest '%s' disconnected", session.machine_id)
+                if self.on_guest_detached is not None:
+                    try:
+                        self.on_guest_detached(session.machine_id)
+                    except Exception as e:
+                        logger.warning("on_guest_detached failed: %s", e)
                 if self.on_topology_change is not None:
                     try:
                         await self.on_topology_change(None)

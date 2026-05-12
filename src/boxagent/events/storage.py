@@ -206,6 +206,32 @@ class EventStore:
         cur = self._conn.execute(sql, params)
         return [self._row_to_event(r) for r in cur.fetchall()]
 
+    def known_machines(self) -> list[str]:
+        cur = self._conn.execute("SELECT DISTINCT origin_machine FROM events")
+        return [r[0] for r in cur.fetchall()]
+
+    def max_seq_per_machine(self) -> dict[str, int]:
+        cur = self._conn.execute(
+            "SELECT origin_machine, MAX(origin_seq) FROM events GROUP BY origin_machine"
+        )
+        return {r[0]: r[1] for r in cur.fetchall()}
+
+    def events_after_seq(
+        self, machine: str, after_seq: int, *, since_ts: float | None = None,
+        limit: int = 500,
+    ) -> list[Event]:
+        sql = (
+            "SELECT * FROM events WHERE origin_machine = ? AND origin_seq > ?"
+        )
+        params: list = [machine, after_seq]
+        if since_ts is not None:
+            sql += " AND ts >= ?"
+            params.append(since_ts)
+        sql += " ORDER BY origin_seq ASC LIMIT ?"
+        params.append(limit)
+        cur = self._conn.execute(sql, params)
+        return [self._row_to_event(r) for r in cur.fetchall()]
+
     def max_origin_seq(self, machine: str) -> int:
         cur = self._conn.execute(
             "SELECT COALESCE(MAX(origin_seq), 0) FROM events WHERE origin_machine = ?",
