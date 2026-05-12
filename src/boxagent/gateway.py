@@ -49,6 +49,7 @@ from boxagent.scheduler import Scheduler
 from boxagent.workgroup import WorkgroupManager
 
 if TYPE_CHECKING:
+    from boxagent.events.bus import EventBus
     from boxagent.workgroup.http_routes import WorkgroupHttpRoutes
 
 logger = logging.getLogger(__name__)
@@ -156,11 +157,30 @@ class Gateway:
     _internal_api: InternalApiServer | None = field(default=None, repr=False)
     _mcp_server: McpHttpServer | None = field(default=None, repr=False)
     _web_server: WebHttpServer | None = field(default=None, repr=False)
+    _event_bus: "EventBus | None" = field(default=None, repr=False)
 
     async def start(self) -> None:
         self._start_time = time.time()
         storage = Storage(local_dir=self.local_dir)
         self._storage = storage
+
+        # Event log: bind log facade to EventBus so all `log.info(...)` calls
+        # from business code persist + dispatch to subscribers (web SSE,
+        # telegram notifier, syncer — added in later commits).
+        from boxagent.events.bus import EventBus
+        from boxagent.events.storage import EventStore
+        from boxagent.log import Category, log
+
+        machine_id = (
+            self.config.machine_id
+            or self.config.node_id
+            or "local"
+        )
+        event_store = EventStore(self.local_dir / "events.db")
+        self._event_bus = EventBus(store=event_store, machine_id=machine_id)
+        log.bind(self._event_bus)
+        log.info(Category.SYSTEM_STARTUP, "gateway starting",
+                 machine_id=machine_id, node_id=self.config.node_id)
         # Phase 1: build managers. AgentManager owns its bot-state dicts;
         # everyone else who needs to read them gets the dict by reference.
         self._bots = AgentManager(
@@ -317,5 +337,17 @@ class Gateway:
         # Workgroup resources
         if self._workgroup_manager:
             await self._workgroup_manager.stop()
+
+        # Event log: emit shutdown event then unbind + close.
+        if self._event_bus is not None:
+            from boxagent.log import Category, log
+
+            log.info(Category.SYSTEM_SHUTDOWN, "gateway stopped")
+            log.unbind()
+            try:
+                self._event_bus.close()
+            except Exception:
+                logger.exception("Error closing event bus")
+            self._event_bus = None
 
         logger.info("Gateway stopped")

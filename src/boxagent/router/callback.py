@@ -236,7 +236,10 @@ class ChannelCallback:
 
 
 def log_turn(path: Path, bot: str, chat_id: str, user_text: str, assistant_text: str):
-    """Append user + assistant records to a JSONL transcript file."""
+    """Append user + assistant records to a JSONL transcript file.
+
+    Also emits a lightweight `agent.turn` event into the event log
+    (summary only — full text stays in the transcript file)."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as f:
@@ -249,3 +252,14 @@ def log_turn(path: Path, bot: str, chat_id: str, user_text: str, assistant_text:
                 f.write(record + "\n")
     except Exception:
         logger.exception("Failed to write transcript")
+
+    from boxagent.log import Category, log
+
+    log.info(
+        Category.AGENT_TURN,
+        f"turn: {bot}/{chat_id}",
+        bot=bot,
+        chat_id=chat_id,
+        user_len=len(user_text),
+        assistant_len=len(assistant_text),
+    )
