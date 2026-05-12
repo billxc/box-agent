@@ -52,6 +52,7 @@ class AgentSDKClaude(AgentBackend):
     agent: str = ""
     bot_name: str = ""
     yolo: bool = False
+    gateway: Any = None
     state: Literal["idle", "busy", "dead"] = "idle"
     supports_session_persistence: bool = field(default=True, init=False, repr=False)
     supports_fork: bool = field(default=True, init=False, repr=False)
@@ -254,7 +255,7 @@ class AgentSDKClaude(AgentBackend):
         from boxagent.tools import ToolContext
         from boxagent.tools.adapters.claude_sdk import build_mcp_servers
 
-        ctx = ToolContext(bot_name=self.bot_name, chat_id=chat_id)
+        ctx = ToolContext(bot_name=self.bot_name, chat_id=chat_id, gateway=self.gateway)
         # passthrough bots (raw) skip MCP injection so the backend behaves
         # identically to running ``claude --resume`` from a terminal —
         # mirrors the gate in ``mcp_endpoints.pick_mcp_endpoints``.

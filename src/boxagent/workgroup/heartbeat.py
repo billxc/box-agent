@@ -12,7 +12,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from boxagent.workgroup.formatting import format_running_tasks
 
@@ -117,6 +117,7 @@ class HeartbeatManager:
     # Manager wires this to a closure over Storage.get/set_main_chat_id; the
     # provider mints + persists a fresh `heartbeat:<workgroup>-<ts>` if none set.
     main_chat_id_provider: Callable[[], str] | None = None
+    gateway: "Any" = None
     _running: bool = field(default=False, repr=False)
     _is_ticking: bool = field(default=False, repr=False)
     _warned_no_fork: bool = field(default=False, repr=False)
@@ -281,7 +282,7 @@ class HeartbeatManager:
             model=self.model,
             yolo=self.yolo,
         )
-        backend = create_backend(bot_cfg, session_id=None)
+        backend = create_backend(bot_cfg, session_id=None, gateway=self.gateway)
         if not backend.supports_fork:
             if not self._warned_no_fork:
                 logger.warning(

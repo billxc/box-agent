@@ -114,6 +114,7 @@ class AgentSDKCopilot(AgentBackend):
     agent: str = ""  # not used by Copilot SDK; kept for AgentBackend symmetry
     bot_name: str = ""
     yolo: bool = False
+    gateway: Any = None
     state: Literal["idle", "busy", "dead"] = "idle"
     supports_session_persistence: bool = field(default=True, init=False, repr=False)
     supports_fork: bool = field(default=True, init=False, repr=False)
@@ -303,7 +304,7 @@ class AgentSDKCopilot(AgentBackend):
         from boxagent.tools import ToolContext
         from boxagent.tools.adapters.copilot_sdk import build_tools
 
-        tool_ctx = ToolContext(bot_name=self.bot_name, chat_id=chat_id)
+        tool_ctx = ToolContext(bot_name=self.bot_name, chat_id=chat_id, gateway=self.gateway)
         sdk_tools = build_tools(ctx=tool_ctx, env=env) if env is not None else []
 
         kwargs: dict[str, Any] = {

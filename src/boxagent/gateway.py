@@ -216,6 +216,7 @@ class Gateway:
             config_dir=self.config_dir,
             storage=storage,
             start_time=self._start_time,
+            gateway=self,
         )
         self._topology = TopologyService(
             config=self.config,
@@ -259,6 +260,7 @@ class Gateway:
                 storage=storage,
                 web_channels=self._bots.web_channels,
                 _peer_provider=self._topology.build_peer_descriptors,
+                gateway=self,
             )
             # Phase 2: topology + peer + web server now see workgroup_manager.
             # (workgroup_manager.routes ships with the manager; no separate setter.)

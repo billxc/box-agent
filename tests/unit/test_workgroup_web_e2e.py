@@ -116,7 +116,7 @@ def _make_manager(tmp_path: Path):
 
     fakes: dict[str, list[FakeCLIProcess]] = {}
 
-    def _factory(bot_config, session_id=None):
+    def _factory(bot_config, session_id=None, *, gateway=None):
         fp = FakeCLIProcess(
             response=f"<specialist_response>done by {bot_config.name}</specialist_response>",
             workspace=bot_config.workspace,

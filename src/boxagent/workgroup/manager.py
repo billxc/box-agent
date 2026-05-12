@@ -5,7 +5,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 
 from boxagent.config import BotConfig, SpecialistConfig, WorkgroupConfig
@@ -88,6 +88,7 @@ class WorkgroupManager:
 
     # Injected by Gateway
     _peer_provider: Callable[[str], list[dict]] | None = None  # exclude=self_name
+    gateway: "Any" = None
 
     # HTTP route adapter — built lazily on first access so the manager and
     # its HTTP surface ship together. Gateway just reads ``manager.routes``.
@@ -112,7 +113,7 @@ class WorkgroupManager:
         save_specialist(self._require_local_dir(), workgroup_name, specialist)
 
     def _make_backend(self, bot_config: BotConfig, session_id=None):
-        return create_backend(bot_config, session_id)
+        return create_backend(bot_config, session_id, gateway=self.gateway)
 
     def _apply_template_skills(
         self,
@@ -353,6 +354,7 @@ class WorkgroupManager:
                 start_time=self.start_time,
                 get_running_tasks=lambda workgroup=workgroup_name: self._get_running_tasks(workgroup),
                 main_chat_id_provider=_main_chat_id_provider,
+                gateway=self.gateway,
             )
             heartbeat.start()
             self._heartbeats[workgroup_name] = heartbeat

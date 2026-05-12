@@ -13,7 +13,7 @@ import asyncio
 import datetime
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from boxagent.agent.backend_factory import create_backend
 from boxagent.agent.claude_process import ClaudeProcess
@@ -55,11 +55,13 @@ class AgentManager:
         config_dir: Path,
         storage: Storage,
         start_time: float,
+        gateway: "Any" = None,
     ) -> None:
         self.config = config
         self.config_dir = config_dir
         self.storage = storage
         self.start_time = start_time
+        self.gateway = gateway
         # State this manager owns. Other managers that need a read view
         # (TopologyService → web_channels, WebHttpServer → pools/web_channels,
         # WorkgroupManager → web_channels) receive the dict by reference at
@@ -165,12 +167,12 @@ class AgentManager:
             elif isinstance(saved, str):
                 session_id = saved
 
-        backend = create_backend(bot_config, session_id)
+        backend = create_backend(bot_config, session_id, gateway=self.gateway)
         backend.start()
         self.backends[name] = backend
 
         def _factory():
-            return create_backend(bot_config, None)
+            return create_backend(bot_config, None, gateway=self.gateway)
 
         pool = SessionPool(
             size=3,
@@ -300,7 +302,7 @@ class AgentManager:
             yolo=True,
             passthrough=True,
         )
-        return create_backend(config, session_id)
+        return create_backend(config, session_id, gateway=self.gateway)
 
     async def start_raw_bot(self) -> None:
         name = "raw"
@@ -373,7 +375,7 @@ class AgentManager:
             except Exception:
                 pass
 
-        new_backend = create_backend(bot_config, session_id)
+        new_backend = create_backend(bot_config, session_id, gateway=self.gateway)
         new_backend.start()
         self.backends[name] = new_backend
 
