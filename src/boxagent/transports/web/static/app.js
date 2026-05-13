@@ -1264,6 +1264,15 @@
   const pickerCount = $("picker-count");
   const pickerResume = $("picker-resume");
   let picker_state = { project: null, session: null };
+  let picker_paging = { offset: 0, total: 0, loading: false, done: false, observer: null };
+
+  function renderSessionItem(s) {
+    const li = document.createElement("li");
+    const title = (s.first_user || "(no user message)").trim();
+    li.innerHTML = `<div class="grow"><div class="row1">${escapeHtml(title)}</div><div class="row2">${formatTs(s.last_ts)} · ${s.session_id.slice(0, 8)}</div></div><span class="meta">💬 ${s.message_count}</span>`;
+    li.onclick = () => selectSession(li, s);
+    return li;
+  }
 
   function openPicker() {
     picker.classList.remove("hidden");
@@ -1354,23 +1363,62 @@
     pickerBack.classList.remove("hidden");
     pickerCrumb.textContent = project.label;
     pickerSessions.innerHTML = "<li class='muted'>Loading…</li>";
+    if (picker_paging.observer) { picker_paging.observer.disconnect(); }
+    picker_paging = { offset: 0, total: 0, loading: false, done: false, observer: null };
     try {
-      const r = await api(`claude/sessions?machine=${encodeURIComponent(state.botMachine)}&project=${encodeURIComponent(project.encoded)}`);
-      const { sessions } = await r.json();
-      pickerSessions.innerHTML = "";
-      pickerCount.textContent = `${sessions.length} sessions`;
-      for (const s of sessions) {
-        const li = document.createElement("li");
-        const title = (s.first_user || "(no user message)").trim();
-        li.innerHTML = `<div class="grow"><div class="row1">${escapeHtml(title)}</div><div class="row2">${formatTs(s.last_ts)} · ${s.session_id.slice(0, 8)}</div></div><span class="meta">💬 ${s.message_count}</span>`;
-        li.onclick = () => selectSession(li, s);
-        pickerSessions.appendChild(li);
-      }
-      if (sessions.length === 0) {
-        pickerSessions.innerHTML = "<li class='muted'>(empty)</li>";
-      }
+      await loadSessionPage();
     } catch (e) {
       pickerSessions.innerHTML = `<li class='muted'>Error: ${escapeHtml(e.message)}</li>`;
+    }
+  }
+
+  const SESSION_PAGE_SIZE = 50;
+
+  async function loadSessionPage() {
+    if (picker_paging.loading || picker_paging.done) return;
+    picker_paging.loading = true;
+    const project = picker_state.project;
+    const url =
+      `claude/sessions?machine=${encodeURIComponent(state.botMachine)}` +
+      `&project=${encodeURIComponent(project.encoded)}` +
+      `&offset=${picker_paging.offset}&limit=${SESSION_PAGE_SIZE}`;
+    let firstPage = picker_paging.offset === 0;
+    let sentinel = pickerSessions.querySelector("li.sentinel");
+    if (sentinel) sentinel.remove();
+    if (firstPage) pickerSessions.innerHTML = "";
+    try {
+      const r = await api(url);
+      const data = await r.json();
+      const sessions = data.sessions || [];
+      picker_paging.total = data.total ?? sessions.length;
+      picker_paging.offset += sessions.length;
+      picker_paging.done = !data.has_more || sessions.length === 0;
+      for (const s of sessions) {
+        pickerSessions.appendChild(renderSessionItem(s));
+      }
+      pickerCount.textContent = `${picker_paging.offset} / ${picker_paging.total} sessions`;
+      if (firstPage && sessions.length === 0) {
+        pickerSessions.innerHTML = "<li class='muted'>(empty)</li>";
+        return;
+      }
+      if (!picker_paging.done) {
+        const newSentinel = document.createElement("li");
+        newSentinel.className = "sentinel muted";
+        newSentinel.textContent = "Loading more…";
+        pickerSessions.appendChild(newSentinel);
+        if (!picker_paging.observer) {
+          picker_paging.observer = new IntersectionObserver((entries) => {
+            for (const entry of entries) {
+              if (entry.isIntersecting) {
+                loadSessionPage().catch((e) => console.error("page load failed", e));
+              }
+            }
+          }, { root: pickerSessions, rootMargin: "200px" });
+        }
+        picker_paging.observer.observe(newSentinel);
+      }
+    } finally {
+      picker_paging.loading = false;
     }
   }
 

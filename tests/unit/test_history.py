@@ -202,3 +202,61 @@ class TestClaudeListProjectsFastScan:
         h = ClaudeAgentHistory(claude_dir=tmp_path)
         projects = await h.list_projects()
         assert len(projects) == 1
+
+
+class TestClaudeListSessionsPaginated:
+    """``list_sessions_paginated`` reads sessions lazily — sorts by mtime
+    (cheap stat) and only invokes ``sdk_get_session_info`` for the
+    requested slice. Avoids the full ``sdk_list_sessions`` JSONL parse."""
+
+    @pytest.mark.asyncio
+    async def test_slice_and_total(self, tmp_path, monkeypatch):
+        import json
+        import os
+        import time
+        from boxagent.history import claude as claude_mod
+
+        cwd = "/Users/bill/code/foo"
+        from claude_agent_sdk._internal.sessions import project_key_for_directory
+        proj_dir = tmp_path / project_key_for_directory(cwd)
+        proj_dir.mkdir(parents=True)
+        for i in range(5):
+            path = proj_dir / f"sid-{i}.jsonl"
+            path.write_text(json.dumps({"cwd": cwd}) + "\n")
+            mtime = time.time() - (5 - i)  # sid-4 newest
+            os.utime(path, (mtime, mtime))
+
+        def boom(*a, **kw):
+            raise AssertionError("sdk_list_sessions must not be called for paginated listing")
+
+        monkeypatch.setattr(claude_mod, "sdk_list_sessions", boom)
+
+        loaded: list[str] = []
+
+        def fake_get_info(session_id, directory):
+            loaded.append(session_id)
+            return claude_mod.SDKSessionInfo(
+                session_id=session_id,
+                summary=f"summary-{session_id}",
+                last_modified=int(time.time() * 1000),
+                first_prompt=f"hi from {session_id}",
+                cwd=cwd,
+            )
+
+        monkeypatch.setattr(claude_mod, "sdk_get_session_info", fake_get_info)
+        h = ClaudeAgentHistory(claude_dir=tmp_path)
+        sessions, total = await h.list_sessions_paginated(cwd, offset=0, limit=2)
+        assert total == 5
+        assert [s.session_id for s in sessions] == ["sid-4", "sid-3"]
+        assert loaded == ["sid-4", "sid-3"]
+
+        sessions2, total2 = await h.list_sessions_paginated(cwd, offset=2, limit=2)
+        assert total2 == 5
+        assert [s.session_id for s in sessions2] == ["sid-2", "sid-1"]
+
+    @pytest.mark.asyncio
+    async def test_unknown_project_returns_empty(self, tmp_path):
+        h = ClaudeAgentHistory(claude_dir=tmp_path)
+        sessions, total = await h.list_sessions_paginated("/no/such/dir", 0, 50)
+        assert sessions == []
+        assert total == 0

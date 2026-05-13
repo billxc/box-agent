@@ -836,6 +836,22 @@ class WebHttpServer:
                 return response
         from boxagent.history import get_history
         history = get_history("claude-cli")
+        limit_raw = request.query.get("limit")
+        if limit_raw is not None:
+            try:
+                limit = max(0, min(500, int(limit_raw)))
+                offset = max(0, int(request.query.get("offset", "0")))
+            except ValueError:
+                return web.json_response({"ok": False, "error": "invalid offset/limit"}, status=400)
+            sessions, total = await history.list_sessions_paginated(encoded, offset, limit)
+            return web.json_response({
+                "ok": True,
+                "sessions": [_session_info_to_dict(s) for s in sessions],
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "has_more": offset + len(sessions) < total,
+            })
         sessions = await history.list_sessions(encoded)
         return web.json_response({
             "ok": True,

@@ -61,6 +61,13 @@ class ClaudeAgentHistory:
     async def list_sessions(self, project_id: str) -> list[SessionInfo]:
         return await asyncio.to_thread(self._list_sessions_sync, project_id)
 
+    async def list_sessions_paginated(
+        self, project_id: str, offset: int, limit: int,
+    ) -> tuple[list[SessionInfo], int]:
+        return await asyncio.to_thread(
+            self._list_sessions_paginated_sync, project_id, offset, limit,
+        )
+
     async def get_session_info(
         self, session_id: str, project_id: str = "",
     ) -> SessionInfo | None:
@@ -278,6 +285,52 @@ class ClaudeAgentHistory:
         out = [self._sdk_to_session_info(info, project_id) for info in infos]
         out.sort(key=lambda s: s.last_ts, reverse=True)
         return out
+
+    def _list_sessions_paginated_sync(
+        self, project_id: str, offset: int, limit: int,
+    ) -> tuple[list[SessionInfo], int]:
+        # Lazy listing for the resume picker. Sort jsonl files by mtime
+        # (cheap stat) and only call ``sdk_get_session_info`` for the
+        # requested slice — avoids the global JSONL parse that
+        # ``sdk_list_sessions`` does on every page request.
+        if not project_id:
+            return [], 0
+        try:
+            key = project_key_for_directory(project_id)
+        except Exception:
+            return [], 0
+        project_dir = self._projects_dir / key
+        if not project_dir.is_dir():
+            return [], 0
+        try:
+            files = [f for f in project_dir.glob("*.jsonl") if f.is_file()]
+        except OSError:
+            return [], 0
+        if not files:
+            return [], 0
+        files_with_mtime = [(f, f.stat().st_mtime) for f in files]
+        files_with_mtime.sort(key=lambda pair: pair[1], reverse=True)
+        total = len(files_with_mtime)
+        offset = max(0, offset)
+        limit = max(0, limit)
+        slice_ = files_with_mtime[offset : offset + limit]
+        out: list[SessionInfo] = []
+        for path, mtime in slice_:
+            session_id = path.stem
+            try:
+                info = sdk_get_session_info(session_id, project_id)
+            except Exception as e:
+                logger.debug("get_session_info(%s) failed: %s", session_id, e)
+                info = None
+            if info is None:
+                out.append(SessionInfo(
+                    session_id=session_id,
+                    project_id=project_id,
+                    last_ts=mtime,
+                ))
+                continue
+            out.append(self._sdk_to_session_info(info, project_id))
+        return out, total
 
     # ── Compact-chain walking ─────────────────────────────────────
 
