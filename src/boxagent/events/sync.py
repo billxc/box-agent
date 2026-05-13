@@ -230,8 +230,8 @@ class EventSyncer:
             return
         try:
             await send(frame)
-        except Exception as exc:
-            logger.warning("syncer: send to %s failed: %r", peer_key, exc)
+        except Exception as exception:
+            logger.warning("syncer: send to %s failed: %r", peer_key, exception)
 
     @staticmethod
     def _running_loop() -> asyncio.AbstractEventLoop | None:

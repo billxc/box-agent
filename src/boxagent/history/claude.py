@@ -257,9 +257,9 @@ class ClaudeAgentHistory:
         # first line usually matches; we cap at 5 to stay cheap if the
         # header schema ever shifts.
         try:
-            with jsonl.open(encoding="utf-8", errors="replace") as fh:
+            with jsonl.open(encoding="utf-8", errors="replace") as file_handle:
                 for _ in range(5):
-                    line = fh.readline()
+                    line = file_handle.readline()
                     if not line:
                         break
                     try:
@@ -498,9 +498,9 @@ class ClaudeAgentHistory:
                 continue
             block_type = item.get("type")
             if block_type == "text":
-                txt = item.get("text") or ""
-                if txt:
-                    text_buf.append(txt)
+                text_part = item.get("text") or ""
+                if text_part:
+                    text_buf.append(text_part)
             elif block_type == "tool_use":
                 _flush_text()
                 args = item.get("input") if isinstance(item.get("input"), dict) else {}
@@ -557,11 +557,11 @@ class ClaudeAgentHistory:
             return raw[:200], raw[:200]
         if isinstance(raw, list):
             parts: list[str] = []
-            for blk in raw:
-                if isinstance(blk, dict) and blk.get("type") == "text":
-                    parts.append(blk.get("text") or "")
-                elif isinstance(blk, str):
-                    parts.append(blk)
+            for block in raw:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    parts.append(block.get("text") or "")
+                elif isinstance(block, str):
+                    parts.append(block)
             joined = "\n".join(p for p in parts if p)
             return joined[:200], joined[:200]
         return "", ""

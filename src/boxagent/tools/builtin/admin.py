@@ -124,7 +124,7 @@ async def get_specialist_status(args: dict, ctx: ToolContext) -> str:
     chat = result.get("recent_chat", [])
     if chat:
         lines.append(f"\nRecent chat ({len(chat)} lines):")
-        for c in chat:
+        for char in chat:
             lines.append(f"  {c}")
     return "\n".join(lines)
 

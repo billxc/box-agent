@@ -77,18 +77,18 @@ class EventStore:
             ts = time.time()
         meta_json = json.dumps(meta) if meta else None
         with self._lock:
-            cur = self._conn.execute(
+            cursor = self._conn.execute(
                 "SELECT COALESCE(MAX(origin_seq), 0) + 1 FROM events WHERE origin_machine = ?",
                 (machine_id,),
             )
-            seq = cur.fetchone()[0]
-            cur = self._conn.execute(
+            seq = cursor.fetchone()[0]
+            cursor = self._conn.execute(
                 """INSERT INTO events
                    (origin_machine, origin_seq, ts, bot, level, category, message, meta_json)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (machine_id, seq, ts, bot, level, category, message, meta_json),
             )
-            event_id = cur.lastrowid
+            event_id = cursor.lastrowid
         return Event(
             id=event_id,
             origin_machine=machine_id,
@@ -107,7 +107,7 @@ class EventStore:
         Returns True if newly inserted, False if duplicate."""
         meta_json = json.dumps(event.meta) if event.meta else None
         with self._lock:
-            cur = self._conn.execute(
+            cursor = self._conn.execute(
                 """INSERT OR IGNORE INTO events
                    (origin_machine, origin_seq, ts, bot, level, category, message, meta_json)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -122,24 +122,24 @@ class EventStore:
                     meta_json,
                 ),
             )
-            return cur.rowcount > 0
+            return cursor.rowcount > 0
 
     def mark_read(self, ids: list[int]) -> int:
         if not ids:
             return 0
         placeholders = ",".join("?" * len(ids))
         with self._lock:
-            cur = self._conn.execute(
+            cursor = self._conn.execute(
                 f"UPDATE events SET read_at = ? "
                 f"WHERE read_at IS NULL AND id IN ({placeholders})",
                 [time.time(), *ids],
             )
-            return cur.rowcount
+            return cursor.rowcount
 
     def delete_older_than(self, cutoff_ts: float) -> int:
         with self._lock:
-            cur = self._conn.execute("DELETE FROM events WHERE ts < ?", (cutoff_ts,))
-            return cur.rowcount
+            cursor = self._conn.execute("DELETE FROM events WHERE ts < ?", (cutoff_ts,))
+            return cursor.rowcount
 
     # ---------- reads ----------
 
@@ -203,18 +203,18 @@ class EventStore:
             sql += " LIMIT ?"
             params.append(limit)
 
-        cur = self._conn.execute(sql, params)
-        return [self._row_to_event(r) for r in cur.fetchall()]
+        cursor = self._conn.execute(sql, params)
+        return [self._row_to_event(r) for r in cursor.fetchall()]
 
     def known_machines(self) -> list[str]:
-        cur = self._conn.execute("SELECT DISTINCT origin_machine FROM events")
-        return [r[0] for r in cur.fetchall()]
+        cursor = self._conn.execute("SELECT DISTINCT origin_machine FROM events")
+        return [r[0] for r in cursor.fetchall()]
 
     def max_seq_per_machine(self) -> dict[str, int]:
-        cur = self._conn.execute(
+        cursor = self._conn.execute(
             "SELECT origin_machine, MAX(origin_seq) FROM events GROUP BY origin_machine"
         )
-        return {r[0]: r[1] for r in cur.fetchall()}
+        return {r[0]: r[1] for r in cursor.fetchall()}
 
     def events_after_seq(
         self, machine: str, after_seq: int, *, since_ts: float | None = None,
@@ -229,24 +229,24 @@ class EventStore:
             params.append(since_ts)
         sql += " ORDER BY origin_seq ASC LIMIT ?"
         params.append(limit)
-        cur = self._conn.execute(sql, params)
-        return [self._row_to_event(r) for r in cur.fetchall()]
+        cursor = self._conn.execute(sql, params)
+        return [self._row_to_event(r) for r in cursor.fetchall()]
 
     def max_origin_seq(self, machine: str) -> int:
-        cur = self._conn.execute(
+        cursor = self._conn.execute(
             "SELECT COALESCE(MAX(origin_seq), 0) FROM events WHERE origin_machine = ?",
             (machine,),
         )
-        return cur.fetchone()[0]
+        return cursor.fetchone()[0]
 
     # ---------- sync cursor ----------
 
     def get_cursor(self, peer_machine: str) -> int:
-        cur = self._conn.execute(
+        cursor = self._conn.execute(
             "SELECT last_seen_seq FROM sync_cursor WHERE peer_machine = ?",
             (peer_machine,),
         )
-        row = cur.fetchone()
+        row = cursor.fetchone()
         return row[0] if row else 0
 
     def set_cursor(self, peer_machine: str, seq: int) -> None:

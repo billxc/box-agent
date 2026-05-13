@@ -50,7 +50,7 @@ def build_mcp_servers(*, ctx: ToolContext, env: Any) -> dict[str, Any]:
     servers: dict[str, Any] = {}
     for group, defs in by_group.items():
         server_name = GROUP_TO_SERVER_NAME.get(group, f"boxagent-{group}")
-        sdk_tools = [_convert(d, ctx) for d in defs]
+        sdk_tools = [_convert(tool_def, ctx) for tool_def in defs]
         servers[server_name] = create_sdk_mcp_server(name=server_name, tools=sdk_tools)
     return servers
 

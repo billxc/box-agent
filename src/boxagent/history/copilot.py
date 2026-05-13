@@ -205,8 +205,8 @@ class CopilotAgentHistory:
         except ImportError:
             return []
         out: list[Message] = []
-        for ev in events:
-            data = getattr(ev, "data", None)
+        for event in events:
+            data = getattr(event, "data", None)
             if isinstance(data, AssistantMessageData):
                 text = getattr(data, "content", "") or ""
                 if text:

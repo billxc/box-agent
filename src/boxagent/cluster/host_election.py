@@ -156,8 +156,8 @@ class HostElection:
             return
 
         priority = self.config.host_priority
-        my_idx = self.config.my_host_index
-        me = self.config.machine_id
+        my_index = self.config.my_host_index
+        my_machine_id = self.config.machine_id
 
         # Always probe ground truth first — never trust our own self-belief.
         # Catches the case where our `devtunnel host` subprocess died after
@@ -169,12 +169,12 @@ class HostElection:
             # Sanity: is the tunnel actually serving *us*?
             tunnel = self.tunnel
             tunnel_dead = tunnel is None or not tunnel.is_alive()
-            stolen = upstream and upstream != me
+            stolen = upstream and upstream != my_machine_id
             if tunnel_dead or stolen:
                 logger.warning(
                     "host election: lost host status (tunnel_dead=%s, "
                     "probe_says='%s', expected='%s') — demoting",
-                    tunnel_dead, upstream, me,
+                    tunnel_dead, upstream, my_machine_id,
                 )
                 await self._become_guest(upstream or "")
                 # Re-tick immediately so we either promote again (if no other
@@ -187,9 +187,9 @@ class HostElection:
             # Then check whether a higher-priority candidate has joined as a
             # guest and we should yield.
             registry = self.registry
-            if registry is not None and my_idx > 0:
+            if registry is not None and my_index > 0:
                 for sess_machine_id in list(registry.sessions.keys()):
-                    if sess_machine_id in priority and priority.index(sess_machine_id) < my_idx:
+                    if sess_machine_id in priority and priority.index(sess_machine_id) < my_index:
                         logger.info(
                             "host election: demoting; higher-priority candidate '%s' is here",
                             sess_machine_id,
@@ -199,11 +199,11 @@ class HostElection:
             return
 
         # Not host yet — settle into guest or promote.
-        if upstream and upstream != me:
+        if upstream and upstream != my_machine_id:
             await self._ensure_guest(upstream)
             return
 
-        if my_idx >= 0:
+        if my_index >= 0:
             # Empty probe could mean "really no host" or "transient hiccup
             # while a peer is hosting". Re-probe a few times before stealing
             # the tunnel to avoid split-brain.
@@ -212,7 +212,7 @@ class HostElection:
                 if self._stop:
                     return
                 upstream = await self._probe_active_host()
-                if upstream and upstream != me:
+                if upstream and upstream != my_machine_id:
                     logger.info(
                         "host election: probe recovered on retry %d (upstream=%s) — staying guest",
                         attempt, upstream,

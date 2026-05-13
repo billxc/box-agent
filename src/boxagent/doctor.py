@@ -16,8 +16,8 @@ from boxagent.utils import safe_print as _safe_print
 # Dependency checks + auto-fix
 # ---------------------------------------------------------------------------
 
-def _which(cmd: str) -> str | None:
-    return shutil.which(cmd) or shutil.which(f"{cmd}.exe")
+def _which(command: str) -> str | None:
+    return shutil.which(command) or shutil.which(f"{command}.exe")
 
 
 def _uv_extra_paths() -> list[Path]:
@@ -97,15 +97,15 @@ _DEPENDENCY_CHECKS = [
 ]
 
 
-def _resolve(cmd: str, extra_paths_fn) -> str | None:
-    found = _which(cmd)
+def _resolve(command: str, extra_paths_fn) -> str | None:
+    found = _which(command)
     if found:
         return found
     if extra_paths_fn is None:
         return None
-    for c in extra_paths_fn():
-        if c.is_file():
-            return str(c)
+    for candidate in extra_paths_fn():
+        if candidate.is_file():
+            return str(candidate)
     return None
 
 
@@ -135,13 +135,13 @@ def check_dependencies(fix: bool = False) -> tuple[list[str], list[str]]:
     ok: list[str] = []
     issues: list[str] = []
 
-    for cmd, name, install_fn, required, npm_package, extra_paths_fn in _DEPENDENCY_CHECKS:
+    for command, name, install_fn, required, npm_package, extra_paths_fn in _DEPENDENCY_CHECKS:
         # Built-in installer (custom) wins; otherwise fall back to npm install.
         effective_install = install_fn
         if effective_install is None and npm_package:
             effective_install = partial(_npm_install, npm_package, name, update=False)
 
-        path = _resolve(cmd, extra_paths_fn)
+        path = _resolve(command, extra_paths_fn)
         if path:
             if fix and npm_package:
                 _npm_install(npm_package, name, update=True)
@@ -152,11 +152,11 @@ def check_dependencies(fix: bool = False) -> tuple[list[str], list[str]]:
         if fix and effective_install:
             try:
                 effective_install()
-            except (PermissionError, OSError) as exc:
-                _safe_print(f"  Install failed: {exc}")
+            except (PermissionError, OSError) as exception:
+                _safe_print(f"  Install failed: {exception}")
             if sys.platform == "win32":
                 _refresh_path_win32()
-            path = _resolve(cmd, extra_paths_fn)
+            path = _resolve(command, extra_paths_fn)
             if path:
                 ok.append(f"✅ {name}: {path} (just installed)")
             else:
@@ -244,16 +244,16 @@ def _validate_skill_dirs(ba_dir: Path, local_dir: Path) -> tuple[list[str], list
 
         all_dirs: set[str] = set()
         for bot_raw in (raw.get("bots") or {}).values():
-            for d in bot_raw.get("extra_skill_dirs", []):
-                p = Path(d).expanduser()
+            for raw_dir in bot_raw.get("extra_skill_dirs", []):
+                p = Path(raw_dir).expanduser()
                 if not p.is_absolute():
                     p = ba_dir / p
                 all_dirs.add(str(p))
 
-        missing = [d for d in all_dirs if not Path(d).is_dir()]
+        missing = [path for path in all_dirs if not Path(path).is_dir()]
         if missing:
-            for d in missing:
-                issues.append(f"⚠️  extra_skill_dirs not found: {d}")
+            for path in missing:
+                issues.append(f"⚠️  extra_skill_dirs not found: {path}")
         elif all_dirs:
             ok.append(f"✅ Skill dirs: {len(all_dirs)} path(s) valid")
     except Exception:

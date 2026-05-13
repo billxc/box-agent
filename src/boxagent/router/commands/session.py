@@ -97,11 +97,11 @@ async def _resume_list(
 
     lines = ["**Resume Sessions**"]
     buttons = []
-    idx = 0
+    index = 0
     for backend in sorted(groups):
         lines.append(f"\n**{backend}**")
         for entry in groups[backend][:10]:
-            idx += 1
+            index += 1
             session_id = str(entry.get("sessionId", ""))
             modified_ts = entry.get("modified_ts")
             time_str = ""
@@ -114,8 +114,8 @@ async def _resume_list(
             short_id = session_id[:8]
             project = entry.get("project", "")
             ws_label = f" `{project}`" if project else ""
-            lines.append(f"{idx}. `{short_id}` {time_str}{ws_label}{preview_text}")
-            btn_label = f"{idx}. {time_str}"
+            lines.append(f"{index}. `{short_id}` {time_str}{ws_label}{preview_text}")
+            btn_label = f"{index}. {time_str}"
             if isinstance(preview, str) and preview:
                 btn_label += f" {preview[:28]}"
             buttons.append((btn_label, f"/resume {session_id}"))

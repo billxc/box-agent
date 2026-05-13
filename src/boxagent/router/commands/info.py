@@ -127,10 +127,10 @@ async def cmd_version(router: "Router", msg: "IncomingMessage", channel: "Channe
 async def cmd_verbose(router: "Router", msg: "IncomingMessage", channel: "Channel") -> None:
     current = getattr(channel, "tool_calls_display", "summary")
     try:
-        idx = TOOL_DISPLAY_MODES.index(current)
+        index = TOOL_DISPLAY_MODES.index(current)
     except ValueError:
-        idx = 0
-    new_mode = TOOL_DISPLAY_MODES[(idx + 1) % len(TOOL_DISPLAY_MODES)]
+        index = 0
+    new_mode = TOOL_DISPLAY_MODES[(index + 1) % len(TOOL_DISPLAY_MODES)]
     setattr(channel, "tool_calls_display", new_mode)
     await channel.send_text(msg.chat_id, f"Tool call display: {new_mode}")
 
@@ -150,7 +150,7 @@ async def cmd_help(router: "Router", msg: "IncomingMessage", channel: "Channel")
             continue
         by_category.setdefault(spec.category, []).append(spec)
 
-    ordered: list[CommandCategory | None] = [c for c in CommandCategory if c in by_category]
+    ordered: list[CommandCategory | None] = [cat for cat in CommandCategory if cat in by_category]
     if None in by_category:
         ordered.append(None)
 

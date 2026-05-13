@@ -50,13 +50,13 @@ class TopologyService:
 
     @property
     def guest_registry(self):
-        he = self.host_election
-        return he.registry if he is not None else None
+        host_election = self.host_election
+        return host_election.registry if host_election is not None else None
 
     @property
     def guest_client(self):
-        he = self.host_election
-        return he.client if he is not None else None
+        host_election = self.host_election
+        return host_election.client if host_election is not None else None
 
     # ── Local identity ──
 
@@ -130,10 +130,10 @@ class TopologyService:
                 })
             seen = {(p["name"], p["machine"]) for p in out}
             for machine_id, info in (self.guest_registry.history or {}).items():
-                for b in info.get("bots") or []:
-                    if b.get("kind") != "workgroup":
+                for bot in info.get("bots") or []:
+                    if bot.get("kind") != "workgroup":
                         continue
-                    name = b.get("name") or ""
+                    name = bot.get("name") or ""
                     if name == exclude or (name, machine_id) in seen:
                         continue
                     out.append({
@@ -141,7 +141,7 @@ class TopologyService:
                         "machine": machine_id,
                         "online": False,
                         "kind": "workgroup",
-                        "description": b.get("display_name") or "",
+                        "description": bot.get("display_name") or "",
                     })
         elif self.guest_client is not None:
             for p in self.guest_client.remote_peers:
@@ -163,7 +163,7 @@ class TopologyService:
             return
         for machine_id, session in list(self.guest_registry.sessions.items()):
             self_workgroup_names = {
-                b.name for b in session.bots if b.kind == "workgroup"
+                bot.name for bot in session.bots if bot.kind == "workgroup"
             }
             peers: list[dict] = []
             if self.workgroup_manager is not None:

@@ -153,12 +153,12 @@ def format_sessions_list(
 
     lines = [f"**{header}**\n"]
 
-    for idx, e in enumerate(page_entries, start + 1):
-        sid = e.get("sessionId", "?")
-        project = e.get("project", "")
-        modified_ts = e.get("modified_ts") or 0
-        messages = e.get("messageCount") or 0
-        backend_str = e.get("backend") or ""
+    for index, entry in enumerate(page_entries, start + 1):
+        sid = entry.get("sessionId", "?")
+        project = entry.get("project", "")
+        modified_ts = entry.get("modified_ts") or 0
+        messages = entry.get("messageCount") or 0
+        backend_str = entry.get("backend") or ""
         rel_time = _relative_time(modified_ts)
 
         meta_parts = []
@@ -170,10 +170,10 @@ def format_sessions_list(
             meta_parts.append(f"{messages} messages")
         if backend_str:
             meta_parts.append(backend_str)
-        lines.append(f"{idx}. {' · '.join(meta_parts)}")
+        lines.append(f"{index}. {' · '.join(meta_parts)}")
 
         summary = _truncate(
-            e.get("summary", "") or e.get("firstPrompt", "") or e.get("preview", ""),
+            entry.get("summary", "") or entry.get("firstPrompt", "") or entry.get("preview", ""),
             70,
         )
         if summary:

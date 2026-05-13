@@ -112,7 +112,7 @@ class Router:
             command = text.split()[0].lower()
             spec = COMMAND_REGISTRY.get(command)
             if spec is not None:
-                await spec.fn(self, msg, channel)
+                await spec.handler(self, msg, channel)
                 return
 
         # Buffer if this chat_id already has an active turn

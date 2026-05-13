@@ -129,14 +129,14 @@ class ClusterTunnel:
             if process is None:
                 return
             try:
-                rc = await process.wait()
+                return_code = await process.wait()
             except asyncio.CancelledError:
                 return
             if self._stopping:
                 return
             logger.warning(
                 "Cluster tunnel '%s' host process (pid=%d) exited rc=%s; respawning in %.1fs",
-                self.name, process.pid, rc, self._respawn_backoff_seconds,
+                self.name, process.pid, return_code, self._respawn_backoff_seconds,
             )
             try:
                 await asyncio.sleep(self._respawn_backoff_seconds)
@@ -208,11 +208,11 @@ class ClusterTunnel:
         return process.returncode or 0, out.decode("utf-8", "replace"), err.decode("utf-8", "replace")
 
     async def _show(self) -> dict | None:
-        rc, out, err = await self._run("show", self.name, "-j")
-        if rc != 0:
+        return_code, out, err = await self._run("show", self.name, "-j")
+        if return_code != 0:
             if "Tunnel not found" in err or "Tunnel not found" in out:
                 return None
-            logger.debug("devtunnel show '%s' rc=%d err=%s", self.name, rc, err.strip())
+            logger.debug("devtunnel show '%s' rc=%d err=%s", self.name, return_code, err.strip())
             return None
         try:
             data = json.loads(out)

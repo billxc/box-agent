@@ -207,7 +207,7 @@ def load_config(
     if isinstance(raw_host, str):
         host_priority = [raw_host] if raw_host else []
     elif isinstance(raw_host, list):
-        host_priority = [str(h).strip() for h in raw_host if str(h).strip()]
+        host_priority = [str(host).strip() for host in raw_host if str(host).strip()]
     else:
         host_priority = []
     cluster_tunnel_name = str(cluster_config.get("tunnel_name", "") or "boxagent-cluster")
@@ -240,7 +240,7 @@ def load_config(
     )
     raw_categories = notify_telegram.get("categories") or []
     notify_telegram_categories = (
-        [str(c).strip() for c in raw_categories if str(c).strip()]
+        [str(category).strip() for category in raw_categories if str(category).strip()]
         if isinstance(raw_categories, list) else []
     )
 
@@ -477,8 +477,8 @@ def _parse_bot(
 
     extra_skill_dirs: list[str] = []
     config_base = Path(config_dir).expanduser() if config_dir else None
-    for d in raw.get("extra_skill_dirs", []):
-        path = Path(d).expanduser()
+    for raw_dir in raw.get("extra_skill_dirs", []):
+        path = Path(raw_dir).expanduser()
         if not path.is_absolute() and config_base is not None:
             path = config_base / path
         extra_skill_dirs.append(str(path))
@@ -532,8 +532,8 @@ def _parse_workgroup(
     display_tool_calls = raw.get("display", {}).get("tool_calls", "silent")
 
     extra_skill_dirs: list[str] = []
-    for d in raw.get("extra_skill_dirs", []):
-        path = Path(d).expanduser()
+    for raw_dir in raw.get("extra_skill_dirs", []):
+        path = Path(raw_dir).expanduser()
         if not path.is_absolute() and config_base is not None:
             path = config_base / path
         extra_skill_dirs.append(str(path))

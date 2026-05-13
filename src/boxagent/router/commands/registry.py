@@ -48,7 +48,7 @@ class CommandSpec:
     by ``/help``; empty means the command is hidden from the listing.
     ``category`` decides which section the command lives under."""
     name: str
-    fn: CommandFn
+    handler: CommandFn
     help: str = ""
     category: CommandCategory | None = None
 
@@ -62,7 +62,7 @@ def command(
     help: str = "",
     category: CommandCategory | None = None,
 ) -> Callable[[CommandFn], CommandFn]:
-    """Register ``fn`` as the handler for slash command ``name``.
+    """Register ``handler`` as the handler for slash command ``name``.
 
     Pass ``help`` to include the command in ``/help`` output (one line).
     Omit ``help`` for commands intentionally hidden from the listing.
@@ -72,14 +72,14 @@ def command(
 
     Raises if ``name`` is already registered.
     """
-    def decorator(fn: CommandFn) -> CommandFn:
+    def decorator(handler: CommandFn) -> CommandFn:
         if name in COMMAND_REGISTRY:
             raise RuntimeError(
-                f"command {name!r} already registered to {COMMAND_REGISTRY[name].fn.__name__}"
+                f"command {name!r} already registered to {COMMAND_REGISTRY[name].handler.__name__}"
             )
         COMMAND_REGISTRY[name] = CommandSpec(
-            name=name, fn=fn, help=help, category=category,
+            name=name, handler=handler, help=help, category=category,
         )
-        return fn
+        return handler
     return decorator
 

@@ -196,9 +196,9 @@ class GuestRegistry:
                 "machine_id": machine_id,
                 "online": True,
                 "bots": [
-                    {"name": b.name, "display_name": b.display_name,
-                     "backend": b.backend, "model": b.model, "kind": b.kind}
-                    for b in session.bots
+                    {"name": bot.name, "display_name": bot.display_name,
+                     "backend": bot.backend, "model": bot.model, "kind": bot.kind}
+                    for bot in session.bots
                 ],
                 "last_seen": now,
             })
@@ -217,8 +217,8 @@ class GuestRegistry:
         """Yield (machine_id, RemoteBot) for every registered remote bot."""
         out: list[tuple[str, RemoteBot]] = []
         for machine_id, session in self.sessions.items():
-            for b in session.bots:
-                out.append((machine_id, b))
+            for bot in session.bots:
+                out.append((machine_id, bot))
         return out
 
     def get_bot(self, machine_id: str, name: str) -> RemoteBot | None:
@@ -226,9 +226,9 @@ class GuestRegistry:
         session = self.sessions.get(machine_id)
         if session is None:
             return None
-        for b in session.bots:
-            if b.name == name:
-                return b
+        for bot in session.bots:
+            if bot.name == name:
+                return bot
         return None
 
     async def aclose(self) -> None:
@@ -251,7 +251,7 @@ class GuestRegistry:
                 pass
         self.sessions.clear()
 
-    async def _serve_inbound_rpc(self, session: GuestSession, req: dict) -> None:
+    async def _serve_inbound_rpc(self, session: GuestSession, request: dict) -> None:
         """Handle an `rpc` frame coming *from* a guest.
 
         Mirrors `GuestClient._handle_rpc`: re-issue the request against the
@@ -260,11 +260,11 @@ class GuestRegistry:
         loopback HTTP path means the host's full `_handle_web_*` logic — which
         already includes host→guest proxying — handles routing for free.
         """
-        rpc_id = str(req.get("id") or "")
-        method = str(req.get("method") or "GET").upper()
-        path = str(req.get("path") or "")
-        query: dict = req.get("query") or {}
-        body = req.get("body")
+        rpc_id = str(request.get("id") or "")
+        method = str(request.get("method") or "GET").upper()
+        path = str(request.get("path") or "")
+        query: dict = request.get("query") or {}
+        body = request.get("body")
 
         if not self.local_web_port:
             try:
@@ -353,23 +353,23 @@ class GuestRegistry:
                     bots_raw = payload.get("bots") or []
                     bots = [
                         RemoteBot(
-                            name=str(b.get("name") or ""),
-                            display_name=str(b.get("display_name") or ""),
-                            backend=str(b.get("backend") or ""),
-                            model=str(b.get("model") or ""),
-                            kind=str(b.get("kind") or "bot"),
+                            name=str(bot.get("name") or ""),
+                            display_name=str(bot.get("display_name") or ""),
+                            backend=str(bot.get("backend") or ""),
+                            model=str(bot.get("model") or ""),
+                            kind=str(bot.get("kind") or "bot"),
                         )
-                        for b in bots_raw
-                        if isinstance(b, dict) and b.get("name")
+                        for bot in bots_raw
+                        if isinstance(bot, dict) and bot.get("name")
                     ]
                     session = GuestSession(machine_id=machine_id, ws=ws, bots=bots)
                     # If a previous session with this machine_id is still around,
                     # evict it (a guest reconnect).
-                    old = self.sessions.get(machine_id)
-                    if old is not None:
-                        old._closed = True
+                    old_session = self.sessions.get(machine_id)
+                    if old_session is not None:
+                        old_session._closed = True
                         try:
-                            await old.ws.close()
+                            await old_session.ws.close()
                         except Exception:
                             pass
                     self.sessions[machine_id] = session
@@ -412,14 +412,14 @@ class GuestRegistry:
                     bots_raw = payload.get("bots") or []
                     session.bots = [
                         RemoteBot(
-                            name=str(b.get("name") or ""),
-                            display_name=str(b.get("display_name") or ""),
-                            backend=str(b.get("backend") or ""),
-                            model=str(b.get("model") or ""),
-                            kind=str(b.get("kind") or "bot"),
+                            name=str(bot.get("name") or ""),
+                            display_name=str(bot.get("display_name") or ""),
+                            backend=str(bot.get("backend") or ""),
+                            model=str(bot.get("model") or ""),
+                            kind=str(bot.get("kind") or "bot"),
                         )
-                        for b in bots_raw
-                        if isinstance(b, dict) and b.get("name")
+                        for bot in bots_raw
+                        if isinstance(bot, dict) and bot.get("name")
                     ]
                     if self.on_topology_change is not None:
                         try:
@@ -437,9 +437,9 @@ class GuestRegistry:
                 # Remember bots so the UI keeps showing the row as "offline"
                 self.history[session.machine_id] = {
                     "bots": [
-                        {"name": b.name, "display_name": b.display_name,
-                         "backend": b.backend, "model": b.model, "kind": b.kind}
-                        for b in session.bots
+                        {"name": bot.name, "display_name": bot.display_name,
+                         "backend": bot.backend, "model": bot.model, "kind": bot.kind}
+                        for bot in session.bots
                     ],
                     "last_seen": time.time(),
                 }

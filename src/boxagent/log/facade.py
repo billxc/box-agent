@@ -32,8 +32,8 @@ class LogFacade:
     def _emit(self, level: str, category: str, message: str, meta: dict) -> None:
         try:
             self._sink.publish(level, category, message, **meta)
-        except Exception as exc:
-            print(f"[log facade] sink failed: {exc!r}", file=sys.stderr)
+        except Exception as exception:
+            print(f"[log facade] sink failed: {exception!r}", file=sys.stderr)
 
     def debug(self, category: str, message: str, **meta) -> None:
         self._emit("debug", category, message, meta)

@@ -121,7 +121,7 @@ def _relative_time(ts: int) -> str:
         m = diff // 60
         return f"{m}m ago"
     if diff < 86400:
-        h = diff // 3600
-        return f"{h}h ago"
-    d = diff // 86400
-    return f"{d}d ago"
+        hours = diff // 3600
+        return f"{hours}h ago"
+    days = diff // 86400
+    return f"{days}d ago"

@@ -270,12 +270,12 @@ class GuestClient:
 
     @staticmethod
     def _derive_ws_url(http_url: str) -> str:
-        u = http_url.rstrip("/")
-        if u.startswith("https://"):
-            return "wss://" + u[len("https://"):] + "/api/guest/ws"
-        if u.startswith("http://"):
-            return "ws://" + u[len("http://"):] + "/api/guest/ws"
-        return u + "/api/guest/ws"
+        url = http_url.rstrip("/")
+        if url.startswith("https://"):
+            return "wss://" + url[len("https://"):] + "/api/guest/ws"
+        if url.startswith("http://"):
+            return "ws://" + url[len("http://"):] + "/api/guest/ws"
+        return url + "/api/guest/ws"
 
     async def _serve(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         async for msg in ws:
@@ -327,12 +327,12 @@ class GuestClient:
             elif msg.type in (WSMsgType.CLOSED, WSMsgType.ERROR):
                 break
 
-    async def _handle_rpc(self, ws: aiohttp.ClientWebSocketResponse, req: dict) -> None:
-        rpc_id = str(req.get("id") or "")
-        method = str(req.get("method") or "GET").upper()
-        path = str(req.get("path") or "")
-        query: dict = req.get("query") or {}
-        body = req.get("body")
+    async def _handle_rpc(self, ws: aiohttp.ClientWebSocketResponse, request: dict) -> None:
+        rpc_id = str(request.get("id") or "")
+        method = str(request.get("method") or "GET").upper()
+        path = str(request.get("path") or "")
+        query: dict = request.get("query") or {}
+        body = request.get("body")
 
         url = f"http://127.0.0.1:{self.local_web_port}{path}"
         headers = {}

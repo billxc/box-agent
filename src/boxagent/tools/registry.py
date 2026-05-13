@@ -135,7 +135,7 @@ def boxagent_tool(
 ) -> Callable[[ToolHandler], ToolHandler]:
     """Decorator that registers a tool in the global registry."""
 
-    def decorator(fn: ToolHandler) -> ToolHandler:
+    def decorator(handler: ToolHandler) -> ToolHandler:
         if any(t.name == name for t in _TOOLS):
             raise ValueError(f"Duplicate boxagent_tool name: {name!r}")
 
@@ -143,7 +143,7 @@ def boxagent_tool(
             from boxagent.log import Category, log
             args_summary = _summarize_args(args)
             try:
-                result = await fn(args, ctx)
+                result = await handler(args, ctx)
             except Exception as e:
                 import traceback as _tb
                 log.error(

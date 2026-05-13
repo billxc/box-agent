@@ -246,13 +246,13 @@ class WebHttpServer:
                     "machine": local_machine_id,
                 })
         if self.topology.guest_registry is not None:
-            for machine_id, b in self.topology.guest_registry.list_bots():
+            for machine_id, bot in self.topology.guest_registry.list_bots():
                 bots.append({
-                    "name": b.name,
-                    "display_name": (b.display_name or b.name) + f"  @{machine_id}",
-                    "backend": b.backend,
-                    "model": b.model,
-                    "kind": b.kind,
+                    "name": bot.name,
+                    "display_name": (bot.display_name or bot.name) + f"  @{machine_id}",
+                    "backend": bot.backend,
+                    "model": bot.model,
+                    "kind": bot.kind,
                     "machine": machine_id,
                 })
         elif self.topology.guest_client is not None:
@@ -260,13 +260,13 @@ class WebHttpServer:
                 machine_id = m.get("machine_id") or ""
                 if not machine_id or machine_id == local_machine_id:
                     continue
-                for b in m.get("bots") or []:
+                for bot in m.get("bots") or []:
                     bots.append({
-                        "name": b.get("name") or "",
-                        "display_name": (b.get("display_name") or b.get("name") or "") + f"  @{machine_id}",
-                        "backend": b.get("backend") or "",
-                        "model": b.get("model") or "",
-                        "kind": b.get("kind") or "bot",
+                        "name": bot.get("name") or "",
+                        "display_name": (bot.get("display_name") or bot.get("name") or "") + f"  @{machine_id}",
+                        "backend": bot.get("backend") or "",
+                        "model": bot.get("model") or "",
+                        "kind": bot.get("kind") or "bot",
                         "machine": machine_id,
                     })
         return web.json_response({"bots": bots})
@@ -404,16 +404,16 @@ class WebHttpServer:
                         continue
                     if rec.get("chat_id") and rec.get("chat_id") != s["chat_id"]:
                         continue
-                    ev = rec.get("event")
-                    txt = rec.get("text", "") or ""
+                    event = rec.get("event")
+                    text = rec.get("text", "") or ""
                     ts = float(rec.get("ts", 0) or 0)
                     if ts > last_ts:
                         last_ts = ts
-                    if ev == "user":
-                        last_user = txt
+                    if event == "user":
+                        last_user = text
                         msg_count += 1
-                    elif ev == "assistant":
-                        last_assist = txt
+                    elif event == "assistant":
+                        last_assist = text
                         msg_count += 1
                 preview = (last_assist or last_user or "").strip().replace("\n", " ")
                 s["preview"] = preview[:90] + ("..." if len(preview) > 90 else "")
@@ -1029,10 +1029,10 @@ class WebHttpServer:
             return self._unauthorized()
         if self.event_bus is None:
             return web.json_response({"ok": True, "categories": []})
-        cur = self.event_bus._store._conn.execute(
+        cursor = self.event_bus._store._conn.execute(
             "SELECT category, COUNT(*) FROM events GROUP BY category ORDER BY category"
         )
-        rows = [{"category": r[0], "count": r[1]} for r in cur.fetchall()]
+        rows = [{"category": r[0], "count": r[1]} for r in cursor.fetchall()]
         return web.json_response({"ok": True, "categories": rows})
 
     async def _handle_events_machines(self, request: web.Request) -> web.Response:
@@ -1041,10 +1041,10 @@ class WebHttpServer:
             return self._unauthorized()
         if self.event_bus is None:
             return web.json_response({"ok": True, "machines": []})
-        cur = self.event_bus._store._conn.execute(
+        cursor = self.event_bus._store._conn.execute(
             "SELECT origin_machine, COUNT(*) FROM events GROUP BY origin_machine ORDER BY origin_machine"
         )
-        rows = [{"machine_id": r[0], "count": r[1]} for r in cur.fetchall() if r[0]]
+        rows = [{"machine_id": r[0], "count": r[1]} for r in cursor.fetchall() if r[0]]
         return web.json_response({"ok": True, "machines": rows})
 
     async def _handle_events_mark_read(self, request: web.Request) -> web.Response:

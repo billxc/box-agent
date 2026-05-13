@@ -209,9 +209,9 @@ class ClaudeProcess(BaseCLIProcess):
                     if isinstance(raw_content, list):
                         # Newer schema: list of {type:"text", text:...} blocks.
                         output = "".join(
-                            (b.get("text", "") or "")
-                            for b in raw_content
-                            if isinstance(b, dict) and b.get("type") == "text"
+                            (block.get("text", "") or "")
+                            for block in raw_content
+                            if isinstance(block, dict) and block.get("type") == "text"
                         )
                     else:
                         output = str(raw_content) if raw_content is not None else ""

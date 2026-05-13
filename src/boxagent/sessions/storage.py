@@ -42,8 +42,8 @@ class Storage:
         rewrites = {k: k.replace(":wg:", ":workgroup:", 1) for k in data if ":wg:" in k}
         if not rewrites:
             return
-        for old, new in rewrites.items():
-            data[new] = data.pop(old)
+        for old_key, new in rewrites.items():
+            data[new] = data.pop(old_key)
         try:
             with open(path, "w") as f:
                 yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
@@ -94,19 +94,19 @@ class Storage:
         key = self._session_key(bot_id, chat_id)
         entry: dict[str, object] = {"session_id": session_id}
 
-        # Chain old session_ids when this chat_id rotates to a new one
+        # Chain old_entry session_ids when this chat_id rotates to a new one
         # (e.g. after /compact). The full chain lets transcript readers
         # stitch the conversation back together across compactions.
-        old = sessions.get(key)
+        old_entry = sessions.get(key)
         prev_chain: list[str] = []
         old_sid = ""
-        if isinstance(old, dict):
-            old_sid = str(old.get("session_id", "") or "")
-            raw_prev = old.get("previous_session_ids") or []
+        if isinstance(old_entry, dict):
+            old_sid = str(old_entry.get("session_id", "") or "")
+            raw_prev = old_entry.get("previous_session_ids") or []
             if isinstance(raw_prev, list):
                 prev_chain = [str(s) for s in raw_prev if isinstance(s, str) and s]
-        elif isinstance(old, str):
-            old_sid = old
+        elif isinstance(old_entry, str):
+            old_sid = old_entry
         if old_sid and old_sid != session_id and old_sid not in prev_chain:
             prev_chain.insert(0, old_sid)
         if prev_chain:
@@ -172,7 +172,7 @@ class Storage:
         With ``preserve_chain=True`` the current session_id is pushed onto
         ``previous_session_ids`` (and other entry fields kept) so that
         ``/compact`` can start a fresh Claude session while history readers
-        can still walk back into the old transcript. Without it, the entry
+        can still walk back into the old_entry transcript. Without it, the entry
         is dropped entirely (``/new`` semantics).
         """
         key = self._session_key(bot_id, chat_id)
@@ -182,21 +182,21 @@ class Storage:
             self._save_sessions(sessions)
             return
 
-        old = sessions.get(key)
-        if not isinstance(old, dict):
+        old_entry = sessions.get(key)
+        if not isinstance(old_entry, dict):
             sessions.pop(key, None)
             self._save_sessions(sessions)
             return
 
-        old_sid = str(old.get("session_id", "") or "")
+        old_sid = str(old_entry.get("session_id", "") or "")
         prev_chain: list[str] = []
-        raw_prev = old.get("previous_session_ids") or []
+        raw_prev = old_entry.get("previous_session_ids") or []
         if isinstance(raw_prev, list):
             prev_chain = [str(s) for s in raw_prev if isinstance(s, str) and s]
         if old_sid and old_sid not in prev_chain:
             prev_chain.insert(0, old_sid)
 
-        new_entry = {k: v for k, v in old.items() if k not in ("session_id", "previous_session_ids")}
+        new_entry = {k: v for k, v in old_entry.items() if k not in ("session_id", "previous_session_ids")}
         if prev_chain:
             new_entry["previous_session_ids"] = prev_chain[:20]
         sessions[key] = new_entry
@@ -236,7 +236,7 @@ class Storage:
 
     def _save_main_sessions(self, data: dict) -> None:
         # Atomic write: dump to temp file, then rename. POSIX rename is
-        # atomic so concurrent readers either see the old or new file,
+        # atomic so concurrent readers either see the old_entry or new file,
         # never a half-written one.
         path = self._main_sessions_path()
         tmp = path.with_suffix(path.suffix + ".tmp")
@@ -265,8 +265,8 @@ class Storage:
     def set_main_chat_id(self, bot_id: str, chat_id: str) -> None:
         with self._main_lock:
             data = dict(self._load_main_sessions())  # copy to avoid in-place mutation of cache
-            old = data.get(bot_id, "")
-            if old == chat_id:
+            old_entry = data.get(bot_id, "")
+            if old_entry == chat_id:
                 return  # no-op, don't churn the file
             if chat_id:
                 data[bot_id] = chat_id
@@ -279,8 +279,8 @@ class Storage:
             stack = traceback.extract_stack(limit=6)
             caller = " > ".join(f"{Path(f.filename).name}:{f.lineno}" for f in stack[-5:-1])
             logger.warning(
-                "main_chat_id changed bot=%s old=%s new=%s caller=%s",
-                bot_id, old or "(empty)", chat_id or "(empty)", caller,
+                "main_chat_id changed bot=%s old_entry=%s new=%s caller=%s",
+                bot_id, old_entry or "(empty)", chat_id or "(empty)", caller,
             )
 
     def _session_history_path(self) -> Path:

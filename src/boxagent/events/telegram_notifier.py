@@ -117,5 +117,5 @@ class TelegramNotifier:
                         "telegram notify failed: status=%s body=%s",
                         response.status, body[:200],
                     )
-        except Exception as exc:
-            logger.warning("telegram notify exception: %r", exc)
+        except Exception as exception:
+            logger.warning("telegram notify exception: %r", exception)
