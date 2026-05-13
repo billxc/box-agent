@@ -370,7 +370,7 @@ def _local_dir(args) -> Path:
     return default_local_dir(getattr(args, "box_agent_dir", None))
 
 
-def _load_run_logs(local_dir: Path, task_id: str = "") -> list[dict]:
+def load_run_logs(local_dir: Path, task_id: str = "") -> list[dict]:
     """Load schedule run log entries from jsonl files.
 
     Returns a list of records sorted by time descending.
@@ -407,7 +407,7 @@ def _load_run_logs(local_dir: Path, task_id: str = "") -> list[dict]:
 
 def format_schedule_logs(local_dir: str | Path, task_id: str = "", n: int = 20) -> str:
     """Return a formatted string of schedule execution logs."""
-    entries = _load_run_logs(Path(local_dir), task_id=task_id)
+    entries = load_run_logs(Path(local_dir), task_id=task_id)
 
     if not entries:
         if task_id:
@@ -448,7 +448,7 @@ def format_schedule_run_detail(local_dir: str | Path, task_id: str, run_index: i
         task_id: Task ID to look up
         run_index: 1-indexed run number (1 = most recent), default 1
     """
-    entries = _load_run_logs(Path(local_dir), task_id=task_id)
+    entries = load_run_logs(Path(local_dir), task_id=task_id)
     if not entries:
         return f"No logs found for '{task_id}'."
 
@@ -494,7 +494,7 @@ def schedule_logs(args) -> None:
         return
 
     if getattr(args, "output_json", False):
-        entries = _load_run_logs(_local_dir(args), task_id=task_id)[:n]
+        entries = load_run_logs(_local_dir(args), task_id=task_id)[:n]
         _safe_print(json.dumps(entries, indent=2, ensure_ascii=False))
         return
 

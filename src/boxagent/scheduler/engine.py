@@ -429,14 +429,14 @@ class Scheduler:
         prompt = f"{append_system_prompt}\n{user_prompt}"
         t0 = datetime.now()
         try:
-            text, callback = await self._spawn_isolate(task, user_prompt, append_system_prompt=append_system_prompt)
+            text, callback, backend = await self._spawn_isolate(task, user_prompt, append_system_prompt=append_system_prompt)
         except Exception as e:
             self._append_run_log(task, prompt=prompt, error=str(e))
             raise
         elapsed = datetime.now() - t0
 
         display_text, result = extract_schedule_result(text)
-        self._append_run_log(task, prompt=prompt, output=text, result=result)
+        self._append_run_log(task, prompt=prompt, output=text, result=result, backend=backend)
         if task.bot:
             msg = self._format_isolate_notification(task, display_text, elapsed, callback)
             await self._notify(task, msg)
@@ -473,8 +473,8 @@ class Scheduler:
             return f"{header}\n{meta_line}\n\n{text}"
         return f"{header} (no output)\n{meta_line}"
 
-    async def _spawn_isolate(self, task: ScheduleTask, prompt: str, append_system_prompt: str = "") -> tuple[str, "_SchedulerCallback"]:
-        """Spawn an isolated backend process and return (output_text, callback)."""
+    async def _spawn_isolate(self, task: ScheduleTask, prompt: str, append_system_prompt: str = "") -> tuple[str, "_SchedulerCallback", AgentBackend]:
+        """Spawn an isolated backend process and return (output_text, callback, backend)."""
         from boxagent.agent_env import AgentEnv
 
         backend = task.ai_backend
@@ -535,7 +535,7 @@ class Scheduler:
                 ) from e
             if callback._error:
                 raise RuntimeError(self._enrich_error(task, callback._error))
-            return callback._text.strip(), callback
+            return callback._text.strip(), callback, backend
         finally:
             await backend.stop()
 
@@ -634,7 +634,7 @@ class Scheduler:
             raise RuntimeError(self._enrich_error(task, callback._error))
         full_text = callback._text.strip()
         display_text, result = extract_schedule_result(full_text)
-        self._append_run_log(task, prompt=prompt, output=full_text, result=result)
+        self._append_run_log(task, prompt=prompt, output=full_text, result=result, backend=bot_ref.backend)
         return display_text
 
     async def _notify(self, task: ScheduleTask, msg: str) -> None:
@@ -679,6 +679,7 @@ class Scheduler:
         output: str = "",
         error: str = "",
         result: dict | str | None = None,
+        backend: AgentBackend | None = None,
     ) -> None:
         """Append a scheduler run record to local/schedule-runs/<task>.jsonl."""
         if not self.local_dir:
@@ -699,6 +700,9 @@ class Scheduler:
             "output": output,
             "error": error,
         }
+        session_id = getattr(backend, "session_id", None) or "" if backend is not None else ""
+        if session_id:
+            record["session_id"] = session_id
         if result is not None:
             record["result"] = result
         with open(path, "a", encoding="utf-8") as f:

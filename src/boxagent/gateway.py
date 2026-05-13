@@ -233,6 +233,7 @@ class Gateway:
         self._web_server = WebHttpServer(
             config=self.config,
             local_dir=self.local_dir,
+            config_dir=self.config_dir,
             storage=storage,
             web_channels=self._bots.web_channels,
             pools=self._bots.pools,

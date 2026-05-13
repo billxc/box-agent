@@ -8,7 +8,7 @@ import yaml
 
 from boxagent.scheduler.engine import DEFAULT_ISOLATE_TIMEOUT_SECONDS
 from boxagent.scheduler.cli import (
-    _load_run_logs,
+    load_run_logs,
     _safe_print,
     _save_all,
     _schedules_file,
@@ -720,7 +720,7 @@ def test_logs_sorted_desc(tmp_path):
         _sample_log("task-a", "2026-04-16T10:00:00"),
     ])
     local_dir = tmp_path / "local"
-    entries = _load_run_logs(local_dir)
+    entries = load_run_logs(local_dir)
     assert entries[0]["time"] == "2026-04-16T12:00:00"
     assert entries[1]["time"] == "2026-04-16T10:00:00"
     assert entries[2]["time"] == "2026-04-16T08:00:00"
@@ -730,7 +730,7 @@ def test_logs_multiple_tasks_merged(tmp_path):
     _write_run_log(tmp_path, "task-a", [_sample_log("task-a", "2026-04-16T10:00:00")])
     _write_run_log(tmp_path, "task-b", [_sample_log("task-b", "2026-04-16T11:00:00")])
     local_dir = tmp_path / "local"
-    entries = _load_run_logs(local_dir)
+    entries = load_run_logs(local_dir)
     assert len(entries) == 2
     assert entries[0]["task"] == "task-b"
     assert entries[1]["task"] == "task-a"

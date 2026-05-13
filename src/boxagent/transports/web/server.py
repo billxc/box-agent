@@ -83,6 +83,7 @@ class WebHttpServer:
         *,
         config,
         local_dir: Path,
+        config_dir: Path,
         storage,
         web_channels: dict,
         pools: dict,
@@ -92,6 +93,7 @@ class WebHttpServer:
     ) -> None:
         self.config = config
         self.local_dir = local_dir
+        self.config_dir = config_dir
         self.storage = storage
         self.web_channels = web_channels
         self.pools = pools
@@ -179,6 +181,10 @@ class WebHttpServer:
         app.router.add_get("/api/events/machines", self._handle_events_machines)
         app.router.add_post("/api/events/{event_id}/read", self._handle_events_mark_read)
         app.router.add_post("/api/events/read_all", self._handle_events_read_all)
+        # Schedule run-log routes
+        app.router.add_get("/api/schedules", self._handle_schedules_list)
+        app.router.add_get("/api/schedules/runs", self._handle_schedules_runs)
+        app.router.add_get("/api/schedules/runs/{task_id}/{run_index}", self._handle_schedules_run_detail)
 
     # ── Auth ──
 
@@ -1108,3 +1114,79 @@ class WebHttpServer:
         finally:
             sub.close()
         return response
+
+    # ── Schedules ──
+
+    async def _handle_schedules_list(self, request: web.Request) -> web.Response:
+        """GET /api/schedules?machine= — list schedules.yaml entries."""
+        if not self._authorized(request):
+            return self._unauthorized()
+        machine = request.query.get("machine", "")
+        if machine:
+            response = await self.cluster_rpc.dispatch_machine_request(
+                machine, "GET", "/api/schedules", request,
+            )
+            if response is not None:
+                return response
+        from boxagent.scheduler.engine import load_schedule_entries
+        path = self.config_dir / "schedules.yaml"
+        try:
+            entries = load_schedule_entries(path, node_id=self.config.node_id)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
+        items = []
+        for task_id, entry in entries.items():
+            items.append({
+                "id": task_id,
+                "cron": entry.get("cron", ""),
+                "mode": entry.get("mode", "isolate"),
+                "enabled": bool(entry.get("enabled", True)),
+                "ai_backend": entry.get("ai_backend", ""),
+                "model": entry.get("model", ""),
+                "bot": entry.get("bot", ""),
+                "prompt": entry.get("prompt", ""),
+                "enabled_on_nodes": entry.get("enabled_on_nodes", ""),
+            })
+        return web.json_response({"ok": True, "schedules": items, "node_id": self.config.node_id})
+
+    async def _handle_schedules_runs(self, request: web.Request) -> web.Response:
+        """GET /api/schedules/runs?task=&machine=&limit= — list run records."""
+        if not self._authorized(request):
+            return self._unauthorized()
+        machine = request.query.get("machine", "")
+        if machine:
+            response = await self.cluster_rpc.dispatch_machine_request(
+                machine, "GET", "/api/schedules/runs", request,
+            )
+            if response is not None:
+                return response
+        from boxagent.scheduler.cli import load_run_logs
+        task_id = request.query.get("task", "")
+        try:
+            limit = int(request.query.get("limit", "50"))
+        except ValueError:
+            limit = 50
+        entries = load_run_logs(self.local_dir, task_id=task_id)[:limit]
+        return web.json_response({"ok": True, "runs": entries, "node_id": self.config.node_id})
+
+    async def _handle_schedules_run_detail(self, request: web.Request) -> web.Response:
+        """GET /api/schedules/runs/<task>/<index>?machine= — single run record."""
+        if not self._authorized(request):
+            return self._unauthorized()
+        machine = request.query.get("machine", "")
+        if machine:
+            response = await self.cluster_rpc.dispatch_machine_request(
+                machine, "GET", request.path, request,
+            )
+            if response is not None:
+                return response
+        from boxagent.scheduler.cli import load_run_logs
+        task_id = request.match_info["task_id"]
+        try:
+            run_index = int(request.match_info["run_index"])
+        except ValueError:
+            return web.json_response({"ok": False, "error": "invalid run_index"}, status=400)
+        entries = load_run_logs(self.local_dir, task_id=task_id)
+        if run_index < 1 or run_index > len(entries):
+            return web.json_response({"ok": False, "error": "not found"}, status=404)
+        return web.json_response({"ok": True, "run": entries[run_index - 1]})

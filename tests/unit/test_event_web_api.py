@@ -21,6 +21,7 @@ def _make_server(tmp_path) -> WebHttpServer:
     server = WebHttpServer(
         config=config,
         local_dir=tmp_path,
+        config_dir=tmp_path,
         storage=None,
         web_channels={},
         pools={},
@@ -199,7 +200,7 @@ async def test_query_returns_empty_when_bus_not_bound(tmp_path):
         web_host="127.0.0.1", web_port=0, bots={}, workgroups={},
     )
     server = WebHttpServer(
-        config=config, local_dir=tmp_path, storage=None,
+        config=config, local_dir=tmp_path, config_dir=tmp_path, storage=None,
         web_channels={}, pools={}, topology=MagicMock(),
         cluster_rpc=MagicMock(), cluster_routes=None,
     )
