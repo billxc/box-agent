@@ -71,6 +71,12 @@ class HostElection:
     on_registry_ready: RegistryReadyCb | None = None
     on_guest_client_ready: GuestClientReadyCb | None = None
     probe_interval: float = 10.0
+    # Before promoting ourselves on an empty probe, retry this many times
+    # with `promote_retry_delay` between attempts. Guards against split-brain
+    # caused by a single transient probe failure (timeout, devtunnel hiccup)
+    # while another node is legitimately hosting.
+    promote_retry_count: int = 3
+    promote_retry_delay: float = 2.0
 
     state: str = "init"  # "init" | "host" | "guest" | "standalone"
     current_upstream: str = ""
@@ -198,6 +204,21 @@ class HostElection:
             return
 
         if my_idx >= 0:
+            # Empty probe could mean "really no host" or "transient hiccup
+            # while a peer is hosting". Re-probe a few times before stealing
+            # the tunnel to avoid split-brain.
+            for attempt in range(1, self.promote_retry_count + 1):
+                await asyncio.sleep(self.promote_retry_delay)
+                if self._stop:
+                    return
+                upstream = await self._probe_active_host()
+                if upstream and upstream != me:
+                    logger.info(
+                        "host election: probe recovered on retry %d (upstream=%s) — staying guest",
+                        attempt, upstream,
+                    )
+                    await self._ensure_guest(upstream)
+                    return
             await self._try_promote()
         else:
             # Not a candidate, no host visible. Stay quiet; guest_client (if any)
