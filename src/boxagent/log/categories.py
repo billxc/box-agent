@@ -11,6 +11,7 @@ from __future__ import annotations
 
 class Category:
     SCHEDULER_RUN = "scheduler.run"
+    SCHEDULER_DONE = "scheduler.done"
     SCHEDULER_FAIL = "scheduler.fail"
     SCHEDULER_SKIP = "scheduler.skip"
 

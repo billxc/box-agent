@@ -360,18 +360,31 @@ class Scheduler:
         """Execute a task and remove from executing set when done."""
         from boxagent.log import Category, log
 
+        log.info(
+            Category.SCHEDULER_RUN, f"task {task.id} fired",
+            task_id=task.id, mode=task.mode, bot=task.bot or None,
+            cron=task.cron,
+        )
+        started_at = datetime.now()
         try:
-            await self._run_task(task)
+            output = await self._run_task(task)
+            duration_seconds = (datetime.now() - started_at).total_seconds()
             log.info(
-                Category.SCHEDULER_RUN, f"task {task.id} fired",
+                Category.SCHEDULER_DONE,
+                f"task {task.id} completed in {duration_seconds:.1f}s",
                 task_id=task.id, mode=task.mode, bot=task.bot or None,
-                cron=task.cron,
+                cron=task.cron, duration_seconds=duration_seconds,
+                output_length=len(output) if output else 0,
+                output=output or "",
             )
         except Exception as e:
+            duration_seconds = (datetime.now() - started_at).total_seconds()
             logger.error("Schedule '%s' failed: %s", task.id, e)
             log.error(
-                Category.SCHEDULER_FAIL, f"task {task.id} failed: {e}",
+                Category.SCHEDULER_FAIL,
+                f"task {task.id} failed after {duration_seconds:.1f}s: {e}",
                 task_id=task.id, mode=task.mode, bot=task.bot or None,
+                cron=task.cron, duration_seconds=duration_seconds,
                 error=str(e),
             )
             env_info = self._format_env_info(task)
