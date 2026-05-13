@@ -150,8 +150,8 @@ def boxagent_tool(
                     Category.AGENT_TOOL_ERROR,
                     f"tool {name} raised: {type(e).__name__}: {e}",
                     tool=name,
-                    bot=getattr(ctx, "bot_name", None),
-                    chat_id=getattr(ctx, "chat_id", None),
+                    bot=ctx.bot_name,
+                    chat_id=ctx.chat_id,
                     args=args_summary,
                     exception=type(e).__name__,
                     traceback=_tb.format_exc(limit=20),
@@ -162,8 +162,8 @@ def boxagent_tool(
                     Category.AGENT_TOOL_ERROR,
                     f"tool {name} returned: {result[:300]}",
                     tool=name,
-                    bot=getattr(ctx, "bot_name", None),
-                    chat_id=getattr(ctx, "chat_id", None),
+                    bot=ctx.bot_name,
+                    chat_id=ctx.chat_id,
                     args=args_summary,
                 )
             return result

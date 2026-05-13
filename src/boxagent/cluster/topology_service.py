@@ -67,7 +67,7 @@ class TopologyService:
         rm = self.host_election
         if rm is None:
             return "single"
-        state = getattr(rm, "state", "init")
+        state = rm.state
         if state == "host":
             return "host"
         if state == "guest":
