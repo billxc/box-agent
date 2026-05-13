@@ -1093,6 +1093,7 @@ def test_resolve_unique_notify_chat_id_requires_single_chat(tmp_path):
 
 async def test_isolate_run_logs_output_to_local_dir(tmp_path):
     class FakeClaude:
+        session_id = None
         def __init__(self, workspace, model="", **kwargs):
             pass
         def start(self):

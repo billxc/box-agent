@@ -30,7 +30,7 @@ class Watchdog:
     async def run_once(self) -> None:
         """Single watchdog check cycle."""
         # Check primary backend
-        state = getattr(self.backend, "state", "unknown")
+        state = self.backend.state
         if state == "dead":
             logger.warning(
                 "Bot '%s' backend is dead, restarting...",
@@ -52,11 +52,9 @@ class Watchdog:
 
         # Check pool processes
         if self.pool:
-            restart_dead = getattr(self.pool, "restart_dead", None)
-            if restart_dead is not None:
-                count = await restart_dead()
-                if count:
-                    logger.info("Bot '%s' pool: replaced %d dead process(es)", self.bot_name, count)
+            count = await self.pool.restart_dead()
+            if count:
+                logger.info("Bot '%s' pool: replaced %d dead process(es)", self.bot_name, count)
 
     async def run_forever(self) -> None:
         """Run watchdog check loop."""

@@ -19,6 +19,12 @@ class _FakeLateChunkBackend:
     session_id: str = "session-late"
     state: str = "idle"
     supports_session_persistence: bool = False
+    last_turn_failed: bool = False
+    last_turn_error: str = ""
+    model: str = ""
+    yolo: bool = False
+    workspace: str = ""
+    agent: str = ""
     late_task: asyncio.Task | None = field(default=None, init=False)
 
     async def send(self, prompt, callback, model="", chat_id="", append_system_prompt="", env=None):

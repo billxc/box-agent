@@ -700,7 +700,7 @@ class Scheduler:
             "output": output,
             "error": error,
         }
-        session_id = getattr(backend, "session_id", None) or "" if backend is not None else ""
+        session_id = (backend.session_id or "") if backend is not None else ""
         if session_id:
             record["session_id"] = session_id
         if result is not None:

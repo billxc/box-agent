@@ -41,6 +41,8 @@ class FakeCLIProcess:
         self.last_turn_failed = False
         self.last_turn_error = ""
         self.supports_session_persistence = True
+        self.yolo = False
+        self.agent = ""
         self.received_prompts: list[str] = []
         self.received_envs: list[object] = []
         self._response = response

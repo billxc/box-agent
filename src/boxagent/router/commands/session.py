@@ -169,7 +169,7 @@ async def cmd_model(router: "Router", msg: "IncomingMessage", channel: "Channel"
     if router.pool:
         current = router.pool.get_model(chat_id) or "default"
     else:
-        current = getattr(router.backend, "model", "") or "default"
+        current = router.backend.model or "default"
 
     if len(parts) < 2:
         await channel.send_text(chat_id, f"Current model: {current}")
@@ -257,10 +257,10 @@ async def cmd_backend(router: "Router", msg: "IncomingMessage", channel: "Channe
     bot_config = BotConfig(
         name=router.bot_name,
         ai_backend=new_kind,
-        workspace=getattr(old_backend, "workspace", router.workspace),
-        model=getattr(old_backend, "model", "") or "",
-        agent=getattr(old_backend, "agent", "") or "",
-        yolo=bool(getattr(old_backend, "yolo", False)),
+        workspace=old_backend.workspace,
+        model=old_backend.model or "",
+        agent=old_backend.agent or "",
+        yolo=bool(old_backend.yolo),
     )
     await old_backend.stop()
     new_backend = create_backend(bot_config, session_id=None)
@@ -284,7 +284,7 @@ async def cmd_compact(router: "Router", msg: "IncomingMessage", channel: "Channe
 
     sid = (
         router.pool.get_session_id(chat_id) if router.pool
-        else getattr(router.backend, "session_id", None)
+        else router.backend.session_id
     )
     if not sid:
         await channel.send_text(chat_id, "No active session to compact.")

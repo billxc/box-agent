@@ -240,10 +240,9 @@ class Router:
                     await drain_output()
             finally:
                 await callback.close()
-            turn_failed = getattr(backend, "last_turn_failed", False) is True
-            turn_error_raw = getattr(backend, "last_turn_error", "")
-            turn_error = turn_error_raw if isinstance(turn_error_raw, str) else ""
-            proc_sid = getattr(backend, "session_id", None)
+            turn_failed = backend.last_turn_failed is True
+            turn_error = backend.last_turn_error if isinstance(backend.last_turn_error, str) else ""
+            proc_sid = backend.session_id
 
         if used_compact and not turn_failed:
             self._compact_summaries.pop(chat_id, None)
@@ -323,12 +322,8 @@ class Router:
     # ---- Internal helpers ----
 
     async def _reset_backend_session(self):
-        """Reset session state, falling back to session_id-only backends."""
-        reset_session = getattr(self.backend, "reset_session", None)
-        if reset_session is not None:
-            await reset_session()
-        else:
-            self.backend.session_id = None
+        """Reset session state via the backend Protocol's reset_session."""
+        await self.backend.reset_session()
 
     def _build_env(self, msg: IncomingMessage) -> AgentEnv:
         """Create an AgentEnv snapshot for this message."""

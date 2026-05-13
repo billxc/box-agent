@@ -513,7 +513,7 @@ class WorkgroupManager:
         active = False
         if pool:
             for backend in pool._active.values():
-                if getattr(backend, "state", "idle") == "busy":
+                if backend.state == "busy":
                     active = True
                     break
 
@@ -588,7 +588,7 @@ class WorkgroupManager:
             active = False
             if pool:
                 for backend in pool._active.values():
-                    if getattr(backend, "state", "idle") == "busy":
+                    if backend.state == "busy":
                         active = True
                         break
             result.append({

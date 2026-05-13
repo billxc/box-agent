@@ -52,7 +52,7 @@ async def cmd_status(router: "Router", msg: "IncomingMessage", channel: "Channel
         session = router.pool.get_session_id(chat_id) or "none"
         model = router.pool.get_model(chat_id) or "default"
         active = router.pool.get_active(chat_id)
-        state = getattr(active, "state", "idle") if active else "idle"
+        state = active.state if active else "idle"
         workspace = router.pool.get_workspace(chat_id) or router.workspace
         session_id = router.pool.get_session_id(chat_id) or ""
         if session_id:
@@ -67,11 +67,11 @@ async def cmd_status(router: "Router", msg: "IncomingMessage", channel: "Channel
             except Exception:
                 session_info = None
     else:
-        state = getattr(router.backend, "state", "unknown")
-        session = getattr(router.backend, "session_id", None) or "none"
-        model = getattr(router.backend, "model", "") or "default"
+        state = router.backend.state
+        session = router.backend.session_id or "none"
+        model = router.backend.model or "default"
         workspace = router.workspace
-    yolo = getattr(router.backend, "yolo", False)
+    yolo = router.backend.yolo
     tool_display = getattr(channel, "tool_calls_display", "")
 
     bot_name = router.display_name or router.bot_name

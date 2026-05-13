@@ -19,6 +19,12 @@ class _FakeBusyBackend:
     state: str = "idle"
     session_id: str | None = None
     supports_session_persistence: bool = False
+    last_turn_failed: bool = False
+    last_turn_error: str = ""
+    model: str = ""
+    yolo: bool = False
+    workspace: str = ""
+    agent: str = ""
 
     def __post_init__(self):
         self._entered_busy = asyncio.Event()

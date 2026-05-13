@@ -93,7 +93,7 @@ class SessionPool(BaseSessionPool):
         restarted = 0
         new_all: list[AgentBackend] = []
         for backend in self._all:
-            if getattr(backend, "state", "idle") == "dead":
+            if backend.state == "dead":
                 try:
                     await backend.stop()
                 except Exception:

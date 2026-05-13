@@ -118,7 +118,7 @@ class RawSessionPool(BaseSessionPool):
         """Drop dead per-chat processes; they'll respawn on next acquire."""
         restarted = 0
         for chat_id, backend in list(self._procs.items()):
-            if getattr(backend, "state", "idle") == "dead":
+            if backend.state == "dead":
                 try:
                     await backend.stop()
                 except Exception:
