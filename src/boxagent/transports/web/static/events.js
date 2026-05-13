@@ -2,6 +2,9 @@
 // Layout: sidebar filters (level chips, search, category tree) + scrollable list.
 // SSE for realtime, /api/events for history + pagination.
 
+const LEVELS_STORAGE_KEY = "boxagent.events.levels";
+const MACHINES_STORAGE_KEY = "boxagent.events.machines";
+
 const state = {
   events: [],
   unread_only: false,
@@ -9,7 +12,48 @@ const state = {
   search: "",
   next_cursor: null,
   sse: null,
+  selected_machines: null, // null = no filter; Set of machine_ids when set
 };
+
+function loadStoredLevels() {
+  try {
+    const raw = localStorage.getItem(LEVELS_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed) : null;
+  } catch { return null; }
+}
+
+function saveLevels() {
+  try {
+    localStorage.setItem(LEVELS_STORAGE_KEY, JSON.stringify(selectedLevels()));
+  } catch {}
+}
+
+function applyStoredLevels() {
+  const stored = loadStoredLevels();
+  if (!stored) return;
+  document.querySelectorAll("#level-filter input").forEach(el => {
+    el.checked = stored.has(el.value);
+  });
+}
+
+function loadStoredMachines() {
+  try {
+    const raw = localStorage.getItem(MACHINES_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed) : null;
+  } catch { return null; }
+}
+
+function saveMachines() {
+  try {
+    const values = state.selected_machines ? Array.from(state.selected_machines) : null;
+    if (values === null) localStorage.removeItem(MACHINES_STORAGE_KEY);
+    else localStorage.setItem(MACHINES_STORAGE_KEY, JSON.stringify(values));
+  } catch {}
+}
 
 const tokenParam = (() => {
   const t = new URLSearchParams(location.search).get("token");
@@ -29,7 +73,48 @@ function filterParams() {
   if (state.unread_only) params.set("unread_only", "1");
   if (state.search) params.set("search", state.search);
   if (state.selected_category_prefix) params.set("category_prefix", state.selected_category_prefix);
+  if (state.selected_machines && state.selected_machines.size > 0) {
+    params.set("machines", Array.from(state.selected_machines).join(","));
+  }
   return params;
+}
+
+async function fetchMachines() {
+  try {
+    const r = await fetch(`/api/machines${tokenHead}`);
+    const data = await r.json();
+    const machines = (data.machines || []).map(m => m.machine_id).filter(Boolean);
+    renderMachineFilter(machines);
+  } catch (err) { console.error(err); }
+}
+
+function renderMachineFilter(machineIds) {
+  const container = document.getElementById("machine-filter");
+  container.innerHTML = "";
+  if (machineIds.length === 0) {
+    container.innerHTML = '<div style="color: var(--muted); font-size: 12px;">(none)</div>';
+    return;
+  }
+  const stored = loadStoredMachines();
+  if (stored) state.selected_machines = new Set(machineIds.filter(m => stored.has(m)));
+  for (const machine of machineIds) {
+    const label = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = machine;
+    cb.checked = !state.selected_machines || state.selected_machines.has(machine);
+    cb.onchange = () => {
+      const checked = Array.from(document.querySelectorAll("#machine-filter input:checked")).map(i => i.value);
+      const all = Array.from(document.querySelectorAll("#machine-filter input")).map(i => i.value);
+      state.selected_machines = checked.length === all.length ? null : new Set(checked);
+      saveMachines();
+      fetchEvents();
+      startSse();
+    };
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(" " + machine));
+    container.appendChild(label);
+  }
 }
 
 async function fetchEvents(append = false) {
@@ -266,12 +351,14 @@ document.getElementById("search").oninput = e => {
   window.__searchTimer = setTimeout(() => fetchEvents(), 300);
 };
 document.querySelectorAll("#level-filter input").forEach(el => {
-  el.onchange = () => { fetchEvents(); startSse(); };
+  el.onchange = () => { saveLevels(); fetchEvents(); startSse(); };
 });
 document.getElementById("mark-all-read").onclick = markAllRead;
-document.getElementById("reload").onclick = () => { fetchCategories(); fetchEvents(); };
+document.getElementById("reload").onclick = () => { fetchCategories(); fetchMachines(); fetchEvents(); };
 document.getElementById("load-more").onclick = () => fetchEvents(true);
 
+applyStoredLevels();
 fetchCategories();
+fetchMachines();
 fetchEvents();
 startSse();

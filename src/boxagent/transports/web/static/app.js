@@ -60,7 +60,12 @@
     toolCards: {},        // tool_id -> {el, headerEl, resultEl, name, args}
     typingEl: null,
     refreshTimer: null,
+    historyOffset: 0,     // how many items already loaded from end of history
+    historyTotal: 0,      // total items reported by server
+    historyLoading: false,
+    historyExhausted: false,
   };
+  const HISTORY_PAGE_SIZE = 50;
 
   // ── Helpers ──
   function api(path, opts = {}) {
@@ -546,6 +551,61 @@
     }
   }
 
+  function renderHistoryFragment(items) {
+    const frag = document.createDocumentFragment();
+    for (const h of items) {
+      if (h.role === "tool_call") {
+        const card = _buildToolCard(h.tool_id || "", h.name || "tool", h.args || {});
+        frag.appendChild(card.el);
+        state.toolCards[h.tool_id || `__hist${frag.children.length}`] = card;
+        continue;
+      }
+      if (h.role === "tool_result") {
+        _applyToolResult(h.tool_id || "", !!h.ok, h.summary || "", h.error || "");
+        continue;
+      }
+      const el = buildMessage(h.role, h.text, { ts: h.ts });
+      el.style.animation = "none";
+      frag.appendChild(el);
+    }
+    return frag;
+  }
+
+  async function loadOlderHistory() {
+    if (state.historyLoading || state.historyExhausted) return;
+    if (!state.chatId || !state.bot) return;
+    state.historyLoading = true;
+    try {
+      const url = `history?bot=${encodeURIComponent(state.bot)}&machine=${encodeURIComponent(state.botMachine)}&chat_id=${encodeURIComponent(state.chatId)}&limit=${HISTORY_PAGE_SIZE}&offset=${state.historyOffset}`;
+      const r = await api(url);
+      if (!r.ok) return;
+      const j = await r.json();
+      const items = j.history || [];
+      state.historyTotal = j.total || state.historyTotal;
+      if (!items.length) { state.historyExhausted = true; return; }
+      const frag = renderHistoryFragment(items);
+      // Preserve scroll position: remember height before prepend, restore after.
+      const prevBehavior = messagesEl.style.scrollBehavior;
+      messagesEl.style.scrollBehavior = "auto";
+      const beforeHeight = messagesEl.scrollHeight;
+      const beforeTop = messagesEl.scrollTop;
+      messagesEl.insertBefore(frag, messagesEl.firstChild);
+      const afterHeight = messagesEl.scrollHeight;
+      messagesEl.scrollTop = beforeTop + (afterHeight - beforeHeight);
+      messagesEl.style.scrollBehavior = prevBehavior;
+      state.historyOffset += items.length;
+      if (state.historyOffset >= state.historyTotal) state.historyExhausted = true;
+    } catch (e) {
+      console.warn("history load-more failed", e);
+    } finally {
+      state.historyLoading = false;
+    }
+  }
+
+  messagesEl.addEventListener("scroll", () => {
+    if (messagesEl.scrollTop < 100) loadOlderHistory();
+  }, { passive: true });
+
   async function switchChat(chatId) {
     if (state.es) { state.es.close(); state.es = null; }
     state.chatId = chatId;
@@ -588,32 +648,23 @@
     mask.classList.remove("hidden");
 
     setConn("connecting");
+    state.historyOffset = 0;
+    state.historyTotal = 0;
+    state.historyExhausted = false;
+    state.historyLoading = false;
     let history = [];
     try {
-      const r = await api(`history?bot=${encodeURIComponent(state.bot)}&machine=${encodeURIComponent(state.botMachine)}&chat_id=${encodeURIComponent(chatId)}`);
+      const r = await api(`history?bot=${encodeURIComponent(state.bot)}&machine=${encodeURIComponent(state.botMachine)}&chat_id=${encodeURIComponent(chatId)}&limit=${HISTORY_PAGE_SIZE}&offset=0`);
       if (r.ok) {
         const j = await r.json();
         history = j.history || [];
+        state.historyTotal = j.total || history.length;
+        state.historyOffset = history.length;
+        if (state.historyOffset >= state.historyTotal) state.historyExhausted = true;
       }
     } catch (e) { console.warn("history load failed", e); }
 
-    const frag = document.createDocumentFragment();
-    for (const h of history) {
-      if (h.role === "tool_call") {
-        const card = _buildToolCard(h.tool_id || "", h.name || "tool", h.args || {});
-        frag.appendChild(card.el);
-        // Stash so a following tool_result with the same id can update it.
-        state.toolCards[h.tool_id || `__hist${frag.children.length}`] = card;
-        continue;
-      }
-      if (h.role === "tool_result") {
-        _applyToolResult(h.tool_id || "", !!h.ok, h.summary || "", h.error || "");
-        continue;
-      }
-      const el = buildMessage(h.role, h.text, { ts: h.ts });
-      el.style.animation = "none";
-      frag.appendChild(el);
-    }
+    const frag = renderHistoryFragment(history);
     // Disable smooth scroll just for the bottom-jump; the live-stream
     // appends below still use the smooth behavior set in CSS.
     const prevBehavior = messagesEl.style.scrollBehavior;

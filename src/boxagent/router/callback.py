@@ -25,7 +25,7 @@ class TextCollector:
     def _stop_typing(self):
         pass
 
-    async def on_stream(self, text: str) -> None:
+    async def on_stream(self, text: str, parent_tool_id: str = "") -> None:
         self.text += text
 
     async def on_tool_call(self, name: str, input: dict, result: str, tool_id: str = ""):
