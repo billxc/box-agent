@@ -870,6 +870,7 @@ class WebHttpServer:
         encoded = request.query.get("project", "")
         sid = request.query.get("session_id", "")
         machine = request.query.get("machine", "")
+        backend_kind = request.query.get("backend", "") or "claude-cli"
         if not encoded or not sid or not machine:
             return web.json_response({"ok": False, "error": "missing project/session_id/machine"}, status=400)
         if machine != self.topology.local_machine_id():
@@ -877,7 +878,10 @@ class WebHttpServer:
             if response is not None:
                 return response
         from boxagent.history import get_history
-        history = get_history("claude-cli")
+        try:
+            history = get_history(backend_kind)
+        except ValueError as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
         messages = await history.read_messages(sid, encoded)
         return web.json_response({
             "ok": True,

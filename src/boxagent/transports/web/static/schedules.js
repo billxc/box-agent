@@ -185,6 +185,8 @@ function renderDetail(run, machine) {
         Open in chat with <code>/resume ${escapeHtml(run.session_id)}</code>
         ${run.bot ? `(bot <strong>${escapeHtml(run.bot)}</strong> on machine <strong>${escapeHtml(machine)}</strong>)` : ""}
       </div>
+      <button class="transcript-toggle" id="transcript-btn">📜 View transcript</button>
+      <div id="transcript-body" style="margin-top:10px;"></div>
     </div>` : "";
 
   document.getElementById("detail-content").innerHTML = `
@@ -200,6 +202,50 @@ function renderDetail(run, machine) {
     ${run.result != null ? `<div class="detail-section"><h3>Result</h3><pre>${escapeHtml(typeof run.result === "string" ? run.result : JSON.stringify(run.result, null, 2))}</pre></div>` : ""}
     ${run.output ? `<div class="detail-section"><h3>Output</h3><pre>${escapeHtml(run.output)}</pre></div>` : ""}
   `;
+  const btn = document.getElementById("transcript-btn");
+  if (btn) btn.onclick = () => loadTranscript(run, machine);
+}
+
+async function loadTranscript(run, machine) {
+  const body = document.getElementById("transcript-body");
+  body.innerHTML = '<div class="empty">Loading…</div>';
+  const params = new URLSearchParams({
+    backend: run.ai_backend || "claude-cli",
+    project: run.workspace || "",
+    session_id: run.session_id,
+    machine: machine,
+  });
+  try {
+    const r = await fetch(`/api/claude/transcript?${params}${tokenParam}`).then(r => r.json());
+    if (!r.ok) {
+      body.innerHTML = `<div class="empty">${escapeHtml(r.error || "error")}</div>`;
+      return;
+    }
+    if (!r.messages || r.messages.length === 0) {
+      body.innerHTML = '<div class="empty">(no messages)</div>';
+      return;
+    }
+    body.innerHTML = r.messages.map(renderMessage).join("");
+  } catch (e) {
+    body.innerHTML = `<div class="empty">${escapeHtml(String(e))}</div>`;
+  }
+}
+
+function renderMessage(m) {
+  const role = m.role || "?";
+  let content = "";
+  if (role === "user" || role === "assistant" || role === "skill_output") {
+    content = escapeHtml(m.text || "");
+  } else if (role === "tool_call") {
+    const args = m.args ? JSON.stringify(m.args, null, 2) : "";
+    content = `<strong>${escapeHtml(m.name || "")}</strong>${args ? "\n" + escapeHtml(args) : ""}`;
+  } else if (role === "tool_result") {
+    const ok = m.ok === false ? "❌ " : "✅ ";
+    content = ok + escapeHtml(m.summary || m.error || "");
+  } else {
+    content = escapeHtml(JSON.stringify(m));
+  }
+  return `<div class="transcript-msg ${role}"><div class="transcript-role">${escapeHtml(role)}</div><div class="transcript-body">${content}</div></div>`;
 }
 
 function reload() {

@@ -123,6 +123,38 @@ async def test_schedules_runs_dispatches_when_machine_remote(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_transcript_endpoint_routes_by_backend(tmp_path, monkeypatch):
+    """?backend=codex-cli must call get_history('codex-cli'), not the default."""
+    server = _make_server(tmp_path)
+    server.topology.local_machine_id = MagicMock(return_value="node-a")
+
+    captured = {}
+
+    class FakeHistory:
+        async def read_messages(self, sid, project_id):
+            captured["sid"] = sid
+            captured["project_id"] = project_id
+            return []
+
+    def fake_get_history(kind):
+        captured["kind"] = kind
+        return FakeHistory()
+
+    monkeypatch.setattr("boxagent.history.get_history", fake_get_history)
+    request = _make_request(query={
+        "backend": "codex-cli", "project": "/tmp/wp",
+        "session_id": "sid-x", "machine": "node-a",
+    })
+    request.path = "/api/claude/transcript"
+    response = await server._handle_claude_transcript(request)
+    body = json.loads(response.body)
+    assert body["ok"] is True
+    assert captured["kind"] == "codex-cli"
+    assert captured["project_id"] == "/tmp/wp"
+    assert captured["sid"] == "sid-x"
+
+
+@pytest.mark.asyncio
 async def test_session_id_appears_in_run_log(tmp_path):
     """End-to-end: scheduler isolate run records backend.session_id into jsonl."""
     from boxagent.scheduler.engine import Scheduler, ScheduleTask
