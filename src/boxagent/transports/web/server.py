@@ -1133,6 +1133,7 @@ class WebHttpServer:
             if response is not None:
                 return response
         from boxagent.scheduler.engine import load_schedule_entries
+        from boxagent.config import node_matches
         path = self.config_dir / "schedules.yaml"
         try:
             entries = load_schedule_entries(path, node_id=self.config.node_id)
@@ -1140,6 +1141,8 @@ class WebHttpServer:
             return web.json_response({"ok": False, "error": str(e)}, status=500)
         items = []
         for task_id, entry in entries.items():
+            if not node_matches(entry.get("enabled_on_nodes", ""), self.config.node_id):
+                continue
             items.append({
                 "id": task_id,
                 "cron": entry.get("cron", ""),
@@ -1167,11 +1170,19 @@ class WebHttpServer:
         from boxagent.scheduler.cli import load_run_logs
         task_id = request.query.get("task", "")
         try:
-            limit = int(request.query.get("limit", "50"))
+            limit = max(1, int(request.query.get("limit", "50")))
         except ValueError:
             limit = 50
-        entries = load_run_logs(self.local_dir, task_id=task_id)[:limit]
-        return web.json_response({"ok": True, "runs": entries, "node_id": self.config.node_id})
+        try:
+            offset = max(0, int(request.query.get("offset", "0")))
+        except ValueError:
+            offset = 0
+        all_entries = load_run_logs(self.local_dir, task_id=task_id)
+        page = all_entries[offset:offset + limit]
+        return web.json_response({
+            "ok": True, "runs": page, "offset": offset,
+            "total": len(all_entries), "node_id": self.config.node_id,
+        })
 
     async def _handle_schedules_run_detail(self, request: web.Request) -> web.Response:
         """GET /api/schedules/runs/<task>/<index>?machine= — single run record."""

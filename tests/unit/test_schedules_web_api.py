@@ -75,6 +75,20 @@ async def test_schedules_list_returns_yaml_entries(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_schedules_list_filters_by_enabled_on_nodes(tmp_path):
+    _seed_schedules_yaml(tmp_path, {
+        "for-node-a": {"cron": "0 9 * * *", "mode": "isolate", "prompt": "x", "enabled_on_nodes": "node-a"},
+        "for-node-b": {"cron": "0 9 * * *", "mode": "isolate", "prompt": "y", "enabled_on_nodes": "node-b"},
+        "for-all":    {"cron": "0 9 * * *", "mode": "isolate", "prompt": "z"},
+    })
+    server = _make_server(tmp_path)
+    response = await server._handle_schedules_list(_make_request())
+    body = json.loads(response.body)
+    ids = sorted(s["id"] for s in body["schedules"])
+    assert ids == ["for-all", "for-node-a"]
+
+
+@pytest.mark.asyncio
 async def test_schedules_runs_returns_recent_first(tmp_path):
     _seed_run_log(tmp_path, "task-x", [
         {"time": "2026-05-13T10:00:00", "task": "task-x", "output": "ok"},
