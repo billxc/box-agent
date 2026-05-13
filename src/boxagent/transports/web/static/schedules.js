@@ -15,7 +15,13 @@ const state = {
   selected_key: null,    // "machine_id|task_id"
   runs: [],
   selected_run_index: null,
+  runs_total: 0,
+  runs_loading: false,
+  runs_machine: null,
+  runs_task: null,
 };
+
+const RUNS_PAGE_SIZE = 30;
 
 const MACHINES_KEY = "boxagent.schedules.machines";
 
@@ -120,15 +126,37 @@ function renderSchedules() {
 async function selectSchedule(machine, taskId) {
   state.selected_key = scheduleKey(machine, taskId);
   state.selected_run_index = null;
+  state.runs = [];
+  state.runs_total = 0;
+  state.runs_machine = machine;
+  state.runs_task = taskId;
   renderSchedules();
   document.getElementById("runs-list").innerHTML = '<div class="empty">Loading…</div>';
   document.getElementById("detail-content").innerHTML = '<div class="empty">Pick a run</div>';
+  await loadMoreRuns();
+}
+
+async function loadMoreRuns() {
+  if (state.runs_loading) return;
+  if (state.runs.length > 0 && state.runs.length >= state.runs_total) return;
+  state.runs_loading = true;
+  const machine = state.runs_machine;
+  const taskId = state.runs_task;
   try {
-    const url = `/api/schedules/runs?task=${encodeURIComponent(taskId)}&machine=${encodeURIComponent(machine)}&limit=100${tokenParam}`;
+    const url = `/api/schedules/runs?task=${encodeURIComponent(taskId)}&machine=${encodeURIComponent(machine)}` +
+                `&offset=${state.runs.length}&limit=${RUNS_PAGE_SIZE}${tokenParam}`;
     const r = await fetch(url).then(r => r.json());
-    state.runs = r.ok ? r.runs : [];
-  } catch { state.runs = []; }
-  renderRuns(machine, taskId);
+    if (r.ok) {
+      state.runs.push(...(r.runs || []));
+      state.runs_total = r.total || state.runs.length;
+    }
+  } catch {} finally {
+    state.runs_loading = false;
+  }
+  // Skip render if user moved to a different schedule mid-flight.
+  if (state.runs_machine === machine && state.runs_task === taskId) {
+    renderRuns(machine, taskId);
+  }
 }
 
 function renderRuns(machine, taskId) {
@@ -149,6 +177,14 @@ function renderRuns(machine, taskId) {
     div.onclick = () => selectRun(machine, taskId, i + 1);
     container.appendChild(div);
   });
+  const remaining = state.runs_total - state.runs.length;
+  if (remaining > 0) {
+    const hint = document.createElement("div");
+    hint.className = "empty";
+    hint.id = "runs-load-more";
+    hint.textContent = state.runs_loading ? "Loading…" : `Scroll to load ${remaining} more`;
+    container.appendChild(hint);
+  }
 }
 
 async function selectRun(machine, taskId, runIndex) {
@@ -258,6 +294,14 @@ function reload() {
 }
 
 document.getElementById("reload").onclick = reload;
+
+const runsPane = document.getElementById("runs-pane");
+runsPane.addEventListener("scroll", () => {
+  if (!state.runs_task) return;
+  if (runsPane.scrollTop + runsPane.clientHeight >= runsPane.scrollHeight - 80) {
+    loadMoreRuns();
+  }
+});
 
 (async () => {
   await fetchMachines();
