@@ -243,6 +243,7 @@ class MockChannel(Channel):
     on_message: Callable[[IncomingMessage], Awaitable[None]] | None = field(
         default=None, repr=False  # set via .deliver() / Router wiring
     )
+    tool_calls_display: str = "summary"
 
     started: bool = field(default=False, init=False)
     stopped: bool = field(default=False, init=False)

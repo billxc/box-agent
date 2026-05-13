@@ -72,7 +72,7 @@ async def cmd_status(router: "Router", msg: "IncomingMessage", channel: "Channel
         model = router.backend.model or "default"
         workspace = router.workspace
     yolo = router.backend.yolo
-    tool_display = getattr(channel, "tool_calls_display", "")
+    tool_display = channel.tool_calls_display
 
     bot_name = router.display_name or router.bot_name
     lines = ["**Status**", f"Bot: {bot_name}"]
@@ -125,13 +125,13 @@ async def cmd_version(router: "Router", msg: "IncomingMessage", channel: "Channe
 
 @command("/verbose", help="Cycle tool call display (silent/summary/detailed)", category=CommandCategory.INFO)
 async def cmd_verbose(router: "Router", msg: "IncomingMessage", channel: "Channel") -> None:
-    current = getattr(channel, "tool_calls_display", "summary")
+    current = channel.tool_calls_display
     try:
         index = TOOL_DISPLAY_MODES.index(current)
     except ValueError:
         index = 0
     new_mode = TOOL_DISPLAY_MODES[(index + 1) % len(TOOL_DISPLAY_MODES)]
-    setattr(channel, "tool_calls_display", new_mode)
+    channel.tool_calls_display = new_mode
     await channel.send_text(msg.chat_id, f"Tool call display: {new_mode}")
 
 

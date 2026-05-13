@@ -64,6 +64,12 @@ class Channel(Protocol):
     # incoming message it receives.
     on_message: Callable[[IncomingMessage], Awaitable[None]]
 
+    # ── Display config (mutable; /verbose cycles this) ──
+    # Channels may render tool calls differently; "silent" / "summary" /
+    # "detailed". Concrete channels that don't render tool calls can leave
+    # this at the default — readers only key off the value.
+    tool_calls_display: str
+
     # ── Lifecycle ──
     async def start(self) -> None: ...
     async def stop(self) -> None: ...

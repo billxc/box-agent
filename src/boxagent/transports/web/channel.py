@@ -29,6 +29,7 @@ class WebChannel(Channel):
 
     bot_name: str
     on_message: Callable[[IncomingMessage], Awaitable[None]] | None = None
+    tool_calls_display: str = "summary"
     _subscribers: dict[str, list[asyncio.Queue]] = field(default_factory=dict)
     _stream_buffers: dict[str, str] = field(default_factory=dict)
     _next_msg_id: int = 0
