@@ -176,6 +176,7 @@ class WebHttpServer:
         app.router.add_get("/api/events", self._handle_events_query)
         app.router.add_get("/api/events/stream", self._handle_events_stream)
         app.router.add_get("/api/events/categories", self._handle_events_categories)
+        app.router.add_get("/api/events/machines", self._handle_events_machines)
         app.router.add_post("/api/events/{event_id}/read", self._handle_events_mark_read)
         app.router.add_post("/api/events/read_all", self._handle_events_read_all)
 
@@ -1007,6 +1008,18 @@ class WebHttpServer:
         )
         rows = [{"category": r[0], "count": r[1]} for r in cur.fetchall()]
         return web.json_response({"ok": True, "categories": rows})
+
+    async def _handle_events_machines(self, request: web.Request) -> web.Response:
+        """Distinct origin_machine values seen in event history (includes offline nodes)."""
+        if not self._authorized(request):
+            return self._unauthorized()
+        if self.event_bus is None:
+            return web.json_response({"ok": True, "machines": []})
+        cur = self.event_bus._store._conn.execute(
+            "SELECT origin_machine, COUNT(*) FROM events GROUP BY origin_machine ORDER BY origin_machine"
+        )
+        rows = [{"machine_id": r[0], "count": r[1]} for r in cur.fetchall() if r[0]]
+        return web.json_response({"ok": True, "machines": rows})
 
     async def _handle_events_mark_read(self, request: web.Request) -> web.Response:
         if not self._authorized(request):

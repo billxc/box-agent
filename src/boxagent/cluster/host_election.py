@@ -239,7 +239,7 @@ class HostElection:
                 data = await response.json(content_type=None)
                 return str(data.get("machine_id") or "")
         except Exception as e:
-            logger.debug("host election: probe /api/version failed: %s", e)
+            logger.debug("host election: probe /api/version failed: %r", e)
             return ""
 
     # ── transitions ──

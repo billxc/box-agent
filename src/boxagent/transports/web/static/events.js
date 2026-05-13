@@ -81,14 +81,18 @@ function filterParams() {
 
 async function fetchMachines() {
   try {
-    const r = await fetch(`/api/machines${tokenHead}`);
-    const data = await r.json();
-    const machines = (data.machines || []).map(m => m.machine_id).filter(Boolean);
-    renderMachineFilter(machines);
+    const [liveResp, histResp] = await Promise.all([
+      fetch(`/api/machines${tokenHead}`).then(r => r.json()).catch(() => ({})),
+      fetch(`/api/events/machines${tokenHead}`).then(r => r.json()).catch(() => ({})),
+    ]);
+    const live = new Set((liveResp.machines || []).map(m => m.machine_id).filter(Boolean));
+    const historical = (histResp.machines || []).map(m => m.machine_id).filter(Boolean);
+    const merged = Array.from(new Set([...live, ...historical])).sort();
+    renderMachineFilter(merged, live);
   } catch (err) { console.error(err); }
 }
 
-function renderMachineFilter(machineIds) {
+function renderMachineFilter(machineIds, liveSet) {
   const container = document.getElementById("machine-filter");
   container.innerHTML = "";
   if (machineIds.length === 0) {
@@ -112,7 +116,11 @@ function renderMachineFilter(machineIds) {
       startSse();
     };
     label.appendChild(cb);
-    label.appendChild(document.createTextNode(" " + machine));
+    const isOffline = liveSet && !liveSet.has(machine);
+    const text = document.createElement("span");
+    text.textContent = " " + machine + (isOffline ? " (offline)" : "");
+    if (isOffline) text.style.color = "var(--muted)";
+    label.appendChild(text);
     container.appendChild(label);
   }
 }
