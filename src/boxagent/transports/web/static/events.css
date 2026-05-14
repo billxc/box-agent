@@ -156,14 +156,14 @@ a, button { font-family: inherit; }
 
 .topnav { display: flex; gap: 4px; }
 .topnav a {
-  color: var(--muted);
+  color: var(--dim);
   text-decoration: none;
   padding: 6px 12px;
   border: 1px solid transparent;
-  font-size: 12px;
+  font: 700 11px/1 var(--mono);
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  font-weight: 500;
+  transition: color 0.08s, border-color 0.08s, background 0.08s;
 }
 .topnav a:hover { color: var(--text); border-color: var(--border-2); }
 .topnav a.active {
@@ -437,15 +437,24 @@ a, button { font-family: inherit; }
   text-transform: none;
   letter-spacing: 0;
 }
-:root[data-shape="soft"] .topnav a,
+:root[data-shape="soft"] .topnav a {
+  font: 500 13px/1 var(--body-system);
+  text-transform: none;
+  letter-spacing: 0;
+  border-radius: 6px;
+  padding: 6px 12px;
+}
+:root[data-shape="soft"] .topnav a.active {
+  background: var(--accent-2);
+  color: var(--accent);
+  border-color: transparent;
+}
 :root[data-shape="soft"] .actions button,
 :root[data-shape="soft"] .actions label {
   font: 500 13px/1.2 var(--body-system);
   text-transform: none;
   letter-spacing: 0;
 }
-:root[data-shape="soft"] .topnav a { border-radius: 4px; padding: 4px 8px; }
-:root[data-shape="soft"] .topnav a.active { background: var(--bg); color: var(--text); border-color: transparent; }
 :root[data-shape="soft"] .actions button { border-radius: 4px; padding: 4px 12px; }
 :root[data-shape="soft"] .filter-group > label,
 :root[data-shape="soft"] .pane-label,
@@ -563,14 +572,19 @@ a, button { font-family: inherit; }
   text-transform: none;
   letter-spacing: 0;
 }
-:root[data-shape="paper"] .topnav a,
+:root[data-shape="paper"] .topnav a {
+  font: italic 600 13px/1 var(--font-body);
+  text-transform: none;
+  letter-spacing: 0;
+  border-radius: 2px;
+  padding: 6px 12px;
+}
 :root[data-shape="paper"] .actions label {
   font-family: var(--font-body);
   text-transform: none;
   letter-spacing: 0;
   font-size: 13px;
 }
-:root[data-shape="paper"] .topnav a { border-radius: 2px; }
 :root[data-shape="paper"] .actions button {
   font: italic 700 12px/1 var(--font-body);
   text-transform: none;
@@ -621,7 +635,8 @@ a, button { font-family: inherit; }
     radial-gradient(ellipse at top, rgba(255,93,202,0.08), transparent 60%);
 }
 :root[data-shape="neon"] .sidebar { border-radius: 10px 0 0 10px; }
-:root[data-shape="neon"] .topnav a,
+:root[data-shape="neon"] .topnav a { border-radius: 999px; padding: 5px 14px; }
+:root[data-shape="neon"] .topnav a.active { box-shadow: 0 0 12px var(--accent-2); }
 :root[data-shape="neon"] .actions button { border-radius: 6px; }
 :root[data-shape="neon"] .actions button:hover { box-shadow: 0 0 14px var(--accent-2); }
 :root[data-shape="neon"] .event-item {

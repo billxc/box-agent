@@ -458,51 +458,46 @@ body.sidebar-dragging * { user-select: none !important; }
   border-bottom: 1px solid var(--rule);
   background: var(--panel);
 }
+/* Sidebar nav (Chat page) */
 .side-nav a {
-  flex: 1;
-  text-align: center;
   color: var(--ink-dim);
   text-decoration: none;
-  padding: 6px 8px;
-  border: 1px solid var(--rule-2);
+  padding: 6px 12px;
+  border: 1px solid transparent;
   font: 700 11px/1 var(--mono);
   text-transform: uppercase;
   letter-spacing: 0.1em;
   transition: color 0.08s, border-color 0.08s, background 0.08s;
 }
-.side-nav a:hover { color: var(--ink); border-color: var(--ink-dim); }
+.side-nav a:hover { color: var(--ink); border-color: var(--rule-2); }
 .side-nav a.active {
   color: var(--accent);
   border-color: var(--accent);
   background: var(--accent-2);
 }
-.side-nav .dot { flex-shrink: 0; }
+.side-nav a.active::before { content: "▸ "; }
+
+.side-nav .dot { flex-shrink: 0; margin-left: auto; }
 .side-nav #menu-close { display: none; }
 
 /* shape overrides */
-:root[data-shape="soft"] .side-nav { background: transparent; padding: 8px 12px 4px; border-bottom: none; }
 :root[data-shape="soft"] .side-nav a {
-  border: none;
-  border-radius: 6px;
-  font: 500 12px/1 var(--body-system);
+  font: 500 13px/1 var(--body-system);
   text-transform: none;
   letter-spacing: 0;
-  background: transparent;
-  color: var(--ink-dim);
+  border-radius: 6px;
 }
-:root[data-shape="soft"] .side-nav a:hover { background: var(--panel-2); color: var(--ink); }
-:root[data-shape="soft"] .side-nav a.active { background: var(--accent-2); color: var(--accent); }
+:root[data-shape="soft"] .side-nav a.active::before,
+:root[data-shape="paper"] .side-nav a.active::before,
+:root[data-shape="neon"] .side-nav a.active::before { content: none; }
 :root[data-shape="paper"] .side-nav a {
-  font: italic 600 12px/1 var(--font-body);
+  font: italic 600 13px/1 var(--font-body);
   text-transform: none;
   letter-spacing: 0;
   border-radius: 2px;
 }
-:root[data-shape="neon"] .side-nav a { border-radius: 999px; }
+:root[data-shape="neon"] .side-nav a { border-radius: 999px; padding: 5px 14px; }
 :root[data-shape="neon"] .side-nav a.active { box-shadow: 0 0 12px var(--accent-2); }
-
-/* legacy unused */
-.top-bar .topnav { display: none; }
 #conn-label::before { content: "[ "; color: var(--rule-2); }
 #conn-label::after  { content: " ]"; color: var(--rule-2); }
 
