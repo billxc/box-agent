@@ -60,24 +60,50 @@ async function fetchMachines() {
 function renderMachineChips() {
   const container = document.getElementById("machine-chips");
   container.innerHTML = "";
+  container.classList.add("dropdown");
+
+  const total = state.machines.length;
+  const selectedCount = state.selected_machines ? state.selected_machines.size : total;
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "dropdown-button";
+  button.textContent = `Machines (${selectedCount}/${total}) ▾`;
+
+  const menu = document.createElement("div");
+  menu.className = "dropdown-menu";
+  menu.hidden = true;
+
   for (const m of state.machines) {
     const label = document.createElement("label");
-    label.style.marginRight = "8px";
+    label.className = "dropdown-item";
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.value = m.machine_id;
     cb.checked = !state.selected_machines || state.selected_machines.has(m.machine_id);
     cb.onchange = () => {
-      const checked = Array.from(container.querySelectorAll("input:checked")).map(i => i.value);
+      const checked = Array.from(menu.querySelectorAll("input:checked")).map(i => i.value);
       const all = state.machines.map(m => m.machine_id);
       state.selected_machines = checked.length === all.length ? null : new Set(checked);
       saveMachines();
+      button.textContent = `Machines (${checked.length}/${all.length}) ▾`;
       reload();
     };
     label.appendChild(cb);
     label.appendChild(document.createTextNode(" " + m.machine_id + (m.self ? " (self)" : "")));
-    container.appendChild(label);
+    menu.appendChild(label);
   }
+
+  button.onclick = (e) => {
+    e.stopPropagation();
+    menu.hidden = !menu.hidden;
+  };
+  document.addEventListener("click", (e) => {
+    if (!container.contains(e.target)) menu.hidden = true;
+  });
+
+  container.appendChild(button);
+  container.appendChild(menu);
 }
 
 function activeMachines() {
