@@ -451,11 +451,12 @@ body.sidebar-dragging * { user-select: none !important; }
 .side-nav {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 8px 12px;
+  gap: 8px;
+  padding: 8px 14px;
   padding-top: calc(8px + var(--safe-top));
+  min-height: 44px;
   border-bottom: 1px solid var(--rule);
-  background: var(--bg-2);
+  background: var(--panel);
 }
 .side-nav a {
   flex: 1;
@@ -545,9 +546,10 @@ body.sidebar-dragging * { user-select: none !important; }
 #messages-mask.hidden { opacity: 0; pointer-events: none; }
 
 .top-bar {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 16px;
-  padding-top: calc(10px + var(--safe-top));
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px;
+  padding-top: calc(8px + var(--safe-top));
+  min-height: 44px;
   border-bottom: 1px solid var(--rule);
   background: var(--panel);
   position: sticky; top: 0; z-index: 5;
