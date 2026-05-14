@@ -702,29 +702,17 @@ a, button { font-family: inherit; }
 /* ============================================================
    SHAPE: neon — rounded glow
    ============================================================ */
-:root[data-shape="neon"] body {
-  background-image:
-    repeating-linear-gradient(0deg, rgba(255,93,202,0.025) 0 1px, transparent 1px 4px),
-    radial-gradient(ellipse at top, rgba(255,93,202,0.08), transparent 60%);
-}
+:root[data-shape="neon"] body { background-image: none; }
 :root[data-shape="neon"] .sidebar { border-radius: 10px 0 0 10px; }
 :root[data-shape="neon"] .topnav a { border-radius: 999px; padding: 5px 14px; }
-:root[data-shape="neon"] .topnav a.active { box-shadow: 0 0 12px var(--accent-2); }
 :root[data-shape="neon"] .actions button { border-radius: 6px; }
-:root[data-shape="neon"] .actions button:hover { box-shadow: 0 0 14px var(--accent-2); }
 :root[data-shape="neon"] .event-item {
   border-radius: 6px;
   margin-bottom: 4px;
   border-bottom: 1px solid var(--border);
 }
-:root[data-shape="neon"] .event-item.unread {
-  box-shadow: 0 0 14px var(--accent-2);
-}
+:root[data-shape="neon"] .event-item.unread { border-left: 3px solid var(--accent); }
 :root[data-shape="neon"] .event-level { border-radius: 4px; }
 :root[data-shape="neon"] #search { border-radius: 999px; padding-left: 14px; }
-:root[data-shape="neon"] #search:focus { box-shadow: 0 0 0 1px var(--accent), 0 0 18px var(--accent-2); }
-:root[data-shape="neon"] .load-more {
-  border-radius: 999px;
-  box-shadow: 0 0 12px var(--accent-2);
-}
-:root[data-shape="neon"] .load-more:hover { box-shadow: 0 0 22px var(--accent); }
+:root[data-shape="neon"] #search:focus { box-shadow: 0 0 0 2px var(--accent-2); }
+:root[data-shape="neon"] .load-more { border-radius: 999px; }

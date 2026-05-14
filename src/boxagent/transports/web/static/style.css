@@ -498,7 +498,6 @@ body.sidebar-dragging * { user-select: none !important; }
   border-radius: 2px;
 }
 :root[data-shape="neon"] .side-nav a { border-radius: 999px; padding: 5px 14px; }
-:root[data-shape="neon"] .side-nav a.active { box-shadow: 0 0 12px var(--accent-2); }
 #conn-label::before { content: "[ "; color: var(--rule-2); }
 #conn-label::after  { content: " ]"; color: var(--rule-2); }
 
@@ -1464,40 +1463,35 @@ body.sidebar-dragging * { user-select: none !important; }
 :root[data-shape="neon"] {
   --radius: 10px;
   --radius-sm: 6px;
-  --shadow: 0 0 18px var(--accent-2), 0 0 2px var(--accent);
+  --shadow: none;
 }
-:root[data-shape="neon"] body {
-  background-image:
-    repeating-linear-gradient(0deg, rgba(255,93,202,0.025) 0 1px, transparent 1px 4px),
-    radial-gradient(ellipse at top, rgba(255,93,202,0.10), transparent 60%),
-    radial-gradient(ellipse at bottom, rgba(93,255,255,0.08), transparent 60%);
-}
+:root[data-shape="neon"] body { background-image: none; }
 :root[data-shape="neon"] #sidebar,
 :root[data-shape="neon"] .picker-card { border-radius: var(--radius); }
 :root[data-shape="neon"] .picker-card {
   border-width: 1px;
-  box-shadow: 0 0 0 1px var(--bg), 0 0 60px rgba(255,93,202,0.35), inset 0 0 30px rgba(93,255,255,0.05);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
 }
 :root[data-shape="neon"] .msg {
   border-radius: var(--radius);
   border-left: none;
   background: var(--panel);
-  padding: 12px 16px 14px;
-  box-shadow: 0 0 0 1px var(--rule-2);
+  padding: 10px 14px;
+  box-shadow: inset 0 0 0 1px var(--rule);
 }
 :root[data-shape="neon"] .msg.user {
   border-right: none;
-  background: linear-gradient(135deg, var(--accent-2), transparent 80%), var(--panel);
-  box-shadow: 0 0 0 1px var(--accent), 0 0 20px rgba(255,93,202,0.25);
+  background: var(--accent-2);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 :root[data-shape="neon"] .msg.assistant {
-  background: linear-gradient(135deg, transparent 20%, rgba(93,255,255,0.05)), var(--panel);
-  box-shadow: 0 0 0 1px var(--cyan), 0 0 18px rgba(93,255,255,0.15);
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--rule-2);
+  border-left: 2px solid var(--cyan);
 }
 :root[data-shape="neon"] .typing {
   border-radius: var(--radius);
-  border-left: none;
-  box-shadow: 0 0 0 1px var(--cyan), 0 0 14px rgba(93,255,255,0.2);
+  border-left: 2px solid var(--cyan);
 }
 :root[data-shape="neon"] #input {
   border-radius: 999px;
@@ -1506,26 +1500,18 @@ body.sidebar-dragging * { user-select: none !important; }
 }
 :root[data-shape="neon"] #input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent), 0 0 18px var(--accent-2);
+  box-shadow: 0 0 0 2px var(--accent-2);
 }
 :root[data-shape="neon"] #send {
   border-radius: 50%;
-  width: 42px; height: 42px;
-  box-shadow: 0 0 14px var(--accent-2), 0 0 2px var(--accent);
+  width: 40px; height: 40px;
 }
 :root[data-shape="neon"] #send:not(:disabled):hover {
-  box-shadow: 0 0 24px var(--accent), 0 0 2px var(--accent);
+  box-shadow: 0 0 14px var(--accent-2);
 }
 :root[data-shape="neon"] .icon-btn,
 :root[data-shape="neon"] .text-btn,
 :root[data-shape="neon"] .primary-btn { border-radius: var(--radius-sm); }
-:root[data-shape="neon"] .primary-btn {
-  box-shadow: 0 0 12px var(--accent-2);
-}
-:root[data-shape="neon"] .primary-btn:hover:not(:disabled) {
-  background: var(--accent);
-  box-shadow: 0 0 22px var(--accent);
-}
 :root[data-shape="neon"] .machine,
 :root[data-shape="neon"] #recents-list li,
 :root[data-shape="neon"] #session-list li {
@@ -1537,19 +1523,14 @@ body.sidebar-dragging * { user-select: none !important; }
 :root[data-shape="neon"] #session-list li.active {
   background: var(--accent-2);
   border-color: var(--accent);
-  box-shadow: 0 0 12px var(--accent-2);
 }
 :root[data-shape="neon"] .dot.online {
-  box-shadow: 0 0 14px var(--accent), 0 0 2px var(--accent);
+  box-shadow: 0 0 8px var(--accent);
 }
-:root[data-shape="neon"] .side-head h1 {
-  font-family: var(--display);
-  text-shadow: 0 0 12px var(--accent-2), 0 0 2px var(--accent);
-}
+:root[data-shape="neon"] .side-head h1 { font-family: var(--display); }
 :root[data-shape="neon"] .msg .markdown pre {
   border-radius: 8px;
   border-left: 2px solid var(--magenta);
-  background: rgba(0,0,0,0.35);
+  background: rgba(0,0,0,0.25);
 }
-:root[data-shape="neon"] .msg .markdown a:hover { background: transparent; text-shadow: 0 0 8px var(--accent); }
-:root[data-shape="neon"] .tool-card { border-radius: 6px; box-shadow: 0 0 10px rgba(255,93,202,0.15); }
+:root[data-shape="neon"] .tool-card { border-radius: 6px; }
