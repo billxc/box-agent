@@ -10,9 +10,9 @@ Lifecycle on host startup:
    multiple regions (e.g. ``boxagent-cluster.asse`` vs
    ``boxagent-cluster.jpe1``); ``devtunnel show <name>`` only returns
    whatever the current region resolves to, hiding the duplicates and
-   stranding guests on stale URLs. We refuse to start when more than
-   one match exists and ask the operator to delete the unused one
-   manually — auto-deletion is too easy to get wrong.
+   stranding guests on stale URLs. On >1 match we log a warning and
+   pick the one with an active host connection — refusing to start
+   would just leave the cluster down.
 2. If zero matches, create with ``devtunnel create <name>``.
 3. Resolve the full ``tunnelId`` (e.g. ``boxagent-cluster.asse``) and
    use it for every subsequent call so nothing is region-ambiguous.
@@ -248,20 +248,25 @@ class ClusterTunnel:
     async def _resolve_tunnel_id(self) -> str | None:
         """Find our tunnel's full region-qualified ID, or None if absent.
 
-        Refuses to proceed when more than one region has a tunnel with our
-        bare name — that situation is the bug we're guarding against and
-        silently picking one would just keep stranding guests on the loser.
+        When more than one region has a tunnel with our bare name we log a
+        loud warning and pick the first one (preferring any with an active
+        host connection — that's most likely ours from a previous run).
+        Starting anyway is intentional: refusing leaves the cluster down,
+        and the operator can clean up the orphan whenever convenient.
         """
         matches = await self._list_matching()
-        if len(matches) > 1:
-            ids = ", ".join(str(t.get("tunnelId") or "?") for t in matches)
-            raise RuntimeError(
-                f"multiple tunnels named '{self.name}' exist across regions: "
-                f"{ids}. Manually delete the unused one(s) with "
-                f"`devtunnel delete <tunnelId>` and restart."
-            )
         if not matches:
             return None
+        if len(matches) > 1:
+            ids = ", ".join(str(t.get("tunnelId") or "?") for t in matches)
+            matches.sort(key=lambda t: int(t.get("hostConnections") or 0), reverse=True)
+            chosen = str(matches[0].get("tunnelId") or "")
+            logger.warning(
+                "Multiple tunnels named '%s' across regions: %s. Using '%s'. "
+                "Delete the unused one(s) with `devtunnel delete <tunnelId>`.",
+                self.name, ids, chosen,
+            )
+            return chosen or None
         tunnel_id = str(matches[0].get("tunnelId") or "")
         return tunnel_id or None
 

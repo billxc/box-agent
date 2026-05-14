@@ -101,8 +101,12 @@ class TestResolveTunnelId:
     return only one and strand guests on the loser. See bug history in
     docstring of tunnel.py."""
 
-    def _list_payload(self, *tunnel_ids: str) -> tuple[int, str, str]:
-        return 0, json.dumps({"tunnels": [{"tunnelId": tid} for tid in tunnel_ids]}), ""
+    def _list_payload(self, *tunnels: dict | str) -> tuple[int, str, str]:
+        normalized = [
+            t if isinstance(t, dict) else {"tunnelId": t, "hostConnections": 0}
+            for t in tunnels
+        ]
+        return 0, json.dumps({"tunnels": normalized}), ""
 
     @pytest.mark.asyncio
     async def test_no_match_returns_none(self):
@@ -121,13 +125,15 @@ class TestResolveTunnelId:
             assert await tunnel._resolve_tunnel_id() == "boxagent-cluster.asse"
 
     @pytest.mark.asyncio
-    async def test_multiple_matches_raises(self):
-        """Same bare name across regions ⇒ refuse to start; caller fixes manually."""
+    async def test_multiple_matches_prefers_active_host(self, caplog):
+        """Same bare name across regions ⇒ log warning, prefer the one with a live host."""
         tunnel = ClusterTunnel(name="boxagent-cluster")
-        with patch.object(
-            tunnel,
-            "_run",
-            new=AsyncMock(return_value=self._list_payload("boxagent-cluster.asse", "boxagent-cluster.jpe1")),
-        ):
-            with pytest.raises(RuntimeError, match="multiple tunnels named 'boxagent-cluster'"):
-                await tunnel._resolve_tunnel_id()
+        payload = self._list_payload(
+            {"tunnelId": "boxagent-cluster.jpe1", "hostConnections": 0},
+            {"tunnelId": "boxagent-cluster.asse", "hostConnections": 1},
+        )
+        with patch.object(tunnel, "_run", new=AsyncMock(return_value=payload)):
+            with caplog.at_level("WARNING"):
+                chosen = await tunnel._resolve_tunnel_id()
+        assert chosen == "boxagent-cluster.asse"
+        assert any("Multiple tunnels named" in r.message for r in caplog.records)
