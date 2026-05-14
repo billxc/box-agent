@@ -489,7 +489,8 @@ body.sidebar-dragging * { user-select: none !important; }
 }
 :root[data-shape="soft"] .side-nav a.active::before,
 :root[data-shape="paper"] .side-nav a.active::before,
-:root[data-shape="neon"] .side-nav a.active::before { content: none; }
+:root[data-shape="neon"] .side-nav a.active::before,
+:root[data-shape="scandi"] .side-nav a.active::before { content: none; }
 :root[data-shape="paper"] .side-nav a {
   font: italic 600 13px/1 var(--font-body);
   text-transform: none;
@@ -1229,6 +1230,104 @@ body.sidebar-dragging * { user-select: none !important; }
   font-size: 12px;
 }
 :root[data-shape="soft"] .theme-switch { font-family: var(--body-system); text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 12px; }
+
+/* ============================================================
+   SHAPE: scandi — clean, precise, sans-serif, 1px borders, 4px radius
+   ============================================================ */
+:root[data-shape="scandi"] {
+  --radius: 6px;
+  --radius-sm: 4px;
+  --shadow: none;
+  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-title: var(--font-body);
+}
+:root[data-shape="scandi"] .side-head h1,
+:root[data-shape="scandi"] #chat-title {
+  font: 600 14px/1.2 var(--font-body);
+  letter-spacing: -0.01em;
+  text-transform: none;
+}
+:root[data-shape="scandi"] .side-label,
+:root[data-shape="scandi"] #conn-label {
+  font: 600 10px/1 var(--font-body);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+:root[data-shape="scandi"] .icon-btn,
+:root[data-shape="scandi"] .text-btn,
+:root[data-shape="scandi"] .primary-btn { border-radius: var(--radius-sm); }
+:root[data-shape="scandi"] .text-btn,
+:root[data-shape="scandi"] .primary-btn {
+  font: 500 12px/1 var(--font-body);
+  text-transform: none;
+  letter-spacing: 0;
+}
+:root[data-shape="scandi"] #recents-list li,
+:root[data-shape="scandi"] .machine,
+:root[data-shape="scandi"] .machine-bots li,
+:root[data-shape="scandi"] #session-list li {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  padding: 8px 10px;
+}
+:root[data-shape="scandi"] #recents-list li.active,
+:root[data-shape="scandi"] .machine-bots li.active,
+:root[data-shape="scandi"] #session-list li.active {
+  border-color: var(--accent);
+  background: var(--accent-2);
+  box-shadow: none;
+}
+:root[data-shape="scandi"] .machine-bots { border-left: none; padding: 4px 6px 6px 14px; }
+:root[data-shape="scandi"] .machine-bots li { padding: 6px 8px; }
+:root[data-shape="scandi"] .msg {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-left: none;
+  border-radius: var(--radius);
+  padding: 10px 14px;
+}
+:root[data-shape="scandi"] .msg.user {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+  border-right: none;
+}
+:root[data-shape="scandi"] .msg.assistant {
+  border-left: 3px solid var(--cyan);
+}
+:root[data-shape="scandi"] .msg .markdown pre {
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+}
+:root[data-shape="scandi"] .typing { border: 1px solid var(--rule); border-radius: var(--radius); border-left: 3px solid var(--cyan); }
+:root[data-shape="scandi"] #input {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+  padding: 10px 14px;
+}
+:root[data-shape="scandi"] #input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-2); }
+:root[data-shape="scandi"] #send {
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  width: auto;
+  padding: 0 16px;
+  height: 38px;
+}
+:root[data-shape="scandi"] #send::after {
+  content: "Send";
+  font: 600 12px/1 var(--font-body);
+  text-transform: none;
+  letter-spacing: 0;
+}
+:root[data-shape="scandi"] .picker-card { border-radius: var(--radius); border: 1px solid var(--rule); }
+:root[data-shape="scandi"] .dot { border-radius: 50%; box-shadow: none; animation: none; }
+:root[data-shape="scandi"] .tool-card { border-radius: var(--radius-sm); }
 
 /* ============================================================
    SHAPE: paper — serif print aesthetic

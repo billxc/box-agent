@@ -12,7 +12,7 @@
   const THEMES = [
     { id: "phosphor",  label: "Phosphor",  shape: "brutalist", palette: "phosphor"  },
     { id: "synthwave", label: "Synthwave", shape: "neon",      palette: "synthwave" },
-    { id: "nord",      label: "Nord",      shape: "soft",      palette: "nord"      },
+    { id: "nord",      label: "Nord",      shape: "scandi",    palette: "nord"      },
     { id: "paper",     label: "Paper",     shape: "paper",     palette: "paper"     },
     { id: "soft",      label: "Soft",      shape: "soft",      palette: "apple"     },
   ];
