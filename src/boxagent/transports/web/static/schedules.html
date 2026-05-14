@@ -11,10 +11,14 @@
     display: grid;
     grid-template-columns: 300px 340px 1fr;
     gap: 0;
-    height: calc(100vh - 45px);
+    flex: 1;
+    min-height: 0;
   }
   .schedules-layout > * {
     overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
+    min-width: 0;
     padding: 16px;
     border-right: 1px solid var(--border);
     background: var(--panel);

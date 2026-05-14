@@ -97,6 +97,7 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+html, body { height: 100%; }
 body {
   font: 13px/1.55 var(--font-body);
   background: var(--bg);
@@ -109,7 +110,9 @@ body {
       rgba(110, 255, 181, var(--scanline-opacity)) 0 1px,
       transparent 1px 3px
     );
-  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 ::selection { background: var(--accent); color: var(--accent-fg); }
@@ -131,8 +134,7 @@ a, button { font-family: inherit; }
   min-height: 44px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
+  flex-shrink: 0;
   z-index: 10;
   position: relative;
 }
@@ -216,8 +218,10 @@ a, button { font-family: inherit; }
 .layout {
   display: grid;
   grid-template-columns: 260px 1fr;
-  height: calc(100vh - 45px);
+  flex: 1;
+  min-height: 0;
 }
+.layout > * { min-height: 0; min-width: 0; }
 
 .sidebar {
   border-right: 1px solid var(--border);
