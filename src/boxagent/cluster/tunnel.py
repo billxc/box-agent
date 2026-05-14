@@ -6,13 +6,22 @@ purposes). The tunnel name defaults to ``boxagent-cluster``.
 
 Lifecycle on host startup:
 
-1. ``devtunnel show <name> -j`` → if exists, reuse; else create with
-   anonymous access (``devtunnel create <name> -a``).
-2. Ensure port 9292 is registered (``devtunnel port create``).
-3. Spawn ``devtunnel host <name>`` as a child subprocess and keep it alive.
-4. Poll ``devtunnel show -j`` to read the resolved ``portUri``; write it to
-   ``{local_dir}/cluster-tunnel-url.txt`` so other tooling and guests
-   can discover it.
+1. ``devtunnel list -j`` → filter by bare name. Same name can exist in
+   multiple regions (e.g. ``boxagent-cluster.asse`` vs
+   ``boxagent-cluster.jpe1``); ``devtunnel show <name>`` only returns
+   whatever the current region resolves to, hiding the duplicates and
+   stranding guests on stale URLs. We refuse to start when more than
+   one match exists and ask the operator to delete the unused one
+   manually — auto-deletion is too easy to get wrong.
+2. If zero matches, create with ``devtunnel create <name>``.
+3. Resolve the full ``tunnelId`` (e.g. ``boxagent-cluster.asse``) and
+   use it for every subsequent call so nothing is region-ambiguous.
+4. Ensure port 9292 is registered (``devtunnel port create``).
+5. Spawn ``devtunnel host <tunnel_id>`` as a child subprocess and keep
+   it alive.
+6. Poll ``devtunnel show <tunnel_id> -j`` to read the resolved
+   ``portUri``; write it to ``{local_dir}/cluster-tunnel-url.txt`` so
+   other tooling and guests can discover it.
 
 Anonymous access is fine for our threat model: the cluster.token in the WS
 hello frame gates membership. devtunnels' browser interstitial only fires
@@ -42,6 +51,7 @@ class ClusterTunnel:
     _stopping: bool = field(default=False, repr=False)
     _respawn_backoff_seconds: float = field(default=2.0, repr=False)
     _url: str = ""
+    _tunnel_id: str = ""
 
     @property
     def url(self) -> str:
@@ -55,22 +65,24 @@ class ClusterTunnel:
         if not shutil.which("devtunnel"):
             raise RuntimeError("devtunnel CLI not found in PATH")
 
-        info = await self._show()
-        if info is None:
+        tunnel_id = await self._resolve_tunnel_id()
+        if tunnel_id is None:
             # Authenticated by default — only the same Microsoft tenant/user
             # can connect. Guests must hold a connect token issued by
             # `devtunnel token --scopes connect`.
             await self._run("create", self.name)
-            info = await self._show()
-            if info is None:
+            tunnel_id = await self._resolve_tunnel_id()
+            if tunnel_id is None:
                 raise RuntimeError(f"failed to create tunnel '{self.name}'")
-            logger.info("Cluster tunnel '%s' created (authenticated)", self.name)
+            logger.info("Cluster tunnel '%s' created (authenticated)", tunnel_id)
+        self._tunnel_id = tunnel_id
 
+        info = await self._show(tunnel_id)
         # Ensure port is registered
         ports = (info.get("ports") or []) if info else []
         if not any(int(p.get("portNumber") or 0) == self.port for p in ports):
-            await self._run("port", "create", self.name, "-p", str(self.port), "--protocol", "http")
-            logger.info("Cluster tunnel '%s' port %d registered", self.name, self.port)
+            await self._run("port", "create", tunnel_id, "-p", str(self.port), "--protocol", "http")
+            logger.info("Cluster tunnel '%s' port %d registered", tunnel_id, self.port)
 
         # Start host process (long-running, supervised — see _monitor_host).
         await self._launch_supervised()
@@ -78,7 +90,7 @@ class ClusterTunnel:
         # Poll until URL is reachable in the metadata
         url = ""
         for _ in range(20):
-            info = await self._show()
+            info = await self._show(tunnel_id)
             if info:
                 for p in (info.get("ports") or []):
                     if int(p.get("portNumber") or 0) == self.port:
@@ -89,17 +101,17 @@ class ClusterTunnel:
             await asyncio.sleep(0.5)
         if not url:
             raise RuntimeError(
-                f"tunnel '{self.name}' started but URL did not resolve"
+                f"tunnel '{tunnel_id}' started but URL did not resolve"
             )
 
         self._url = url
-        logger.info("Cluster tunnel '%s' ready: %s", self.name, url)
+        logger.info("Cluster tunnel '%s' ready: %s", tunnel_id, url)
         return url
 
     async def _spawn_host_proc(self) -> asyncio.subprocess.Process:
         """Spawn a fresh ``devtunnel host`` subprocess. Isolated for tests."""
         return await asyncio.create_subprocess_exec(
-            "devtunnel", "host", self.name,
+            "devtunnel", "host", self._tunnel_id or self.name,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
             stdin=asyncio.subprocess.DEVNULL,
@@ -207,12 +219,58 @@ class ClusterTunnel:
         out, err = await process.communicate()
         return process.returncode or 0, out.decode("utf-8", "replace"), err.decode("utf-8", "replace")
 
-    async def _show(self) -> dict | None:
-        return_code, out, err = await self._run("show", self.name, "-j")
+    async def _list_matching(self) -> list[dict]:
+        """Return all tunnels whose bare name (region stripped) matches self.name.
+
+        ``devtunnel show <name>`` is region-ambiguous — same name can exist
+        in multiple regions, and show only returns the one the current
+        region resolves to. Listing client-side gives us the full picture.
+        """
+        return_code, out, err = await self._run("list", "-j")
+        if return_code != 0:
+            logger.debug("devtunnel list rc=%d err=%s", return_code, err.strip())
+            return []
+        try:
+            data = json.loads(out)
+        except Exception:
+            return []
+        tunnels = data.get("tunnels") if isinstance(data, dict) else data
+        if not isinstance(tunnels, list):
+            return []
+        matches: list[dict] = []
+        for t in tunnels:
+            tunnel_id = str(t.get("tunnelId") or "")
+            bare = tunnel_id.split(".", 1)[0] if "." in tunnel_id else tunnel_id
+            if bare == self.name:
+                matches.append(t)
+        return matches
+
+    async def _resolve_tunnel_id(self) -> str | None:
+        """Find our tunnel's full region-qualified ID, or None if absent.
+
+        Refuses to proceed when more than one region has a tunnel with our
+        bare name — that situation is the bug we're guarding against and
+        silently picking one would just keep stranding guests on the loser.
+        """
+        matches = await self._list_matching()
+        if len(matches) > 1:
+            ids = ", ".join(str(t.get("tunnelId") or "?") for t in matches)
+            raise RuntimeError(
+                f"multiple tunnels named '{self.name}' exist across regions: "
+                f"{ids}. Manually delete the unused one(s) with "
+                f"`devtunnel delete <tunnelId>` and restart."
+            )
+        if not matches:
+            return None
+        tunnel_id = str(matches[0].get("tunnelId") or "")
+        return tunnel_id or None
+
+    async def _show(self, tunnel_id: str) -> dict | None:
+        return_code, out, err = await self._run("show", tunnel_id, "-j")
         if return_code != 0:
             if "Tunnel not found" in err or "Tunnel not found" in out:
                 return None
-            logger.debug("devtunnel show '%s' rc=%d err=%s", self.name, return_code, err.strip())
+            logger.debug("devtunnel show '%s' rc=%d err=%s", tunnel_id, return_code, err.strip())
             return None
         try:
             data = json.loads(out)

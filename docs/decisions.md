@@ -377,3 +377,14 @@ CLI 子进程那条路准备废弃。为了不强迫所有用户立刻改 `~/.bo
 
 **测试影响**：`test_gateway.py` 两处 `patch("...backend_factory.ClaudeProcess")` 改为 patch `AgentSDKClaude` —— 反映真实派发目标。新增 `test_claude_cli_silently_redirects_to_sdk_claude` 锁定行为。共 863 passed。
 
+
+## 2026-05-14 — ClusterTunnel 用 `list -j` 解析 tunnel，跨 region 重名直接拒绝启动
+
+`devtunnel show <name>` 是 region-ambiguous 的：同名 tunnel 可以在多个 region 共存（实测 `boxagent-cluster.asse` 和 `boxagent-cluster.jpe1` 同时存在），show 只返回当前 region 解析到的一个，另一个变成孤儿。Host 写到 `cluster-tunnel-url.txt` 的 URL 在 region 漂移后会换地址，guest 缓存的旧 URL 卡死。
+
+**改动**：`ClusterTunnel.start()` 改用 `devtunnel list -j` + client-side bare-name 过滤拿 `tunnelId`：
+- 0 个 → `devtunnel create`
+- 1 个 → 用其完整 ID（带 region 后缀）调用后续所有 `devtunnel host/show/port`
+- >1 个 → 直接 raise，错误信息列出冲突的 tunnelId 并要求人工 `devtunnel delete`
+
+**为什么不自动删**：删错了 region 等于把 host 自己关掉。人工成本低、自动化风险高。

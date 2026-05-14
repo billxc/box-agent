@@ -1,7 +1,8 @@
 """Tests for ClusterTunnel — devtunnel host process supervision (yait #79)."""
 
 import asyncio
-from unittest.mock import MagicMock, patch
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -92,3 +93,41 @@ class TestRespawn:
             await asyncio.sleep(0.05)
 
         assert len(spawned) == 1, "stop() must not trigger respawn"
+
+
+class TestResolveTunnelId:
+    """`_resolve_tunnel_id` uses `devtunnel list -j` (not show) so duplicate
+    tunnels in different regions can be detected — show would silently
+    return only one and strand guests on the loser. See bug history in
+    docstring of tunnel.py."""
+
+    def _list_payload(self, *tunnel_ids: str) -> tuple[int, str, str]:
+        return 0, json.dumps({"tunnels": [{"tunnelId": tid} for tid in tunnel_ids]}), ""
+
+    @pytest.mark.asyncio
+    async def test_no_match_returns_none(self):
+        tunnel = ClusterTunnel(name="boxagent-cluster")
+        with patch.object(tunnel, "_run", new=AsyncMock(return_value=self._list_payload("other.asse", "another.jpe1"))):
+            assert await tunnel._resolve_tunnel_id() is None
+
+    @pytest.mark.asyncio
+    async def test_single_match_returns_full_id(self):
+        tunnel = ClusterTunnel(name="boxagent-cluster")
+        with patch.object(
+            tunnel,
+            "_run",
+            new=AsyncMock(return_value=self._list_payload("boxagent-cluster.asse", "other.jpe1")),
+        ):
+            assert await tunnel._resolve_tunnel_id() == "boxagent-cluster.asse"
+
+    @pytest.mark.asyncio
+    async def test_multiple_matches_raises(self):
+        """Same bare name across regions ⇒ refuse to start; caller fixes manually."""
+        tunnel = ClusterTunnel(name="boxagent-cluster")
+        with patch.object(
+            tunnel,
+            "_run",
+            new=AsyncMock(return_value=self._list_payload("boxagent-cluster.asse", "boxagent-cluster.jpe1")),
+        ):
+            with pytest.raises(RuntimeError, match="multiple tunnels named 'boxagent-cluster'"):
+                await tunnel._resolve_tunnel_id()
