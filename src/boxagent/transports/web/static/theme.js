@@ -6,9 +6,16 @@
   const KEY = "boxagent.theme";
   const DEFAULT = "phosphor";
   const THEMES = [
-    { id: "phosphor", label: "Phosphor" },
-    { id: "ink",      label: "Ink"      },
-    { id: "soft",     label: "Soft"     },
+    { id: "phosphor",  label: "Phosphor"  },
+    { id: "amber",     label: "Amber CRT" },
+    { id: "matrix",    label: "Matrix"    },
+    { id: "synthwave", label: "Synthwave" },
+    { id: "nord",      label: "Nord"      },
+    { id: "gruvbox",   label: "Gruvbox"   },
+    { id: "mono",      label: "Mono"      },
+    { id: "ink",       label: "Ink"       },
+    { id: "newsprint", label: "Newsprint" },
+    { id: "soft",      label: "Soft"      },
   ];
 
   function read() {
