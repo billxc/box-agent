@@ -5,10 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BoxAgent Events</title>
 <link rel="stylesheet" href="events.css">
+<script src="theme.js"></script>
 </head>
 <body>
 <header class="topbar">
-  <div class="title">📋 Events</div>
+  <div class="title">Events</div>
   <nav class="topnav">
     <a href="/">Chat</a>
     <a href="events.html" class="active">Events</a>
@@ -18,6 +19,7 @@
     <label><input type="checkbox" id="unread-only"> Unread only</label>
     <button id="mark-all-read">Mark all read</button>
     <button id="reload">↻</button>
+    <span id="theme-slot"></span>
   </div>
 </header>
 
@@ -55,5 +57,6 @@
 </main>
 
 <script src="events.js"></script>
+<script>BoxAgentTheme.mount(document.getElementById("theme-slot"), { label: false });</script>
 </body>
 </html>
