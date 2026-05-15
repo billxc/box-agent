@@ -7,14 +7,11 @@
 
 (function () {
   const KEY_THEME = "boxagent.theme";
-  const DEFAULT = "phosphor";
+  const DEFAULT = "soft";
 
   const THEMES = [
-    { id: "phosphor",  label: "Brutalist · Phosphor", shape: "brutalist", palette: "phosphor"  },
-    { id: "synthwave", label: "Neon · Synthwave",     shape: "neon",      palette: "synthwave" },
-    { id: "nord",      label: "Scandi · Nord",        shape: "scandi",    palette: "nord"      },
-    { id: "paper",     label: "Paper",                shape: "paper",     palette: "paper"     },
-    { id: "soft",      label: "Soft · Apple",         shape: "soft",      palette: "apple"     },
+    { id: "soft",  label: "Soft · Apple", shape: "soft",  palette: "apple" },
+    { id: "paper", label: "Paper",        shape: "paper", palette: "paper" },
   ];
 
   function find(id) { return THEMES.find(t => t.id === id); }

@@ -1,15 +1,16 @@
+
+
 /* ==========================================================================
    BoxAgent themes (chat) — palettes + shape overrides + hide block
    Loaded after style.css. Each theme's rules are grouped clearly:
    delete/edit a theme by removing its palette block (top) and any
    matching [data-shape] block (bottom).
    ========================================================================== */
-
 /* ============================================================
    PALETTES — colors only
    ============================================================ */
-
 /* ── apple (Apple-ish; follows system dark/light) ── */
+
 :root[data-palette="apple"] {
   --bg:        #f5f5f7;
   --bg-2:      #f0f0f3;
@@ -33,9 +34,10 @@
   --asst-fg:   #1d1d1f;
   --scanline-opacity: 0;
   color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root[data-palette="apple"] {
+}@media (prefers-color-scheme: dark) {
+  
+
+:root[data-palette="apple"] {
     --bg:      #0d1117;
     --bg-2:    #161b22;
     --panel:   #161b22;
@@ -54,30 +56,8 @@
   }
 }
 
-/* ── synthwave (80s neon, magenta/cyan) ── */
-:root[data-palette="synthwave"] {
-  --bg: #0a0418; --bg-2: #110826; --panel: #170e30; --panel-2: #20133e;
-  --ink: #f4d4ff; --ink-dim: #a87fcc; --muted: #6e4f8f;
-  --rule: #2a1a4d; --rule-2: #3a256b;
-  --accent: #ff5dca; --accent-2: #2a1130; --accent-fg: #15001a;
-  --amber: #ffd166; --red: #ff5e8e; --magenta: #ff5dca; --cyan: #5dffff;
-  --user-fg: #fff0fb; --asst-fg: var(--ink);
-  color-scheme: dark;
-}
-
-/* ── nord (cool blue-grey arctic) ── */
-:root[data-palette="nord"] {
-  --bg: #2e3440; --bg-2: #2a303c; --panel: #353c4a; --panel-2: #3b4252;
-  --ink: #eceff4; --ink-dim: #d8dee9; --muted: #81879c;
-  --rule: #434c5e; --rule-2: #4c566a;
-  --accent: #88c0d0; --accent-2: #3b4a55; --accent-fg: #2e3440;
-  --amber: #ebcb8b; --red: #bf616a; --magenta: #b48ead; --cyan: #8fbcbb;
-  --user-fg: #eceff4; --asst-fg: var(--ink);
-  --scanline-opacity: 0;
-  color-scheme: dark;
-}
-
 /* ── paper (warm sepia, ink black + green accent) ── */
+
 :root[data-palette="paper"] {
   --bg: #f1ead6; --bg-2: #e7dec5; --panel: #fbf6e8; --panel-2: #ede4ca;
   --ink: #1a160e; --ink-dim: #5a4f3a; --muted: #8a7e62;
@@ -88,139 +68,127 @@
   --scanline-opacity: 0;
   color-scheme: light;
 }
-
 /* shape overrides */
+
 :root[data-shape="soft"] .side-nav a {
   font: 500 13px/1 var(--body-system);
   text-transform: none;
   letter-spacing: 0;
   border-radius: 6px;
 }
+
 :root[data-shape="soft"] .side-nav a.active::before,
-:root[data-shape="paper"] .side-nav a.active::before,
-:root[data-shape="neon"] .side-nav a.active::before,
-:root[data-shape="scandi"] .side-nav a.active::before { content: none; }
+:root[data-shape="paper"] .side-nav a.active::before { content: none; }
+
 :root[data-shape="paper"] .side-nav a {
   font: italic 600 13px/1 var(--font-body);
   text-transform: none;
   letter-spacing: 0;
   border-radius: 2px;
 }
-:root[data-shape="neon"] .side-nav a { border-radius: 999px; padding: 5px 14px; }
+
 /* ============================================================
    SHAPE: soft — restore rounded UI tokens
    ============================================================ */
+
 :root[data-shape="soft"] {
   --radius: 16px;
   --radius-sm: 10px;
   --shadow: 0 1px 2px rgba(0,0,0,0.05), 0 8px 24px rgba(0,0,0,0.06);
   --font-body: var(--body-system);
   --font-title: var(--body-system);
-}
-@media (prefers-color-scheme: dark) {
-  :root[data-shape="soft"] {
+}@media (prefers-color-scheme: dark) {
+  
+
+:root[data-shape="soft"] {
     --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 8px 24px rgba(0,0,0,0.4);
   }
 }
 
-/* ============================================================
-   Hide brutalist decorations on every non-brutalist shape
-   ============================================================ */
-:root[data-shape]:not([data-shape="brutalist"]) body { background-image: none; }
-
 /* Kill all decorative pseudo-elements */
-:root[data-shape]:not([data-shape="brutalist"]) #sidebar::before,
-:root[data-shape]:not([data-shape="brutalist"]) #sidebar::after,
-:root[data-shape]:not([data-shape="brutalist"]) .side-head::after,
-:root[data-shape]:not([data-shape="brutalist"]) .side-head h1::before,
-:root[data-shape]:not([data-shape="brutalist"]) .side-head h1::after,
-:root[data-shape]:not([data-shape="brutalist"]) .side-label::before,
-:root[data-shape]:not([data-shape="brutalist"]) #recents-list li::before,
-:root[data-shape]:not([data-shape="brutalist"]) #recents-list li.active::before,
-:root[data-shape]:not([data-shape="brutalist"]) #recents-list .recent-recap::before,
-:root[data-shape]:not([data-shape="brutalist"]) #session-list .session-recap::before,
-:root[data-shape]:not([data-shape="brutalist"]) #conn-label::before,
-:root[data-shape]:not([data-shape="brutalist"]) #conn-label::after,
-:root[data-shape]:not([data-shape="brutalist"]) .machine-bots li::before,
-:root[data-shape]:not([data-shape="brutalist"]) .top-bar::after,
-:root[data-shape]:not([data-shape="brutalist"]) #chat-title::before,
-:root[data-shape]:not([data-shape="brutalist"]) #recap-banner .recap-icon::before,
-:root[data-shape]:not([data-shape="brutalist"]) .msg.user::before,
-:root[data-shape]:not([data-shape="brutalist"]) .msg.assistant::before,
-:root[data-shape]:not([data-shape="brutalist"]) .msg-time::before,
-:root[data-shape]:not([data-shape="brutalist"]) .tool-card-header::before,
-:root[data-shape]:not([data-shape="brutalist"]) .tool-card.subagent > .tool-card-header::before,
-:root[data-shape]:not([data-shape="brutalist"]) #composer::before,
-:root[data-shape]:not([data-shape="brutalist"]) #send::after,
-:root[data-shape]:not([data-shape="brutalist"]) .picker-card::before,
-:root[data-shape]:not([data-shape="brutalist"]) .picker-card::after,
-:root[data-shape]:not([data-shape="brutalist"]) .picker-head strong::before,
-:root[data-shape]:not([data-shape="brutalist"]) .msg .markdown h1::before,
-:root[data-shape]:not([data-shape="brutalist"]) .msg .markdown h2::before,
-:root[data-shape]:not([data-shape="brutalist"]) .msg .markdown h3::before {
-  content: none !important;
-}
+
 :root[data-shape="soft"] .side-head h1 {
   font: 600 17px/1 var(--body-system);
   text-transform: none;
   letter-spacing: 0;
 }
+
 :root[data-shape="soft"] #chat-title {
   font: 600 15px/1.2 var(--body-system);
   letter-spacing: 0;
 }
+
 :root[data-shape="soft"] .side-label {
   font: 600 11px/1 var(--body-system);
   text-transform: uppercase;
   letter-spacing: 0.6px;
 }
-:root[data-shape="soft"] #recap-banner .recap-icon { font-size: 14px; }
-:root[data-shape="soft"] #recap-banner .recap-icon::before { content: "📌"; }
-:root[data-shape="soft"] #recap-banner { border-left: none; }
-:root[data-shape="soft"] #recents-list .recent-recap::before { content: "📌 "; }
-:root[data-shape="soft"] #session-list .session-recap::before { content: "📌 "; }
-:root[data-shape="soft"] .tool-card-header::before { content: ""; }
 
+:root[data-shape="soft"] #recap-banner .recap-icon { font-size: 14px; }
+
+:root[data-shape="soft"] #recap-banner .recap-icon::before { content: "📌"; }
+
+:root[data-shape="soft"] #recap-banner { border-left: none; }
+
+:root[data-shape="soft"] #recents-list .recent-recap::before { content: "📌 "; }
+
+:root[data-shape="soft"] #session-list .session-recap::before { content: "📌 "; }
+
+:root[data-shape="soft"] .tool-card-header::before { content: ""; }
 /* Restore rounded, soft UI shapes */
+
 :root[data-shape="soft"] .icon-btn,
 :root[data-shape="soft"] .text-btn { border-radius: 6px; }
-:root[data-shape="soft"] .icon-btn { font-size: 20px; padding: 8px; border: none; }
-:root[data-shape="soft"] .text-btn { text-transform: none; letter-spacing: 0; font-size: 13px; }
-:root[data-shape="soft"] .text-btn:hover { background: var(--panel-2); border-color: transparent; color: var(--accent); }
 
+:root[data-shape="soft"] .icon-btn { font-size: 20px; padding: 8px; border: none; }
+
+:root[data-shape="soft"] .text-btn { text-transform: none; letter-spacing: 0; font-size: 13px; }
+
+:root[data-shape="soft"] .text-btn:hover { background: var(--panel-2); border-color: transparent; color: var(--accent); }
 :root[data-shape="soft"] .machine {
   border-radius: var(--radius-sm);
   border: none;
   background: var(--panel-2);
 }
+
 :root[data-shape="soft"] .machine:not(.collapsed) .machine-head { border-bottom: none; }
+
 :root[data-shape="soft"] .machine-head .role {
   font: 600 10px/1 var(--body-system);
   border-radius: 4px;
   text-transform: none;
   letter-spacing: 0;
 }
+
 :root[data-shape="soft"] .machine-head .kind,
 :root[data-shape="soft"] .machine-bots .kind {
   font: 600 9px/1 var(--body-system);
   border-radius: 3px;
   text-transform: none;
 }
+
 :root[data-shape="soft"] .machine.collapsed .caret::before { content: "▸"; }
+
 :root[data-shape="soft"] .machine:not(.collapsed) .caret::before { content: "▾"; }
+
 :root[data-shape="soft"] #recents-list li { padding-left: 8px; border-left: none; border-radius: 6px; }
+
 :root[data-shape="soft"] #recents-list li.active { background: var(--bg-2); box-shadow: inset 0 0 0 1px var(--accent); }
+
 :root[data-shape="soft"] .machine-bots li { padding-left: 10px; border-left: none; border-radius: 6px; }
+
 :root[data-shape="soft"] .machine-bots li.active { background: var(--bg-2); box-shadow: inset 0 0 0 1px var(--accent); color: inherit; }
+
 :root[data-shape="soft"] #session-list li {
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
   padding: 10px 12px;
 }
-:root[data-shape="soft"] #session-list li:hover { background: var(--panel-2); }
-:root[data-shape="soft"] #session-list li.active { background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--rule-2); border-color: transparent; }
 
+:root[data-shape="soft"] #session-list li:hover { background: var(--panel-2); }
+
+:root[data-shape="soft"] #session-list li.active { background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--rule-2); border-color: transparent; }
 :root[data-shape="soft"] .msg {
   border-radius: var(--radius);
   border-left: none;
@@ -228,6 +196,7 @@
   box-shadow: var(--shadow);
   max-width: min(720px, 84%);
 }
+
 :root[data-shape="soft"] .msg.user {
   background: var(--user-bg);
   color: var(--user-fg);
@@ -235,28 +204,36 @@
   border-right: none;
   padding-right: 14px;
 }
+
 :root[data-shape="soft"] .msg.assistant {
   background: var(--asst-bg);
   color: var(--asst-fg);
   border-bottom-left-radius: 6px;
   border-left: none;
 }
+
 :root[data-shape="soft"] .msg .markdown pre {
   background: rgba(0,0,0,0.06);
   border: none;
   border-radius: 8px;
+}@media (prefers-color-scheme: dark) {
+  
+
+:root[data-shape="soft"] .msg .markdown pre { background: rgba(255,255,255,0.06); }
+  
+
+:root[data-shape="soft"] .msg .markdown p code { background: rgba(255,255,255,0.08); }
 }
-@media (prefers-color-scheme: dark) {
-  :root[data-shape="soft"] .msg .markdown pre { background: rgba(255,255,255,0.06); }
-  :root[data-shape="soft"] .msg .markdown p code { background: rgba(255,255,255,0.08); }
-}
+
 :root[data-shape="soft"] .msg .markdown p code {
   background: rgba(0,0,0,0.06);
   border: none;
   color: inherit;
   border-radius: 4px;
 }
+
 :root[data-shape="soft"] .msg .markdown a:hover { background: transparent; color: var(--accent); }
+
 :root[data-shape="soft"] .msg .markdown h1,
 :root[data-shape="soft"] .msg .markdown h2,
 :root[data-shape="soft"] .msg .markdown h3 {
@@ -264,19 +241,22 @@
   text-transform: none;
   letter-spacing: 0;
 }
+
 :root[data-shape="soft"] .msg-time { letter-spacing: 0.2px; text-transform: none; opacity: 0.55; }
-
 :root[data-shape="soft"] .typing { border-radius: var(--radius); border-left: none; }
-:root[data-shape="soft"] .spinner { border-radius: 50%; }
-:root[data-shape="soft"] .spinner::after { content: none; }
 
+:root[data-shape="soft"] .spinner { border-radius: 50%; }
+
+:root[data-shape="soft"] .spinner::after { content: none; }
 :root[data-shape="soft"] #composer { gap: 8px; }
+
 :root[data-shape="soft"] #input {
   padding: 10px 14px;
   background: var(--panel-2);
   border-radius: 18px;
   font-size: 16px;
 }
+
 :root[data-shape="soft"] #send {
   width: 40px; height: 40px;
   border: none;
@@ -284,22 +264,26 @@
   font-size: 18px;
   letter-spacing: 0;
 }
+
 :root[data-shape="soft"] #send:not(:disabled):hover {
   background: var(--accent); color: var(--accent-fg);
 }
-
 :root[data-shape="soft"] .picker-card {
   border-radius: var(--radius);
   border: none;
   box-shadow: 0 20px 60px rgba(0,0,0,0.5);
 }
+
 :root[data-shape="soft"] .picker-head strong {
   font: 600 14px/1 var(--body-system);
   text-transform: none;
   letter-spacing: 0;
 }
+
 :root[data-shape="soft"] .picker-list li { border-radius: var(--radius-sm); }
+
 :root[data-shape="soft"] .picker-list li.selected { background: var(--panel-2); border-color: transparent; outline: 1px solid var(--accent); }
+
 :root[data-shape="soft"] .primary-btn {
   border-radius: 8px;
   font: 600 13px/1 var(--body-system);
@@ -307,31 +291,33 @@
   letter-spacing: 0;
   padding: 6px 14px;
 }
-:root[data-shape="soft"] .dot { border-radius: 50%; border: none; }
-:root[data-shape="soft"] .dot.online { background: #30d158; color: #30d158; box-shadow: none; animation: none; }
-:root[data-shape="soft"] .dot.offline { background: #ff3b30; color: #ff3b30; }
-:root[data-shape="soft"] .dot.connecting { background: #ff9f0a; color: #ff9f0a; animation: blink 1.4s infinite; }
 
+:root[data-shape="soft"] .dot { border-radius: 50%; border: none; }
+
+:root[data-shape="soft"] .dot.online { background: #30d158; color: #30d158; box-shadow: none; animation: none; }
+
+:root[data-shape="soft"] .dot.offline { background: #ff3b30; color: #ff3b30; }
+
+:root[data-shape="soft"] .dot.connecting { background: #ff9f0a; color: #ff9f0a; animation: blink 1.4s infinite; }
 :root[data-shape="soft"] .tool-card {
   border-radius: 4px;
   border-left: 1px solid var(--rule);
   font-family: var(--body-system);
 }
-:root[data-shape="soft"] .tool-card-header { font-family: var(--mono); text-transform: none; color: inherit; }
-:root[data-shape="soft"] .tool-card-header:hover { color: var(--accent); }
 
+:root[data-shape="soft"] .tool-card-header { font-family: var(--mono); text-transform: none; color: inherit; }
+
+:root[data-shape="soft"] .tool-card-header:hover { color: var(--accent); }
 /* ============================================================
    THEME SWITCHER (in side-foot)
-   ============================================================ */
-.theme-switch {
+   ============================================================ */.theme-switch {
   display: inline-flex; align-items: center; gap: 6px;
   margin-left: auto;
   font: 700 10px/1 var(--mono);
   text-transform: uppercase;
   letter-spacing: 0.12em;
   color: var(--ink-dim);
-}
-.theme-switch select {
+}.theme-switch select {
   appearance: none; -webkit-appearance: none;
   background: var(--bg);
   color: var(--ink);
@@ -350,9 +336,8 @@
     calc(100% - 7px) 50%;
   background-size: 5px 5px;
   background-repeat: no-repeat;
-}
-.theme-switch select:hover { border-color: var(--accent); color: var(--accent); }
-.theme-switch select:focus-visible { outline: 1px dashed var(--accent); outline-offset: 1px; }
+}.theme-switch select:hover { border-color: var(--accent); color: var(--accent); }.theme-switch select:focus-visible { outline: 1px dashed var(--accent); outline-offset: 1px; }
+
 :root[data-shape="soft"] .theme-switch select {
   border-radius: 6px;
   font-family: var(--body-system);
@@ -361,125 +346,28 @@
   font-weight: 500;
   font-size: 12px;
 }
+
 :root[data-shape="soft"] .theme-switch { font-family: var(--body-system); text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 12px; }
 
-/* ============================================================
-   SHAPE: scandi — clean, precise, sans-serif, 1px borders, 4px radius
-   ============================================================ */
-:root[data-shape="scandi"] {
-  --radius: 6px;
-  --radius-sm: 4px;
-  --shadow: none;
-  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-title: var(--font-body);
-}
-:root[data-shape="scandi"] .side-head h1,
-:root[data-shape="scandi"] #chat-title {
-  font: 600 14px/1.2 var(--font-body);
-  letter-spacing: -0.01em;
-  text-transform: none;
-}
-:root[data-shape="scandi"] .side-label,
-:root[data-shape="scandi"] #conn-label {
-  font: 600 10px/1 var(--font-body);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink-dim);
-}
-:root[data-shape="scandi"] .icon-btn,
-:root[data-shape="scandi"] .text-btn,
-:root[data-shape="scandi"] .primary-btn { border-radius: var(--radius-sm); }
-:root[data-shape="scandi"] .text-btn,
-:root[data-shape="scandi"] .primary-btn {
-  font: 500 12px/1 var(--font-body);
-  text-transform: none;
-  letter-spacing: 0;
-}
-:root[data-shape="scandi"] #recents-list li,
-:root[data-shape="scandi"] .machine,
-:root[data-shape="scandi"] .machine-bots li,
-:root[data-shape="scandi"] #session-list li {
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-sm);
-  background: var(--panel);
-  padding: 8px 10px;
-}
-:root[data-shape="scandi"] #recents-list li.active,
-:root[data-shape="scandi"] .machine-bots li.active,
-:root[data-shape="scandi"] #session-list li.active {
-  border-color: var(--accent);
-  background: var(--accent-2);
-  box-shadow: none;
-}
-:root[data-shape="scandi"] .machine-bots { border-left: none; padding: 4px 6px 6px 14px; }
-:root[data-shape="scandi"] .machine-bots li { padding: 6px 8px; }
-:root[data-shape="scandi"] .msg {
-  background: var(--panel);
-  border: 1px solid var(--rule);
-  border-left: none;
-  border-radius: var(--radius);
-  padding: 10px 14px;
-}
-:root[data-shape="scandi"] .msg.user {
-  background: var(--accent);
-  color: var(--accent-fg);
-  border-color: var(--accent);
-  border-right: none;
-}
-:root[data-shape="scandi"] .msg.assistant {
-  border-left: 3px solid var(--cyan);
-}
-:root[data-shape="scandi"] .msg .markdown pre {
-  border: 1px solid var(--rule);
-  border-left: 2px solid var(--accent);
-  border-radius: var(--radius-sm);
-  background: var(--bg-2);
-}
-:root[data-shape="scandi"] .typing { border: 1px solid var(--rule); border-radius: var(--radius); border-left: 3px solid var(--cyan); }
-:root[data-shape="scandi"] #input {
-  background: var(--panel);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  font-family: var(--font-body);
-  padding: 10px 14px;
-}
-:root[data-shape="scandi"] #input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-2); }
-:root[data-shape="scandi"] #send {
-  border: 1px solid var(--accent);
-  border-radius: var(--radius);
-  width: auto;
-  padding: 0 16px;
-  height: 38px;
-}
-:root[data-shape="scandi"] #send::after {
-  content: "Send";
-  font: 600 12px/1 var(--font-body);
-  text-transform: none;
-  letter-spacing: 0;
-}
-:root[data-shape="scandi"] .picker-card { border-radius: var(--radius); border: 1px solid var(--rule); }
-:root[data-shape="scandi"] .dot { border-radius: 50%; box-shadow: none; animation: none; }
-:root[data-shape="scandi"] .tool-card { border-radius: var(--radius-sm); }
-
-/* ============================================================
-   SHAPE: paper — serif print aesthetic
-   Brutalist decorations already hidden by the shared hide block.
-   ============================================================ */
 :root[data-shape="paper"] {
   --font-body: "Charter", "Iowan Old Style", "Palatino Linotype", "Palatino",
                "Georgia", "Times New Roman", serif;
   --font-title: "Charter", "Iowan Old Style", "Palatino", "Georgia", serif;
 }
+
 :root[data-shape="paper"] body { letter-spacing: normal; }
+
 :root[data-shape="paper"] .side-head h1 {
   font: italic 700 22px/1 var(--font-title);
   text-transform: none;
   letter-spacing: 0;
 }
+
 :root[data-shape="paper"] #chat-title {
   font: italic 600 17px/1.2 var(--font-title);
   letter-spacing: 0;
 }
+
 :root[data-shape="paper"] .side-label,
 :root[data-shape="paper"] #conn-label {
   font: 700 10px/1 var(--font-body);
@@ -487,6 +375,7 @@
   letter-spacing: 0.12em;
   text-transform: none;
 }
+
 :root[data-shape="paper"] .msg {
   border-left: none;
   border-bottom: 1px solid var(--rule);
@@ -496,12 +385,14 @@
   font-size: 15px;
   line-height: 1.65;
 }
+
 :root[data-shape="paper"] .msg.user,
 :root[data-shape="paper"] .msg.assistant {
   border-right: none;
   background: transparent;
   align-self: stretch;
 }
+
 :root[data-shape="paper"] .msg.user::before,
 :root[data-shape="paper"] .msg.assistant::before {
   /* Newspaper byline */
@@ -513,20 +404,26 @@
   color: var(--ink-dim);
   margin-bottom: 6px;
 }
+
 :root[data-shape="paper"] .msg.user::before { content: "— You" !important; text-align: right; }
+
 :root[data-shape="paper"] .msg.assistant::before { content: "— Agent" !important; }
+
 :root[data-shape="paper"] .msg-time {
   font: italic 11px/1 var(--font-body);
   letter-spacing: 0;
   text-transform: none;
   opacity: 0.7;
 }
+
 :root[data-shape="paper"] .msg .markdown a {
   color: var(--accent);
   text-decoration-style: dotted;
   text-underline-offset: 4px;
 }
+
 :root[data-shape="paper"] .msg .markdown a:hover { background: transparent; }
+
 :root[data-shape="paper"] .msg .markdown h1,
 :root[data-shape="paper"] .msg .markdown h2,
 :root[data-shape="paper"] .msg .markdown h3 {
@@ -535,15 +432,19 @@
   text-transform: none;
   letter-spacing: 0;
 }
+
 :root[data-shape="paper"] .msg .markdown blockquote {
   border-left: 3px double var(--rule-2);
   font-style: italic;
 }
+
 :root[data-shape="paper"] .msg .markdown pre,
 :root[data-shape="paper"] .msg .markdown code {
   font-family: var(--mono);
 }
+
 :root[data-shape="paper"] #composer { padding: 14px 18px; }
+
 :root[data-shape="paper"] #input {
   background: var(--panel);
   border: 1px solid var(--rule);
@@ -552,6 +453,7 @@
   font-size: 16px;
   border-radius: 2px;
 }
+
 :root[data-shape="paper"] #send {
   font: italic 700 13px/1 var(--font-title);
   letter-spacing: 0.04em;
@@ -559,11 +461,14 @@
   width: auto;
   padding: 0 18px;
 }
+
 :root[data-shape="paper"] #send::after { content: "Send" !important; font-family: var(--font-title); text-transform: none; letter-spacing: 0.04em; }
+
 :root[data-shape="paper"] .top-bar,
 :root[data-shape="paper"] .side-head {
   border-bottom: 1px solid var(--rule);
 }
+
 :root[data-shape="paper"] #recents-list li,
 :root[data-shape="paper"] .machine,
 :root[data-shape="paper"] .machine-bots li,
@@ -573,16 +478,21 @@
   border-left: 2px solid transparent;
   padding-left: 10px;
 }
+
 :root[data-shape="paper"] .machine { border: 1px solid var(--rule); padding: 2px; }
+
 :root[data-shape="paper"] #recents-list li.active,
 :root[data-shape="paper"] .machine-bots li.active,
 :root[data-shape="paper"] #session-list li.active {
   background: var(--accent-2);
   border-left-color: var(--accent);
 }
+
 :root[data-shape="paper"] .dot { border: 1px solid var(--ink); border-radius: 50%; box-shadow: none; animation: none; }
+
 :root[data-shape="paper"] .icon-btn,
 :root[data-shape="paper"] .text-btn { border-radius: 2px; font-family: var(--font-body); text-transform: none; letter-spacing: 0; }
+
 :root[data-shape="paper"] .primary-btn {
   border-radius: 2px;
   font: italic 700 12px/1 var(--font-title);
@@ -591,79 +501,38 @@
 }
 
 /* ============================================================
-   SHAPE: neon — rounded, glowing, 80s arcade
+   Hide brutalist decorations baked into base style.css.
+   (Applies to all themes — brutalist shape no longer ships.)
    ============================================================ */
-:root[data-shape="neon"] {
-  --radius: 10px;
-  --radius-sm: 6px;
-  --shadow: none;
+:root #sidebar::before,
+:root #sidebar::after,
+:root .side-head::after,
+:root .side-head h1::before,
+:root .side-head h1::after,
+:root .side-label::before,
+:root #recents-list li::before,
+:root #recents-list li.active::before,
+:root #recents-list .recent-recap::before,
+:root #session-list .session-recap::before,
+:root #conn-label::before,
+:root #conn-label::after,
+:root .machine-bots li::before,
+:root .top-bar::after,
+:root #chat-title::before,
+:root #recap-banner .recap-icon::before,
+:root .msg.user::before,
+:root .msg.assistant::before,
+:root .msg-time::before,
+:root .tool-card-header::before,
+:root .tool-card.subagent > .tool-card-header::before,
+:root #composer::before,
+:root #send::after,
+:root .picker-card::before,
+:root .picker-card::after,
+:root .picker-head strong::before,
+:root .msg .markdown h1::before,
+:root .msg .markdown h2::before,
+:root .msg .markdown h3::before {
+  content: none !important;
 }
-:root[data-shape="neon"] body { background-image: none; }
-:root[data-shape="neon"] #sidebar,
-:root[data-shape="neon"] .picker-card { border-radius: var(--radius); }
-:root[data-shape="neon"] .picker-card {
-  border-width: 1px;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
-}
-:root[data-shape="neon"] .msg {
-  border-radius: var(--radius);
-  border-left: none;
-  background: var(--panel);
-  padding: 10px 14px;
-  box-shadow: inset 0 0 0 1px var(--rule);
-}
-:root[data-shape="neon"] .msg.user {
-  border-right: none;
-  background: var(--accent-2);
-  box-shadow: inset 0 0 0 1px var(--accent);
-}
-:root[data-shape="neon"] .msg.assistant {
-  background: var(--panel);
-  box-shadow: inset 0 0 0 1px var(--rule-2);
-  border-left: 2px solid var(--cyan);
-}
-:root[data-shape="neon"] .typing {
-  border-radius: var(--radius);
-  border-left: 2px solid var(--cyan);
-}
-:root[data-shape="neon"] #input {
-  border-radius: 999px;
-  border: 1px solid var(--rule-2);
-  padding-left: 16px;
-}
-:root[data-shape="neon"] #input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-2);
-}
-:root[data-shape="neon"] #send {
-  border-radius: 50%;
-  width: 40px; height: 40px;
-}
-:root[data-shape="neon"] #send:not(:disabled):hover {
-  box-shadow: 0 0 14px var(--accent-2);
-}
-:root[data-shape="neon"] .icon-btn,
-:root[data-shape="neon"] .text-btn,
-:root[data-shape="neon"] .primary-btn { border-radius: var(--radius-sm); }
-:root[data-shape="neon"] .machine,
-:root[data-shape="neon"] #recents-list li,
-:root[data-shape="neon"] #session-list li {
-  border-radius: var(--radius-sm);
-  border-left: 2px solid transparent;
-}
-:root[data-shape="neon"] #recents-list li.active,
-:root[data-shape="neon"] .machine-bots li.active,
-:root[data-shape="neon"] #session-list li.active {
-  background: var(--accent-2);
-  border-color: var(--accent);
-}
-:root[data-shape="neon"] .dot.online {
-  box-shadow: 0 0 8px var(--accent);
-}
-:root[data-shape="neon"] .side-head h1 { font-family: var(--display); }
-:root[data-shape="neon"] .msg .markdown pre {
-  border-radius: 8px;
-  border-left: 2px solid var(--magenta);
-  background: rgba(0,0,0,0.25);
-}
-:root[data-shape="neon"] .tool-card { border-radius: 6px; }
+:root body { background-image: none; }
