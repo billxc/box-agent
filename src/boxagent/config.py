@@ -127,6 +127,10 @@ class AppConfig:
     notify_telegram_chat_id: str = ""
     notify_telegram_levels: list[str] = field(default_factory=lambda: ["error", "notify"])
     notify_telegram_categories: list[str] = field(default_factory=list)
+    # Filesystem path of the JSON-line log file written by main.py's logging
+    # FileHandler. Set by main.py after CLI arg / default resolution; read by
+    # the Web UI Logs page. None when no file handler is attached.
+    log_file: Path | None = None
 
 
 def _validate_workgroups(

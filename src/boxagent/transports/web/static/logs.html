@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BoxAgent Logs</title>
+<link rel="stylesheet" href="events.css">
+<link rel="stylesheet" href="events.themes.css">
+<script src="theme.js"></script>
+<style>
+  .logs-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 14px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  .logs-toolbar label {
+    font: 700 10px/1 var(--mono);
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-right: 6px;
+  }
+  .logs-toolbar select,
+  .logs-toolbar input[type="text"],
+  .logs-toolbar input[type="number"] {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border-2);
+    padding: 5px 8px;
+    font: 12px/1 var(--mono);
+  }
+  .logs-toolbar input[type="text"] { min-width: 200px; }
+  .logs-toolbar input[type="number"] { width: 70px; }
+  .logs-toolbar .level-chips { display: inline-flex; gap: 6px; }
+  .logs-toolbar .level-chips label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 6px;
+    border: 1px solid var(--border-2);
+    background: var(--bg-2);
+    cursor: pointer;
+    font: 700 10px/1 var(--mono);
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+  .logs-toolbar .level-chips input { margin: 0; }
+  .logs-toolbar button {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border-2);
+    padding: 5px 12px;
+    cursor: pointer;
+    font: 700 11px/1 var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .logs-toolbar button:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-2);
+  }
+  .logs-toolbar button[disabled] {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .logs-status {
+    font: 11px/1.4 var(--mono);
+    color: var(--dim);
+    padding: 6px 14px;
+    background: var(--bg-2);
+    border-bottom: 1px solid var(--border);
+  }
+  .logs-table-wrap {
+    flex: 1;
+    overflow: auto;
+    min-height: 0;
+  }
+  table.logs-table {
+    width: 100%;
+    border-collapse: collapse;
+    font: 12px/1.45 var(--mono);
+  }
+  table.logs-table th {
+    position: sticky;
+    top: 0;
+    background: var(--panel);
+    color: var(--dim);
+    font: 700 10px/1 var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    z-index: 5;
+  }
+  table.logs-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    color: var(--text);
+  }
+  table.logs-table tr:hover td { background: var(--panel-2); }
+  td.col-time   { white-space: nowrap; color: var(--muted); width: 175px; }
+  td.col-level  { white-space: nowrap; width: 70px; }
+  td.col-logger { white-space: nowrap; color: var(--info); width: 200px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+  td.col-msg    {
+    color: var(--text);
+    word-break: break-word;
+    white-space: pre-wrap;
+    max-height: 4.5em;
+    overflow: hidden;
+    cursor: pointer;
+    position: relative;
+  }
+  td.col-msg.expanded { max-height: none; }
+  td.col-msg.expanded::after { content: ""; }
+
+  .level-INFO    { color: var(--info); }
+  .level-WARNING { color: var(--notify); }
+  .level-ERROR   { color: var(--error); font-weight: 700; }
+  .level-DEBUG   { color: var(--debug); }
+
+  tr.row-raw td { color: var(--muted); font-style: italic; }
+
+  .logs-pager {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    font: 11px/1 var(--mono);
+    color: var(--dim);
+  }
+  .logs-pager .pager-buttons { display: flex; gap: 8px; }
+  body.logs-page { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+  body.logs-page main { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+</style>
+</head>
+<body class="logs-page">
+<header class="topbar">
+  <nav class="topnav">
+    <a href="/">Chat</a>
+    <a href="events.html">Events</a>
+    <a href="schedules.html">Schedules</a>
+    <a href="logs.html" class="active">Logs</a>
+  </nav>
+  <div class="actions">
+    <button id="reload">↻ Reload</button>
+    <span id="theme-slot"></span>
+  </div>
+</header>
+
+<main>
+  <div class="logs-toolbar">
+    <label for="machine-select">Machine</label>
+    <select id="machine-select"></select>
+
+    <label>Levels</label>
+    <div class="level-chips" id="level-chips">
+      <label><input type="checkbox" value="DEBUG"> DEBUG</label>
+      <label><input type="checkbox" value="INFO" checked> INFO</label>
+      <label><input type="checkbox" value="WARNING" checked> WARNING</label>
+      <label><input type="checkbox" value="ERROR" checked> ERROR</label>
+    </div>
+
+    <label for="grep-input">Grep</label>
+    <input type="text" id="grep-input" placeholder="substring (case-insensitive)">
+
+    <label for="limit-input">Limit</label>
+    <input type="number" id="limit-input" min="10" max="2000" value="200">
+
+    <button id="apply">Apply</button>
+  </div>
+
+  <div class="logs-status" id="status">Loading…</div>
+
+  <div class="logs-table-wrap">
+    <table class="logs-table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Level</th>
+          <th>Logger</th>
+          <th>Message</th>
+        </tr>
+      </thead>
+      <tbody id="logs-body"></tbody>
+    </table>
+  </div>
+
+  <div class="logs-pager">
+    <span id="pager-info">—</span>
+    <div class="pager-buttons">
+      <button id="prev-page" disabled>◀ Newer</button>
+      <button id="next-page" disabled>Older ▶</button>
+    </div>
+  </div>
+</main>
+
+<script src="logs.js"></script>
+<script>BoxAgentTheme.mount(document.getElementById("theme-slot"), { label: false });</script>
+</body>
+</html>

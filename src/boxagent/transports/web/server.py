@@ -181,6 +181,8 @@ class WebHttpServer:
         app.router.add_get("/api/events/machines", self._handle_events_machines)
         app.router.add_post("/api/events/{event_id}/read", self._handle_events_mark_read)
         app.router.add_post("/api/events/read_all", self._handle_events_read_all)
+        # Raw log file (boxagent.log)
+        app.router.add_get("/api/logs", self._handle_logs_query)
         # Schedule run-log routes
         app.router.add_get("/api/schedules", self._handle_schedules_list)
         app.router.add_get("/api/schedules/runs", self._handle_schedules_runs)
@@ -1093,6 +1095,46 @@ class WebHttpServer:
         ids = [e.id for e in events if e.id is not None]
         n = self.event_bus._store.mark_read(ids)
         return web.json_response({"ok": True, "updated": n})
+
+    async def _handle_logs_query(self, request: web.Request) -> web.Response:
+        """Tail of <local-dir>/boxagent.log for the Web UI Logs page.
+
+        Query params:
+          machine — target machine_id (forwarded via cluster RPC if not local)
+          limit   — max entries to return (default 200, capped at 2000)
+          offset  — entries to skip from end (for pagination, default 0)
+          levels  — comma-separated level filter (case-insensitive)
+          grep    — case-insensitive substring filter
+        """
+        if not self._authorized(request):
+            return self._unauthorized()
+        machine = request.query.get("machine", "").strip()
+        if machine:
+            response = await self.cluster_rpc.dispatch_machine_request(machine, "GET", "/api/logs", request)
+            if response is not None:
+                return response
+        from boxagent.transports.web.log_file import read_tail
+        try:
+            limit = max(1, min(2000, int(request.query.get("limit", "200"))))
+        except ValueError:
+            limit = 200
+        try:
+            offset = max(0, int(request.query.get("offset", "0")))
+        except ValueError:
+            offset = 0
+        levels_raw = request.query.get("levels", "").strip()
+        levels = [s.strip() for s in levels_raw.split(",") if s.strip()] if levels_raw else None
+        grep = request.query.get("grep", "").strip() or None
+        log_file = getattr(self.config, "log_file", None)
+        if not log_file:
+            return web.json_response({"ok": True, "lines": [], "has_more": False, "log_file": None})
+        result = read_tail(Path(log_file), limit=limit, offset=offset, levels=levels, grep=grep)
+        return web.json_response({
+            "ok": True,
+            "lines": result["lines"],
+            "has_more": result["has_more"],
+            "log_file": str(log_file),
+        })
 
     async def _handle_events_stream(self, request: web.Request) -> web.StreamResponse:
         if not self._authorized(request):

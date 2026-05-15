@@ -115,6 +115,7 @@ def main():
 
     try:
         config = load_config(config_dir, box_agent_dir=args.box_agent_dir, local_dir=local_dir)
+        config.log_file = Path(log_file) if log_file else None
     except ConfigError as e:
         logger.error("Config error: %s", e)
         sys.exit(1)

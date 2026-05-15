@@ -158,7 +158,7 @@ Gateway ──┬─ AgentManager ──── per-bot Router + Backend + Pool
           ├─ InternalApiServer  内部 aiohttp（/api/peer /api/workgroup /api/schedule）
           ├─ McpHttpServer     uvicorn streamable-http（/mcp/{base,admin,telegram,peer}）
           └─ WebHttpServer     Web UI + cluster RPC 路由
-                              （/api/events、/api/schedules，跨机走
+                              （/api/events、/api/schedules、/api/logs，跨机走
                                 cluster_rpc.dispatch_machine_request）
 
 Router → Backend：通过 AgentBackend Protocol 解耦
