@@ -205,7 +205,7 @@
 
 新链路：`Router.get_peers` callable → `AgentEnv.peers` tuple → `build_session_context` 渲染。WorkgroupManager 通过 `_peer_provider` 钩子拿 Gateway 的 helper。
 
-**已知不足**: guest 节点的 `_guest_registry` 是 None — 只能看到本机 workgroup，看不到 host 上的或其他 guest 上的 workgroup。需要 guest→host 反向 RPC 查询补齐（yait #67）。
+**后续修复（yait #67，已 closed）**: 早期 guest 节点的 `_guest_registry` 是 None，只能看到本机 workgroup。改为 host 在 topology 变更时主动 push `peers_snapshot` 给所有 guest，guest 缓存到 `guest_client.remote_peers`，`build_peer_descriptors` 在 guest 端读这份缓存。
 
 ## 2026-05-09 — Gateway 8 mixin → 显式组合 / 两阶段 DI（yait #86，进行中）
 

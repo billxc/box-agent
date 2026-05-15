@@ -96,7 +96,7 @@ src/boxagent/
 │   ├── host_election.py     主备投票 + failover
 │   ├── topology_service.py  本机标识 / peer 描述符 / machine snapshot
 │   ├── peer_service.py      send_to_peer 跨机投递（local + RPC fallback）
-│   ├── rpc.py               ClusterRpc（host→guest HTTP/SSE 转发）
+│   ├── rpc.py               ClusterRpc（host↔guest 双向 HTTP/SSE 转发；guest 经 host 两跳到其他 guest）
 │   ├── http_routes.py       cluster 路由挂载（/api/guest/ws、/api/peer/send）
 │   ├── tunnel.py            host 端 devtunnel 生命周期（spawn / 重启）
 │   └── devtunnel.py         devtunnel CLI 包装（resolve url、auth）

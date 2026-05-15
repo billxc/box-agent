@@ -377,8 +377,10 @@ def test_build_peer_descriptors_combines_local_and_remote():
 
 
 def test_build_peer_descriptors_guest_node_returns_local_only():
-    """On a guest node guest_registry is None — return local workgroups
-    only, until guest→host peer-list RPC lands (yait #67)."""
+    """Single mode (host_election is None — neither guest_registry nor
+    guest_client exist) falls back to local workgroups only. Real guest
+    mode reads cross-cluster peers from guest_client.remote_peers (pushed
+    by host's peers_snapshot)."""
     from boxagent.cluster.topology_service import TopologyService
     from boxagent.config import AppConfig, WorkgroupConfig
 
