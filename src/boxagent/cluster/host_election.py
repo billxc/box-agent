@@ -48,6 +48,7 @@ from . import devtunnel
 from .guest_client import GuestClient
 from .registry import GuestRegistry
 from .tunnel import ClusterTunnel
+from boxagent.log import Category, log
 
 if TYPE_CHECKING:
     from ..config import AppConfig
@@ -176,6 +177,11 @@ class HostElection:
                     "probe_says='%s', expected='%s') — demoting",
                     tunnel_dead, upstream, my_machine_id,
                 )
+                log.warning(
+                    Category.CLUSTER_HOST_DEMOTED,
+                    f"lost host status (tunnel_dead={tunnel_dead}, probe='{upstream}')",
+                    machine_id=my_machine_id, tunnel_dead=tunnel_dead, probe=upstream,
+                )
                 await self._become_guest(upstream or "")
                 # Re-tick immediately so we either promote again (if no other
                 # host appeared) or settle into the new upstream.
@@ -193,6 +199,11 @@ class HostElection:
                         logger.info(
                             "host election: demoting; higher-priority candidate '%s' is here",
                             sess_machine_id,
+                        )
+                        log.info(
+                            Category.CLUSTER_HOST_DEMOTED,
+                            f"demoting; higher-priority '{sess_machine_id}' joined",
+                            machine_id=my_machine_id, displaced_by=sess_machine_id,
                         )
                         await self._become_guest(sess_machine_id)
                         return
@@ -238,11 +249,21 @@ class HostElection:
             url = await devtunnel.resolve_url(tunnel, port=self.config.web_port or 9292)
         except Exception as e:
             logger.debug("host election: tunnel resolve failed: %s", e)
+            log.debug(
+                Category.CLUSTER_HOST_PROBE_FAIL,
+                "probe: tunnel URL resolve failed",
+                tunnel=tunnel, error=repr(e),
+            )
             return ""
         try:
             token = await devtunnel.connect_token(tunnel)
         except Exception as e:
             logger.debug("host election: devtunnel token mint failed: %s", e)
+            log.debug(
+                Category.CLUSTER_HOST_PROBE_FAIL,
+                "probe: devtunnel token mint failed",
+                tunnel=tunnel, error=repr(e),
+            )
             return ""
         if self._http is None:
             self._http = aiohttp.ClientSession()
@@ -261,6 +282,11 @@ class HostElection:
                 return str(data.get("machine_id") or "")
         except Exception as e:
             logger.debug("host election: probe /api/version failed: %r", e)
+            log.debug(
+                Category.CLUSTER_HOST_PROBE_FAIL,
+                "probe: /api/version failed",
+                tunnel=tunnel, error=repr(e),
+            )
             return ""
 
     # ── transitions ──
@@ -280,6 +306,13 @@ class HostElection:
                 url = await tunnel.start()
             except Exception as e:
                 logger.warning("host election: promote failed (tunnel host busy?): %s", e)
+                log.warning(
+                    Category.CLUSTER_TUNNEL_ERROR,
+                    "promote failed (tunnel host busy?)",
+                    machine_id=self.config.machine_id,
+                    tunnel=self.config.cluster_tunnel,
+                    error=repr(e),
+                )
                 # Fall back to guest mode — someone else owns the tunnel.
                 await self._ensure_guest_locked("")
                 return
@@ -300,6 +333,11 @@ class HostElection:
             self.state = "host"
             self.current_upstream = ""
             logger.info("host election: promoted to active host (tunnel %s)", url)
+            log.info(
+                Category.CLUSTER_HOST_ELECTED,
+                f"promoted to active host (tunnel {self.config.cluster_tunnel})",
+                machine_id=self.config.machine_id, tunnel=self.config.cluster_tunnel, url=url,
+            )
             # Refresh sidebar for whoever's currently watching.
             await self._fire_topology_change(None)
 

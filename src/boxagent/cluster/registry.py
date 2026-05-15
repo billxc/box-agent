@@ -41,6 +41,8 @@ from typing import AsyncIterator
 from aiohttp import ClientSession, web
 from aiohttp.web import WebSocketResponse
 
+from boxagent.log import Category, log
+
 logger = logging.getLogger(__name__)
 
 
@@ -313,6 +315,11 @@ class GuestRegistry:
                 })
         except Exception as e:
             logger.warning("host: inbound rpc %s %s failed: %s", method, path, e)
+            log.warning(
+                Category.CLUSTER_HOST_RPC_FAIL,
+                f"inbound rpc {method} {path} failed",
+                machine_id=session.machine_id, method=method, path=path, error=repr(e),
+            )
             try:
                 await session.ws.send_json({
                     "type": "rpc_resp", "id": rpc_id, "status": 502,
@@ -336,6 +343,7 @@ class GuestRegistry:
                     payload = json.loads(msg.data)
                 except Exception:
                     logger.warning("guest ws: invalid JSON frame")
+                    log.warning(Category.CLUSTER_PROTOCOL_ERROR, "guest ws: invalid JSON frame")
                     continue
                 t = payload.get("type")
 
@@ -374,17 +382,32 @@ class GuestRegistry:
                             pass
                     self.sessions[machine_id] = session
                     logger.info("guest '%s' connected with %d bot(s)", machine_id, len(bots))
+                    log.info(
+                        Category.CLUSTER_GUEST_JOINED,
+                        f"guest '{machine_id}' joined with {len(bots)} bot(s)",
+                        machine_id=machine_id, bot_count=len(bots),
+                    )
                     await ws.send_json({"type": "welcome"})
                     if self.on_guest_attached is not None:
                         try:
                             self.on_guest_attached(machine_id, session)
                         except Exception as e:
                             logger.warning("on_guest_attached failed: %s", e)
+                            log.warning(
+                                Category.CLUSTER_PROTOCOL_ERROR,
+                                "on_guest_attached failed",
+                                machine_id=machine_id, error=repr(e),
+                            )
                     if self.on_topology_change is not None:
                         try:
                             await self.on_topology_change(machine_id)
                         except Exception as e:
                             logger.warning("on_topology_change(hello) failed: %s", e)
+                            log.warning(
+                                Category.CLUSTER_PROTOCOL_ERROR,
+                                "on_topology_change(hello) failed",
+                                machine_id=machine_id, error=repr(e),
+                            )
                     continue
 
                 if t == "ping":
@@ -426,11 +449,21 @@ class GuestRegistry:
                             await self.on_topology_change(session.machine_id)
                         except Exception as e:
                             logger.warning("on_topology_change(bots_update) failed: %s", e)
+                            log.warning(
+                                Category.CLUSTER_PROTOCOL_ERROR,
+                                "on_topology_change(bots_update) failed",
+                                machine_id=session.machine_id, error=repr(e),
+                            )
                 elif self.on_unknown_frame is not None:
                     try:
                         await self.on_unknown_frame(session.machine_id, payload)
                     except Exception as e:
                         logger.warning("on_unknown_frame(%s) failed: %s", t, e)
+                        log.warning(
+                            Category.CLUSTER_PROTOCOL_ERROR,
+                            f"on_unknown_frame({t}) failed",
+                            machine_id=session.machine_id, frame_type=str(t), error=repr(e),
+                        )
         finally:
             if session is not None and not session._closed:
                 self.sessions.pop(session.machine_id, None)
@@ -444,14 +477,29 @@ class GuestRegistry:
                     "last_seen": time.time(),
                 }
                 logger.info("guest '%s' disconnected", session.machine_id)
+                log.info(
+                    Category.CLUSTER_GUEST_LEFT,
+                    f"guest '{session.machine_id}' left",
+                    machine_id=session.machine_id,
+                )
                 if self.on_guest_detached is not None:
                     try:
                         self.on_guest_detached(session.machine_id)
                     except Exception as e:
                         logger.warning("on_guest_detached failed: %s", e)
+                        log.warning(
+                            Category.CLUSTER_PROTOCOL_ERROR,
+                            "on_guest_detached failed",
+                            machine_id=session.machine_id, error=repr(e),
+                        )
                 if self.on_topology_change is not None:
                     try:
                         await self.on_topology_change(None)
                     except Exception as e:
                         logger.warning("on_topology_change(disconnect) failed: %s", e)
+                        log.warning(
+                            Category.CLUSTER_PROTOCOL_ERROR,
+                            "on_topology_change(disconnect) failed",
+                            machine_id=session.machine_id, error=repr(e),
+                        )
         return ws

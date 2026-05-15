@@ -36,6 +36,8 @@ import logging
 import shutil
 from dataclasses import dataclass, field
 
+from boxagent.log import Category, log
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_TUNNEL_NAME = "boxagent-cluster"
@@ -106,6 +108,11 @@ class ClusterTunnel:
 
         self._url = url
         logger.info("Cluster tunnel '%s' ready: %s", tunnel_id, url)
+        log.info(
+            Category.CLUSTER_TUNNEL_UP,
+            f"cluster tunnel '{tunnel_id}' ready",
+            tunnel_id=tunnel_id, name=self.name, port=self.port, url=url,
+        )
         return url
 
     async def _spawn_host_proc(self) -> asyncio.subprocess.Process:
@@ -150,6 +157,12 @@ class ClusterTunnel:
                 "Cluster tunnel '%s' host process (pid=%d) exited rc=%s; respawning in %.1fs",
                 self.name, process.pid, return_code, self._respawn_backoff_seconds,
             )
+            log.warning(
+                Category.CLUSTER_TUNNEL_ERROR,
+                f"cluster tunnel '{self.name}' host process exited rc={return_code}",
+                name=self.name, pid=process.pid, return_code=return_code,
+                respawn_in=self._respawn_backoff_seconds,
+            )
             try:
                 await asyncio.sleep(self._respawn_backoff_seconds)
             except asyncio.CancelledError:
@@ -166,6 +179,11 @@ class ClusterTunnel:
                 logger.error(
                     "Cluster tunnel '%s' respawn failed: %s — retrying after backoff",
                     self.name, e,
+                )
+                log.error(
+                    Category.CLUSTER_TUNNEL_ERROR,
+                    f"cluster tunnel '{self.name}' respawn failed",
+                    name=self.name, error=repr(e),
                 )
 
     async def stop(self) -> None:
@@ -185,6 +203,11 @@ class ClusterTunnel:
                         process.kill()
                     except ProcessLookupError:
                         pass
+        log.info(
+            Category.CLUSTER_TUNNEL_DOWN,
+            f"cluster tunnel '{self.name}' stopped",
+            name=self.name, tunnel_id=self._tunnel_id,
+        )
         # Cancel the monitor only after we've torn down the process, so the
         # monitor's `await process.wait()` returns (clean exit, no respawn).
         task = self._monitor_task
@@ -265,6 +288,11 @@ class ClusterTunnel:
                 "Multiple tunnels named '%s' across regions: %s. Using '%s'. "
                 "Delete the unused one(s) with `devtunnel delete <tunnelId>`.",
                 self.name, ids, chosen,
+            )
+            log.warning(
+                Category.CLUSTER_TUNNEL_ERROR,
+                f"multiple tunnels named '{self.name}' across regions; using '{chosen}'",
+                name=self.name, tunnel_ids=ids, chosen=chosen,
             )
             return chosen or None
         tunnel_id = str(matches[0].get("tunnelId") or "")

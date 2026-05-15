@@ -19,6 +19,8 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from boxagent.log import Category, log
+
 if TYPE_CHECKING:
     from boxagent.cluster.host_election import HostElection
     from boxagent.config import AppConfig
@@ -198,6 +200,11 @@ class TopologyService:
                 await session.ws.send_json({"type": "peers_snapshot", "peers": peers})
             except Exception as e:
                 logger.warning("peers_snapshot push to %s failed: %s", machine_id, e)
+                log.warning(
+                    Category.CLUSTER_TOPOLOGY_PUSH_FAIL,
+                    f"peers_snapshot push to {machine_id} failed",
+                    machine_id=machine_id, kind="peers", error=repr(e),
+                )
 
     async def on_topology_change(self, changed_machine_id: str | None) -> None:
         await self.push_peers_snapshot_to_sats(changed_machine_id)
@@ -234,6 +241,11 @@ class TopologyService:
                 await session.ws.send_json({"type": "machines_snapshot", "machines": filtered})
             except Exception as e:
                 logger.warning("machines_snapshot push to %s failed: %s", machine_id, e)
+                log.warning(
+                    Category.CLUSTER_TOPOLOGY_PUSH_FAIL,
+                    f"machines_snapshot push to {machine_id} failed",
+                    machine_id=machine_id, kind="machines", error=repr(e),
+                )
 
     def remote_session_for(self, machine_id: str, bot: str):
         if self.guest_registry is None:

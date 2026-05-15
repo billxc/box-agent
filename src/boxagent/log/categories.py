@@ -33,6 +33,24 @@ class Category:
     CLUSTER_PEER_UP = "cluster.peer.up"
     CLUSTER_PEER_DOWN = "cluster.peer.down"
 
+    CLUSTER_HOST_ELECTED = "cluster.host.elected"
+    CLUSTER_HOST_DEMOTED = "cluster.host.demoted"
+    CLUSTER_HOST_PROBE_FAIL = "cluster.host.probe_fail"
+    CLUSTER_HOST_RPC_FAIL = "cluster.host.rpc_fail"
+
+    CLUSTER_TUNNEL_UP = "cluster.tunnel.up"
+    CLUSTER_TUNNEL_DOWN = "cluster.tunnel.down"
+    CLUSTER_TUNNEL_ERROR = "cluster.tunnel.error"
+
+    CLUSTER_GUEST_JOINED = "cluster.guest.joined"
+    CLUSTER_GUEST_LEFT = "cluster.guest.left"
+    CLUSTER_GUEST_CONNECTED = "cluster.guest.connected"
+    CLUSTER_GUEST_DISCONNECTED = "cluster.guest.disconnected"
+    CLUSTER_GUEST_RPC_FAIL = "cluster.guest.rpc_fail"
+
+    CLUSTER_PROTOCOL_ERROR = "cluster.protocol.error"
+    CLUSTER_TOPOLOGY_PUSH_FAIL = "cluster.topology.push_fail"
+
     SYSTEM_STARTUP = "system.startup"
     SYSTEM_SHUTDOWN = "system.shutdown"
 

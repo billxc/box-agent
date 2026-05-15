@@ -14,6 +14,7 @@ from aiohttp import ClientSession, WSMsgType
 
 from . import devtunnel
 from .registry import _PendingResponse
+from boxagent.log import Category, log
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +211,11 @@ class GuestClient:
                         )
                     except Exception as e:
                         logger.warning("guest: tunnel URL resolution failed: %s", e)
+                        log.warning(
+                            Category.CLUSTER_TUNNEL_ERROR,
+                            "guest: tunnel URL resolution failed",
+                            tunnel=effective_tunnel_name, error=repr(e),
+                        )
                         await asyncio.sleep(min(backoff, 60.0))
                         backoff = min(backoff * 1.5, 60.0)
                         continue
@@ -219,6 +225,11 @@ class GuestClient:
                     devtunnel_token = await devtunnel.connect_token(effective_tunnel_name)
                 except Exception as e:
                     logger.warning("guest: devtunnel token mint failed: %s", e)
+                    log.warning(
+                        Category.CLUSTER_TUNNEL_ERROR,
+                        "guest: devtunnel token mint failed",
+                        tunnel=effective_tunnel_name, error=repr(e),
+                    )
                     await asyncio.sleep(min(backoff, 60.0))
                     backoff = min(backoff * 1.5, 60.0)
                     continue
@@ -236,11 +247,21 @@ class GuestClient:
                         "bots": self.bot_provider(),
                     })
                     logger.info("guest: hello sent (machine_id=%s)", self.machine_id)
+                    log.info(
+                        Category.CLUSTER_GUEST_CONNECTED,
+                        f"guest connected to host (tunnel {effective_tunnel_name})",
+                        machine_id=self.machine_id, tunnel=effective_tunnel_name, ws_url=ws_url,
+                    )
                     if self.on_connect is not None:
                         try:
                             self.on_connect(self)
                         except Exception as e:
                             logger.warning("guest: on_connect failed: %s", e)
+                            log.warning(
+                                Category.CLUSTER_PROTOCOL_ERROR,
+                                "guest: on_connect callback failed",
+                                machine_id=self.machine_id, error=repr(e),
+                            )
                     try:
                         await self._serve(ws)
                     finally:
@@ -249,10 +270,20 @@ class GuestClient:
                                 self.on_disconnect()
                             except Exception as e:
                                 logger.warning("guest: on_disconnect failed: %s", e)
+                                log.warning(
+                                    Category.CLUSTER_PROTOCOL_ERROR,
+                                    "guest: on_disconnect callback failed",
+                                    machine_id=self.machine_id, error=repr(e),
+                                )
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.warning("guest: connection failed: %s", e)
+                log.warning(
+                    Category.CLUSTER_GUEST_DISCONNECTED,
+                    "guest: connection failed",
+                    machine_id=self.machine_id, tunnel=effective_tunnel_name, error=repr(e),
+                )
             finally:
                 self._ws = None
                 # Reject any in-flight reverse RPCs so callers see a clean
@@ -324,6 +355,11 @@ class GuestClient:
                         await self.on_unknown_frame(payload)
                     except Exception as e:
                         logger.warning("guest: on_unknown_frame failed: %s", e)
+                        log.warning(
+                            Category.CLUSTER_PROTOCOL_ERROR,
+                            "guest: on_unknown_frame failed",
+                            machine_id=self.machine_id, error=repr(e),
+                        )
             elif msg.type in (WSMsgType.CLOSED, WSMsgType.ERROR):
                 break
 
@@ -375,6 +411,11 @@ class GuestClient:
                 })
         except Exception as e:
             logger.warning("guest: rpc %s %s failed: %s", method, path, e)
+            log.warning(
+                Category.CLUSTER_GUEST_RPC_FAIL,
+                f"guest: rpc {method} {path} failed",
+                machine_id=self.machine_id, method=method, path=path, error=repr(e),
+            )
             try:
                 await ws.send_json({
                     "type": "rpc_resp", "id": rpc_id, "status": 502,
