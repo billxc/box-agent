@@ -537,21 +537,39 @@ class WebHttpServer:
     async def _handle_admin_cluster_restart(self, request: web.Request) -> web.Response:
         if not self._authorized(request):
             return self._unauthorized()
-        if self.topology.guest_registry is None:
-            return web.json_response(
-                {"ok": False, "error": "not in host mode"}, status=400,
-            )
-        include_self = request.query.get("include_self") in ("1", "true", "yes")
-        target_filter: list[str] | None = None
         try:
             data = await request.json()
+        except Exception:
+            data = {}
+        if self.topology.guest_registry is None:
+            # Guest mode: only the host owns the cluster registry, so forward
+            # the request upstream and surface its response. Lets the per-machine
+            # Restart button work from any node's UI.
+            guest_client = self.topology.guest_client
+            if guest_client is None:
+                return web.json_response(
+                    {"ok": False, "error": "no host connection"}, status=503,
+                )
+            try:
+                result = await guest_client.fetch_host_json(
+                    "/api/admin/cluster_restart",
+                    query=dict(request.query),
+                    method="POST",
+                    body=data if isinstance(data, dict) else {},
+                )
+            except Exception as e:
+                return web.json_response(
+                    {"ok": False, "error": f"host fwd failed: {e}"}, status=502,
+                )
+            return web.json_response(result)
+        include_self = request.query.get("include_self") in ("1", "true", "yes")
+        target_filter: list[str] | None = None
+        if isinstance(data, dict):
             if not include_self:
                 include_self = bool(data.get("include_self"))
             raw = data.get("machines")
             if isinstance(raw, list) and raw:
                 target_filter = [str(m) for m in raw]
-        except Exception:
-            pass
         results: dict[str, object] = {}
         for machine_id, session in list(self.topology.guest_registry.sessions.items()):
             if target_filter is not None and machine_id not in target_filter:
