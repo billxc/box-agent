@@ -2,16 +2,11 @@
 
 先让 Codex CLI 自己在命令行里 work，再接 BoxAgent。
 
-## Backend Options
+## Backend
 
-BoxAgent supports two Codex backends:
+BoxAgent 当前只支持一种 Codex 后端：`codex-cli`（每 turn spawn `codex exec --json`，靠 `thread_id` 保持 session 连续）。
 
-| Backend | `ai_backend` | How it works | Dependencies |
-|---------|-------------|--------------|-------------|
-| **Codex CLI** | `codex-cli` | Spawns `codex exec --json` per turn | Only `codex` CLI |
-| **Codex ACP** | `codex-acp` | Long-running ACP connection | `codex-acp` binary |
-
-**codex-cli** is simpler — just install the Codex CLI and go. **codex-acp** gives richer tool call lifecycle events and native session persistence, but requires the `codex-acp` bridge.
+> 历史上还有 `codex-acp`（ACP 长连接），已于 2026-04-23 删除（commit `01d2558`）。旧 config 写 `ai_backend: codex-acp` 会被 `config.py` 拒绝并报 ConfigError，提示改为 `codex-cli`。
 
 ## Install
 
@@ -83,12 +78,11 @@ codex login --with-api-key
 ```yaml
 bots:
   my-bot:
-    ai_backend: codex-cli    # 或 codex-acp
+    ai_backend: codex-cli
     model: gpt-5.4
 ```
 
 ## Notes
 
 - `codex-cli` 后端每 turn 启动一个 `codex exec` 进程，通过 `thread_id` 维持 session 连续性
-- `codex-acp` 后端维持长连接，tool call 事件更丰富
-- BoxAgent 只是调用已经配好的 Codex CLI/ACP backend
+- BoxAgent 只是调用已经配好的 Codex CLI

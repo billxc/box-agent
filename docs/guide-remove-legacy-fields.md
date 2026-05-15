@@ -1,6 +1,12 @@
 # Guide: Remove Legacy Fields from base_cli
 
-> **[IN PROGRESS — 部分 step 已完成（`bot_token` 大部分清理完）。剩余清理项需要逐一对照当前代码确认状态。这份指南还有效，但要重新核对完成度。]**
+> **[完成 — 2026-05-15 核对]**：所有目标字段已从代码中删除。
+> - `agent/base_cli.py` 不再有 `bot_token` / `is_workgroup_admin` 字段（grep 全无）。
+> - `agent/acp_process.py` 整个文件随 `codex-acp` backend 一起删除（commit `01d2558`，2026-04-23）。
+> - `is_workgroup_admin` 现在唯一来源是 `AgentEnv.is_workgroup_admin`（`agent_env.py:125`），调用点都是 `env.is_workgroup_admin` 或 `getattr(env, "is_workgroup_admin", False)`。
+> - 历史 caller fix 已落地（compact 路径透 env、/backend 切换路径不再 `getattr(old_proc, "bot_token", "")`）。
+>
+> 这份指南保留作为重构记录；不再有 TODO。
 
 ## Goal
 

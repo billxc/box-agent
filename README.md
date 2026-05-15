@@ -12,7 +12,7 @@ Single-machine, single-agent is just the smallest deployment shape; the full pro
 - Maintainer-oriented codebase guide: `docs/codebase-guide.md` ← start here for "how does this code work"
 - Design decisions log: `docs/decisions.md`
 - Backend setup: `docs/auth-api-keys.md`, `docs/claude-setup.md`, `docs/codex-setup.md`
-- Workgroup (multi-agent) design: `docs/workgroup-design.md`
+- Architecture snapshot: `docs/current-architecture.md`
 
 ## Architecture
 
@@ -30,9 +30,12 @@ Single-machine, single-agent is just the smallest deployment shape; the full pro
                           └────────┬─────────┘
                                    ↓
                           ┌──────────────────┐
-                          │   Backend CLI    │   Claude / Codex
-                          │   (subprocess)   │
-                          └──────────────────┘
+                          │  Agent Backend   │   Claude / Codex
+                          │  (CLI subprocess │   (4 backend kinds:
+                          │   or SDK in-proc)│    claude-cli /
+                          └──────────────────┘    codex-cli /
+                                                  agent-sdk-claude /
+                                                  agent-sdk-copilot)
 
            ── one machine running one or more bots ──
 
@@ -261,10 +264,14 @@ Examples: `/sessions chromium 7d backend:codex-cli p2`, `/sessions grep:pineappl
 
 Every BoxAgent process exposes a browser chat at `http://127.0.0.1:9292/` by default. Vanilla HTML/CSS/JS, mobile-first, dark/light auto.
 
-- Lists every web-enabled bot/workgroup admin in a sidebar.
+- Lists every web-enabled bot/workgroup admin in a sidebar. In a cluster the sidebar groups bots by machine with online/offline status; the local machine gets a "this" badge.
 - Per-chat sessions (telegram chat id, web uuid) are surfaced together; click a session to load its full transcript (chained across `/compact` boundaries).
-- Streaming output renders incrementally as the backend produces tokens.
+- Streaming output renders incrementally as the backend produces tokens; tool calls render as foldable cards (subagent-spawned tool calls are dimmed + indented).
+- "Set as main" link on any session — pins it as the bot's **main chat**. Peer messages (`send_to_peer` between workgroup admins) and admin heartbeats land in this chat. Persisted to `Storage.set_main_chat_id`.
 - Dedicated "Resume Claude session" picker: lists every session in `~/.claude/projects/*` grouped by project, picks a session, resumes via `claude --resume` while routing the chat through the original cwd.
+- Per-node and cluster-wide one-click restart buttons (calls `/api/admin/restart` and `/api/admin/cluster_restart`).
+- Events / Schedules pages alongside Chat — browse the cross-machine event log (SQLite-backed via `EventStore`) and schedule run records.
+- Theme system: shape × palette two axes (brutalist / phosphor / ink / soft / paper / neon / scandi × 7 palettes incl. nord, gruvbox, synthwave, matrix, amber, mono, newsprint).
 
 Token-gated for non-localhost access:
 
@@ -390,21 +397,20 @@ workgroups:
     heartbeat_interval_seconds: 900   # admin self-driver: see below
     display_heartbeat: false           # show heartbeat events in web UI
     allowed_users: [YOUR_ID]
-    specialists:                       # optional — can also create at runtime
-      reviewer:
-        ai_backend: claude-cli
-        workspace: ~/projects/team/review
-        template: reviewer             # optional — see Templates below
-      researcher:
-        ai_backend: codex-cli
-        workspace: ~/projects/team/research
 ```
 
-### Static vs dynamic specialists
+The admin spawns at startup. Specialists are created at runtime by the admin via the `create_specialist` MCP tool (with optional `template:`), and persisted to `~/.boxagent/local/workgroup_specialists.yaml` so they reload on the next BoxAgent start.
 
-Specialists can be defined statically in `config.yaml` (above) **or** created at runtime by the admin via the `create_specialist` MCP tool. Dynamic specialists are persisted to `~/.boxagent/local/workgroup_specialists.yaml` and reload on next BoxAgent start.
+> **Note:** static `specialists:` blocks under `workgroups.<name>` in `config.yaml` are no longer parsed (removed in commit `e352940`, 2026-04-30) — all specialists are dynamic.
 
-Use `delete_specialist` / `reset_specialist` MCP tools to manage them. Use `list_templates` to see available templates.
+### Managing specialists
+
+Use the admin's MCP tools:
+
+- `create_specialist` — spawn a new specialist (optionally seeded from a template)
+- `delete_specialist` — tear down + remove its workspace
+- `reset_specialist` — clear its session for a fresh start
+- `list_specialists` / `list_templates` / `get_specialist_status`
 
 ### Heartbeat
 
@@ -575,6 +581,21 @@ src/boxagent/
 ├── watchdog.py              # Per-bot process liveness monitor
 ├── agent_env.py             # AgentEnv (per-turn agent context)
 ├── utils.py                 # Shared helpers
+├── web_error_middleware.py  # aiohttp middleware: handler errors → event log
+│
+├── log/                     # Public log facade (business code's only entry to events)
+│   ├── facade.py              # bind_event_bus / get_logger
+│   ├── categories.py          # Category constants
+│   └── null.py                # Null sink before bind
+│
+├── events/                  # EventBus + SQLite EventStore (implementation; do NOT import directly)
+│   ├── models.py              # Event dataclass + Level
+│   ├── storage.py             # SQLite-backed EventStore
+│   ├── bus.py                 # EventBus (pub/sub + persist)
+│   ├── sync.py / sync_wiring  # Cross-machine event replication
+│   ├── retention.py           # Retention sweeper
+│   ├── telegram_notifier.py   # Standalone Telegram push subscriber
+│   └── web_stream.py          # Web UI SSE subscriber
 │
 ├── agent/                   # Backend adapters + per-bot orchestration
 │   ├── protocol.py            # AgentBackend Protocol + BACKEND_KINDS
@@ -587,6 +608,7 @@ src/boxagent/
 │   ├── sdk_claude_process.py  # claude_agent_sdk (in-process)
 │   ├── sdk_copilot_process.py # GitHub Copilot SDK (in-process)
 │   ├── callback.py            # AgentCallback Protocol
+│   ├── session_info.py        # SessionInfo dataclass (capacity / recap / cwd / git_branch)
 │   └── mcp_endpoints.py       # pick_mcp_endpoints() — shared MCP wiring
 │
 ├── transports/              # External interaction (channels)
@@ -612,6 +634,7 @@ src/boxagent/
 │   ├── base_pool.py           # BaseSessionPool (chat ↔ backend mapping)
 │   ├── pool.py                # SessionPool (pre-warmed, shared)
 │   ├── raw_pool.py            # RawSessionPool (per-chat lazy)
+│   ├── info_builder.py        # build_session_info() — assembles SessionInfo from history + storage
 │   └── browser/               # /sessions + /resume helpers (merges history + Storage)
 │
 ├── history/                 # Read-only adapters over backends' native session storage
@@ -623,7 +646,7 @@ src/boxagent/
 │
 ├── tools/                   # Unified MCP tool registry
 │   ├── registry.py            # @boxagent_tool + tools_for() / env_capabilities()
-│   ├── builtin/               # Tool definitions (admin/peer/schedule/sessions/telegram_media)
+│   ├── builtin/               # Tool definitions (admin/peer/schedule/sessions/telegram_media/log_event)
 │   └── adapters/              # Backend-specific MCP wrappers
 │       ├── mcp_http.py          # registry → FastMCP HTTP (claude-cli / codex-cli)
 │       ├── claude_sdk.py        # registry → SdkMcpServer (agent-sdk-claude)

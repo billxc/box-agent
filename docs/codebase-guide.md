@@ -5,7 +5,9 @@
 
 ## 一句话
 
-Telegram / Web UI / iOS / MCP 进来 → Router 鉴权 + 派活 → AgentBackend（Claude CLI / Codex CLI / Agent SDK Claude / Agent SDK Copilot）出回复 → 流式回到原 channel。Gateway 是装配根，Workgroup 是 admin↔specialist 多 bot 编排，Cluster 把多机串起来。
+Telegram / Web UI（含 iOS app via Web SSE）/ MCP 进来 → Router 鉴权 + 派活 → AgentBackend（Claude CLI / Codex CLI / Agent SDK Claude / Agent SDK Copilot）出回复 → 流式回到原 channel。Gateway 是装配根，Workgroup 是 admin↔specialist 多 bot 编排，Cluster 把多机串起来。
+
+> **iOS 客户端在 `ios/BoxAgent/`**（Swift app），不是独立 transport：它消费 Web 的 `/api/sse`、`/api/history`、`/api/sessions` 等接口，等价于一个移动 Web client。本文档不展开 iOS 端实现。
 
 ## 顶层结构
 
@@ -18,6 +20,21 @@ src/boxagent/
 ├── utils.py                 杂项 helpers
 ├── doctor.py                `boxagent doctor` 子命令
 ├── watchdog.py              进程死掉自动重启
+├── web_error_middleware.py  aiohttp middleware：handler 异常 → event log
+├── log/                     公共 log facade（业务代码写事件唯一入口）
+│   ├── facade.py            bind_event_bus / get_logger
+│   ├── categories.py        Category 常量（含 cluster.host.* / cluster.tunnel.* /
+│   │                         cluster.guest.* / cluster.protocol.* / cluster.topology.*）
+│   └── null.py              NullLogger（未 bind 时的空实现）
+├── events/                  EventBus / EventStore 实现（业务代码禁止 import）
+│   ├── models.py            Event dataclass + Level
+│   ├── storage.py           SQLite-backed EventStore
+│   ├── bus.py               EventBus（pub/sub + 持久化）
+│   ├── sync.py              EventSyncer（跨机复制）
+│   ├── sync_wiring.py       绑定到 HostElection 生命周期
+│   ├── retention.py         retention sweeper
+│   ├── telegram_notifier.py 独立 Telegram 推送订阅者
+│   └── web_stream.py        web UI SSE 订阅者
 ├── router/
 │   ├── core.py              Router（鉴权 / 命令 / dispatch）
 │   ├── callback.py          ChannelCallback / TextCollector / log_turn
@@ -35,11 +52,12 @@ src/boxagent/
 │   ├── agent_manager.py     AgentManager（per-bot 生命周期、watchdog）
 │   ├── workspace.py         ensure_git_repo / sync_skills
 │   ├── base_cli.py          CLI 类 backend 共享基类
-│   ├── claude_process.py    Claude CLI（subprocess）
+│   ├── claude_process.py    Claude CLI subprocess —— **已退役，仅作占位**（`claude-cli` 被 `backend_factory` 静默重定向到 `sdk_claude_process.py`）
 │   ├── codex_process.py     Codex CLI（subprocess）
 │   ├── sdk_claude_process.py   claude_agent_sdk（in-process）
 │   ├── sdk_copilot_process.py  GitHub Copilot SDK（in-process）
 │   ├── callback.py          AgentCallback Protocol
+│   ├── session_info.py      SessionInfo dataclass（per-session 容量 / recap / cwd / git_branch 快照）
 │   └── mcp_endpoints.py     pick_mcp_endpoints() — 决定哪些 MCP server 挂上去
 ├── transports/
 │   ├── base.py              Channel Protocol / IncomingMessage / Attachment / StreamHandle
@@ -51,6 +69,7 @@ src/boxagent/
 │   ├── base_pool.py         BaseSessionPool（chat_id ↔ backend 绑定）
 │   ├── pool.py              SessionPool（预热 N 个 backend 共享）
 │   ├── raw_pool.py          RawSessionPool（per-chat 懒生成；raw bot 用）
+│   ├── info_builder.py      build_session_info() — 聚合 history/storage 装配 SessionInfo
 │   └── browser/             /sessions /resume 浏览器（合并 history + Storage）
 ├── history/
 │   ├── protocol.py          AgentHistory Protocol（只读 transcript adapter）
@@ -65,7 +84,8 @@ src/boxagent/
 │   │   ├── schedule.py      schedule_list / add / show / run / logs / run_detail
 │   │   ├── peer.py          send_to_peer（含 send_to_peer:<name> 动态别名）
 │   │   ├── admin.py         workgroup admin 工具（send_to_agent / list_specialists / ...）
-│   │   └── telegram_media.py send_photo / send_document / send_video / ...
+│   │   ├── telegram_media.py send_photo / send_document / send_video / ...
+│   │   └── log_event.py     log_event（让 agent 自己写结构化事件入 EventStore）
 │   └── adapters/            backend-specific MCP 包装
 │       ├── mcp_http.py      registry → FastMCP HTTP（claude-cli / codex-cli）
 │       ├── claude_sdk.py    registry → SdkMcpServer（agent-sdk-claude）
@@ -102,13 +122,13 @@ src/boxagent/
 ## 想读懂的话，按顺序读
 
 **核心 dispatch 链路**：
-1. `gateway.py` —— Gateway 装配 8 个 manager；看 `start()` 知道启动顺序
+1. `gateway.py` —— Gateway 装配 manager 们（AgentManager / WorkgroupManager / TopologyService / PeerService / ClusterRpc / ClusterHttpRoutes / WebHttpServer / Scheduler / InternalApiServer / McpHttpServer / HostElection；外加 EventBus binding）；看 `start()` 知道启动顺序
 2. `transports/base.py` —— Channel Protocol、IncomingMessage 数据类（这是核心契约）
 3. `agent_env.py` —— 每条消息生成的 AgentEnv 快照
 4. `router/core.py` —— `handle_message` → `_dispatch_one`，主流程
 5. `agent/protocol.py` —— AgentBackend Protocol（4 个 backend 共同接口）
 6. `agent/backend_factory.py` —— `create_backend()` 按 `ai_backend` 选实现
-7. `agent/claude_process.py` —— 主参考实现（其它三个类似）
+7. `agent/sdk_claude_process.py` —— 主参考实现（`claude-cli` 也被静默重定向到它；其它三个 backend 形态类似）
 
 **workgroup**：
 8. `workgroup/manager.py` —— admin/specialist 创建、`send_to_specialist()` 派活
@@ -154,7 +174,7 @@ sessions/browser → history → 后端原生 transcript 文件
 
 | ai_backend | 进程模型 | session 持久化 | MCP 挂载方式 |
 |---|---|---|---|
-| `claude-cli` | 每轮 spawn `claude` subprocess | `--resume <session_id>`（Claude SDK 自管） | `--mcp-config` JSON |
+| `claude-cli` | **当前已静默重定向到 `agent-sdk-claude`**（commit `fd3b5d8`）。`claude_process.py` 文件保留但运行时不再实例化 | 走 SDK 路径，跟 claude-cli 共享 `~/.claude/` | 走 SDK 路径 |
 | `codex-cli` | 每轮 spawn `codex exec` subprocess | `codex exec resume <session_id>`（Codex 自管） | `-c mcp_servers.X.url=...` 配置 override |
 | `agent-sdk-claude` | 长驻 in-process（`claude_agent_sdk.query`） | 跟 claude-cli 共享 ~/.claude/ | `SdkMcpServer` 直接注入 SDK |
 | `agent-sdk-copilot` | 长驻 in-process（`CopilotClient`） | 自己管的 session 文件 | 原生 Tool 对象列表 |
@@ -233,7 +253,6 @@ async def my_tool(args: dict, ctx: ToolContext) -> str:
 
 ## 已知坑
 
-1. **`mcp-port.txt` 偶发被外部清掉**：`claude_process.py` / `codex_process.py` 都靠这个文件 gate 整个 MCP 挂载块，丢了就静默无 MCP。重启 boxagent 重写。
-2. **Codex CLI 的 MCP wiring 曾被遗忘**（commit 2aa1ae7→0b9d0a5），现已恢复
-3. **`workgroup_role="specialist"`** 字符串在代码里**从来没有人写**——specialist Router 默认 `workgroup_role=""`，`AgentEnv.is_specialist` property 永远 False。设计上 specialist Router 跟普通 Router 不区分（被派活时凭 `IncomingMessage.via_workgroup` 判断）
-4. **`_compact_summaries` / `_resume_contexts`** 是 Router 实例的内存 dict，跨进程重启丢失
+1. **`mcp-port.txt` 偶发被外部清掉 → codex-cli backend 静默无 MCP**：`codex_process.py` 靠这个文件 gate 整个 MCP 挂载块。重启 boxagent 重写。仅影响 codex-cli 这一条 CLI 路径——`claude-cli` 已静默重定向到 `agent-sdk-claude`（`claude_process.py` 不再实例化）；SDK 后端走 in-process MCP，不依赖此文件。
+2. **`Router.workgroup_role` 三态**：`""` 普通 bot / `"admin"` workgroup 管理员 / `"specialist"` specialist。曾经有一段时间 specialist 路径漏设、`AgentEnv.is_specialist` 是 dead code，已于 commit `ab9ab9d`（2026-05-10）修复（`workgroup/manager.py:193`）。如再次 grep 不到 specialist 赋值或下游分支失活，先查这条路径有没有回退。
+3. **`_compact_summaries` / `_resume_contexts`** 是 Router 实例的内存 dict，跨进程重启丢失

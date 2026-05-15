@@ -3,42 +3,64 @@
 > 这份文档**不提改进方案**，只描述系统**现在实际怎么跑**。
 > 用于在动手重构前让我们俩看到同一份地图。
 
+> ⚠️ **新人请注意**：本文件主体（4 层结构图、3 条信息流时序图、Router/AgentEnv 字段清单）是 **2026-05-10 的快照**，之后只加了下方"2026-05-15 增量更新"段、未重写正文。如果要看**当前**真实结构以 `docs/codebase-guide.md` 为准；本文价值在于看 5-10 时点的细节、字段清单、跨界点分析。
+
+> **2026-05-15 增量更新**（不重写全文，只点出主要新增项；权威以 `codebase-guide.md` 为准）：
+> - 新增 `boxagent/log/` facade + `boxagent/events/`（EventBus + SQLite EventStore + 跨机 sync + retention + Telegram notifier + web SSE stream）。Gateway 启动时 `bind_event_bus`；HostElection 生命周期里挂 `EventSyncer`。
+> - Web UI 多页化：Chat / Events / Schedules，三页统一 top-left 导航；主题系统拆为 shape × palette 两轴；CSS 拆 `style.css` + `events.css` + `*.themes.css`。
+> - Cluster：host election 提升前 retry probe 防 split-brain；ClusterTunnel 改用 `devtunnel list -j` 解析跨 region 同名 tunnel，重复时 warn + 选 active。
+> - Compact：BUG88/89 修复——session 链式保存 + raw-read jsonl 跨 `/compact` 保留历史；`/compact` prompt 对齐 Claude CLI 结构化格式。
+> - SDK Claude：dowhen `<return>` instrumentation 透出 timestamp/cwd/gitBranch/recap；`requires-python` 升 3.12。
+> - Backend：`claude-cli` 静默重定向到 `agent-sdk-claude`（旧 config 兼容）。
+
 ---
 
 ## 1. 四层结构 + 真实依赖方向
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Gateway (gateway.py)                                   │
-│  ── 装配根 ── 持有 8 个 manager，做 Phase-1/Phase-2 DI  │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│  Gateway (gateway.py)                                           │
+│  ── 装配根 ── 持有 manager 们，做 Phase-1/Phase-2 DI            │
+│  ── 启动时调 bind_event_bus(EventBus(EventStore))               │
+└─────────────────────────────────────────────────────────────────┘
                     │
-        ┌───────────┼───────────────────┬─────────────┐
-        ▼           ▼                   ▼             ▼
-   AgentManager  WorkgroupManager   TopologyService  PeerService
-   (per-bot)    (admin+specialist)  (cluster状态)    (peer 消息)
-        │           │                   │             │
-        │           ▼                   │             │
-        │      启动多个独立的 Router ─┐ │             │
-        │      + Backend + Pool       │ │             │
-        ▼                              │ │             │
-   单个 Router ──────────────────────┐ │ │             │
-                                     ▼ ▼ ▼             │
-                    ┌──────────────────────────────┐   │
-                    │  核心 6 件套                  │   │
-                    │  router/  agent/  sessions/  │   │
-                    │  transports/ scheduler/  ... │   │
-                    └──────────────────────────────┘   │
-                                     ▲                 │
-                                     │ workgroup_mgr   │
-                                     └─────────────────┘
-                                       (setter 注入)
+   ┌────────────┬───┴───────────────┬──────────────┬─────────────┐
+   ▼            ▼                   ▼              ▼             ▼
+AgentManager WorkgroupManager  TopologyService  PeerService  HostElection
+(per-bot)    (admin+specialist) (cluster状态)   (peer 消息)  ＋ EventSyncer
+   │            │                   │              │             │
+   │            ▼                   │              │             │
+   │       启动多个独立的 Router ─┐ │              │             │
+   │       + Backend + Pool       │ │              │             │
+   ▼                              │ │              │             │
+单个 Router ─────────────────────┐│ │              │             │
+                                 ▼▼ ▼              │             │
+                ┌─────────────────────────────────┐│             │
+                │  核心 6 件套                    ││             │
+                │  router/  agent/  sessions/     ││             │
+                │  transports/ scheduler/ ...     ││             │
+                └─────────────────────────────────┘│             │
+                                  ▲                │             │
+                                  │ workgroup_mgr  │             │
+                                  └────────────────┘             │
+                                    (setter 注入)                │
+                                                                 │
+   横切：boxagent.log facade ──► EventBus ──► EventStore (SQLite)│
+                                       │                         │
+                                       ├─► WebStream (SSE → web) │
+                                       ├─► TelegramNotifier      │
+                                       └─► EventSyncer ──────────┘
+                                           (跨机复制，host↔guest)
+
+iOS app（ios/BoxAgent/）─► Web HTTP/SSE API（与 web UI 同源），不算独立 transport
 ```
 
 **关键事实**：
 - AgentManager 和 WorkgroupManager **平级**，互不知道彼此存在；都被 Gateway 持有
 - WorkgroupManager 内部**自己组装** Router/Backend/Pool 三件套（不复用 AgentManager 的）
 - TopologyService、PeerService 是 cluster 包的"外露 API"，挂在 Gateway 上
+- **EventBus 是横切**：业务代码经 `boxagent.log` 写入，三类订阅者各自消费（web SSE / Telegram / 跨机 sync）。业务代码禁止直接 import `boxagent.events`
+- iOS app 不是独立 transport，复用 Web 的 HTTP + SSE 接口
 
 ---
 
@@ -315,13 +337,13 @@ class ChannelCallback:
 
 没有命名空间检查，`wg:` 前缀冲突就靠"约定"。
 
-### b) Router.workgroup_role 的三态名不副实
+### b) Router.workgroup_role 的三态
 
 - `""` → 普通 bot
 - `"admin"` → workgroup 管理员
-- `"specialist"` → **代码里从未真正赋值**
+- `"specialist"` → workgroup specialist
 
-`WorkgroupManager._create_specialist_agent` 创建 specialist router 时只让 `workgroup_role` 留默认 `""`——**这是有意的**，specialist Router 跟普通 Router 在路由层不区分。区分依据是 `IncomingMessage.via_workgroup`（派活时设 True），不是 router 角色字段。所以 `AgentEnv.is_specialist` property 永远返回 False，是 dead code，可以删。
+> **更新（2026-05-10，commit `ab9ab9d`）**：曾经有一段历史是 `"specialist"` 从未被赋值（`_create_specialist_agent` 留默认 `""`），导致 `AgentEnv.is_specialist` 永远返回 False、被视为 dead code。该问题已修：`WorkgroupManager._create_specialist_agent` 现在显式 `workgroup_role="specialist"`（`workgroup/manager.py:193`），`is_specialist` 是活代码。下游 system-prompt / MCP gating 可以放心据此分支。
 
 ### c) `via_workgroup` 在 peer message 上是 False
 
@@ -358,7 +380,7 @@ class ChannelCallback:
 | 入口 channel | telegram/web | web | "internal"（dispatch_sync） | "internal" |
 | `IncomingMessage.via_workgroup` | False | False（用户来时）/ True（specialist 回调时） | True | **False** ⚠️ |
 | `IncomingMessage.trusted` | False | False / True（回调时） | True | True |
-| `Router.workgroup_role` | `""` | `"admin"` | **`""`**（有意，详见 5(b)） |  |
+| `Router.workgroup_role` | `""` | `"admin"` | **`"specialist"`**（修于 ab9ab9d，详见 5(b)） |  |
 | `AgentEnv.is_workgroup_admin` | False | True | False | True（admin 在收 peer msg） |
 | backend MCP servers | base + (telegram?) | base + admin + (telegram?) + peer | base | base + admin + peer |
 | chat_id 形态 | telegram int / web uuid | web uuid + main-chat-id | `wg:<name>` | main-chat-id |
@@ -368,7 +390,7 @@ class ChannelCallback:
 ## 已识别的疑似 bug 风险点（不是确证 bug）
 
 1. **peer message 上 `via_workgroup` 没设**——见 5(c)
-2. **`AgentEnv.is_specialist` 是 dead code**——见 5(b)，specialist Router 故意不设 `workgroup_role`，property 永远 False，可以删
+2. **~~`AgentEnv.is_specialist` 是 dead code~~** —— 已修于 commit `ab9ab9d`（2026-05-10）：specialist Router 现在显式 `workgroup_role="specialist"`，property 正常返回 True。
 3. **`from_bot` / `sender` 跨机投递无验证**——见 5(f)
 4. **三条入口（user / specialist callback / peer / heartbeat）都打 admin router 同一 chat_id**，pending message buffer 行为复杂——见流 B + 流 C 都用 `main_chat_id_provider`
 5. **`_compact_summaries` / `_resume_contexts` 是内存 dict**，admin router 跨进程重启丢失（你之前提过）
