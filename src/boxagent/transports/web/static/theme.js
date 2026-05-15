@@ -10,11 +10,11 @@
   const DEFAULT = "phosphor";
 
   const THEMES = [
-    { id: "phosphor",  label: "Phosphor",  shape: "brutalist", palette: "phosphor"  },
-    { id: "synthwave", label: "Synthwave", shape: "neon",      palette: "synthwave" },
-    { id: "nord",      label: "Nord",      shape: "scandi",    palette: "nord"      },
-    { id: "paper",     label: "Paper",     shape: "paper",     palette: "paper"     },
-    { id: "soft",      label: "Soft",      shape: "soft",      palette: "apple"     },
+    { id: "phosphor",  label: "Brutalist · Phosphor", shape: "brutalist", palette: "phosphor"  },
+    { id: "synthwave", label: "Neon · Synthwave",     shape: "neon",      palette: "synthwave" },
+    { id: "nord",      label: "Scandi · Nord",        shape: "scandi",    palette: "nord"      },
+    { id: "paper",     label: "Paper",                shape: "paper",     palette: "paper"     },
+    { id: "soft",      label: "Soft · Apple",         shape: "soft",      palette: "apple"     },
   ];
 
   function find(id) { return THEMES.find(t => t.id === id); }
