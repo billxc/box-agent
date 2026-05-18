@@ -173,6 +173,20 @@ class TestReadTailMalformed:
         assert len(result["lines"]) == 1
         assert result["lines"][0]["msg"] == "message 0"
 
+    def test_raw_pseudo_level_included_when_selected(self, tmp_path: Path) -> None:
+        log = tmp_path / "boxagent.log"
+        log.write_text(
+            "garbage one\n"
+            + json.dumps(_entry(0, level="ERROR")) + "\n"
+            + "garbage two\n",
+            encoding="utf-8",
+        )
+        result = read_tail(log, limit=10, levels=["ERROR", "RAW"])
+        assert [
+            line.get("msg") or line.get("raw")
+            for line in result["lines"]
+        ] == ["garbage two", "message 0", "garbage one"]
+
 
 class TestReadTailLargeFile:
     def test_chunked_read_across_chunk_boundary(self, tmp_path: Path) -> None:

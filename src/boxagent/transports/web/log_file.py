@@ -57,8 +57,11 @@ def _parse(line: str) -> dict:
 def _matches(entry: dict, levels_lower: set[str] | None, grep_lower: str | None) -> bool:
     if levels_lower is not None:
         if "raw" in entry:
-            return False
-        if str(entry.get("level", "")).lower() not in levels_lower:
+            # Treat unparseable lines as their own pseudo-level "raw"; users
+            # opt into them with the RAW chip on the Logs page.
+            if "raw" not in levels_lower:
+                return False
+        elif str(entry.get("level", "")).lower() not in levels_lower:
             return False
     if grep_lower is not None:
         if "raw" in entry:

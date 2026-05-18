@@ -106,12 +106,26 @@ def main():
     if log_file:
         handlers.append(logging.FileHandler(str(log_file), encoding="utf-8"))
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format='{"time":"%(asctime)s","level":"%(levelname)s",'
-               '"logger":"%(name)s","msg":"%(message)s"}',
-        handlers=handlers,
-    )
+    class _JsonLineFormatter(logging.Formatter):
+        # Hand-rolled JSON templates break when msg contains quotes or newlines
+        # (every aiohttp.access line and every traceback). Use json.dumps so the
+        # Logs page can parse every line cleanly.
+        def format(self, record: logging.LogRecord) -> str:
+            import json as _json
+            payload = {
+                "time": self.formatTime(record, self.datefmt),
+                "level": record.levelname,
+                "logger": record.name,
+                "msg": record.getMessage(),
+            }
+            if record.exc_info:
+                payload["msg"] += "\n" + self.formatException(record.exc_info)
+            return _json.dumps(payload, ensure_ascii=False)
+
+    formatter = _JsonLineFormatter()
+    for handler in handlers:
+        handler.setFormatter(formatter)
+    logging.basicConfig(level=logging.INFO, handlers=handlers)
 
     try:
         config = load_config(config_dir, box_agent_dir=args.box_agent_dir, local_dir=local_dir)
