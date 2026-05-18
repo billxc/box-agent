@@ -50,8 +50,15 @@ class ClusterTunnel:
 
     _host_proc: asyncio.subprocess.Process | None = field(default=None, repr=False)
     _monitor_task: asyncio.Task | None = field(default=None, repr=False)
+    _health_task: asyncio.Task | None = field(default=None, repr=False)
     _stopping: bool = field(default=False, repr=False)
     _respawn_backoff_seconds: float = field(default=2.0, repr=False)
+    # Periodic cloud-side health check. The child process can stay alive
+    # while its WS to the devtunnel cloud silently drops (token expiry,
+    # network blip, devtunnel internal error). Without this, the cluster
+    # falls off the map until the next BoxAgent restart. See yait #96.
+    _health_check_interval_seconds: float = field(default=30.0, repr=False)
+    _health_failure_threshold: int = field(default=2, repr=False)
     _url: str = ""
     _tunnel_id: str = ""
 
@@ -137,6 +144,7 @@ class ClusterTunnel:
             self.name, self._host_proc.pid,
         )
         self._monitor_task = asyncio.create_task(self._monitor_host())
+        self._health_task = asyncio.create_task(self._health_check_loop())
 
     async def _monitor_host(self) -> None:
         """Watch the host process; on unintended exit, log + respawn with backoff.
@@ -186,6 +194,65 @@ class ClusterTunnel:
                     name=self.name, error=repr(e),
                 )
 
+    async def _health_check_loop(self) -> None:
+        """Poll devtunnel cloud for `hostConnections`; terminate the child
+        after K consecutive zero readings so the existing respawn path runs.
+
+        The child being alive (`process.wait()` not returning) is not the
+        same as the tunnel being reachable — the WS to devtunnel cloud can
+        drop without the CLI process noticing. Without this loop the
+        cluster goes silently dark until the next BoxAgent restart.
+
+        K > 1 tolerates a single transient `devtunnel show` blip; we only
+        act on a sustained zero. See yait #96 for the incident.
+        """
+        consecutive_zeros = 0
+        while not self._stopping:
+            try:
+                await asyncio.sleep(self._health_check_interval_seconds)
+            except asyncio.CancelledError:
+                return
+            if self._stopping:
+                return
+            if not self._tunnel_id:
+                continue
+            try:
+                info = await self._show(self._tunnel_id)
+            except Exception as e:
+                logger.debug("health check `devtunnel show` raised: %s", e)
+                continue
+            if not info:
+                continue
+            try:
+                host_connections = int(info.get("hostConnections") or 0)
+            except (TypeError, ValueError):
+                host_connections = 0
+            if host_connections > 0:
+                consecutive_zeros = 0
+                continue
+            consecutive_zeros += 1
+            if consecutive_zeros < self._health_failure_threshold:
+                continue
+            process = self._host_proc
+            if process is None:
+                continue
+            logger.warning(
+                "Cluster tunnel '%s' has 0 host connections after %d checks; "
+                "terminating child (pid=%d) to force respawn",
+                self.name, consecutive_zeros, process.pid,
+            )
+            log.warning(
+                Category.CLUSTER_TUNNEL_ERROR,
+                f"cluster tunnel '{self.name}' zombie detected (hostConnections=0); respawning child",
+                name=self.name, tunnel_id=self._tunnel_id, pid=process.pid,
+                consecutive_zeros=consecutive_zeros,
+            )
+            try:
+                process.terminate()
+            except ProcessLookupError:
+                pass
+            consecutive_zeros = 0
+
     async def stop(self) -> None:
         self._stopping = True
         process = self._host_proc
@@ -216,6 +283,14 @@ class ClusterTunnel:
             task.cancel()
             try:
                 await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        health_task = self._health_task
+        self._health_task = None
+        if health_task is not None and not health_task.done():
+            health_task.cancel()
+            try:
+                await health_task
             except (asyncio.CancelledError, Exception):
                 pass
 

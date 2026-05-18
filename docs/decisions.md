@@ -388,3 +388,16 @@ CLI 子进程那条路准备废弃。为了不强迫所有用户立刻改 `~/.bo
 - >1 个 → 直接 raise，错误信息列出冲突的 tunnelId 并要求人工 `devtunnel delete`
 
 **为什么不自动删**：删错了 region 等于把 host 自己关掉。人工成本低、自动化风险高。
+
+
+## 2026-05-18 — ClusterTunnel 加云端健康检查（yait #96）
+
+`_monitor_host` 只 `await process.wait()`，子进程没死它就当一切正常。实际上 `devtunnel host` 进程可以保持存活但和 devtunnel 云端的 WS 早就断了（token 过期 / 网络抖动 / devtunnel 内部错误）。一次线上事故：host 子进程跑了 3 天，pid 在、CPU 在涨，devtunnel 云端 `hostConnections=0` 26 小时，所有 guest 拨 `/api/guest/ws` 收 404，集群整体掉线。
+
+**改动**：`_launch_supervised` 同时启动 `_health_check_loop`，周期 30s 跑 `devtunnel show <tunnel_id> -j` 读 `hostConnections`，连续 K=2 次为 0 就 `terminate()` 子进程，复用既有 respawn 路径。
+
+**为什么 K=2 不 K=1**：`devtunnel show` 自己偶发会失败/慢响应，单次 0 可能是 transient，连续两次才有信号意义。
+
+**为什么不改 `is_alive` 语义**：zombie 检测后立刻自愈（terminate → wait 返回 → respawn），整个流程内 monitor task 一直在跑，`is_alive()` 保持 True 正合 HostElection 的预期 —— 不希望瞬时抖动触发 demote/promote 抖动。
+
+**测试**：`tests/unit/test_cluster_tunnel.py::TestZombieDetection` 三例覆盖 K 次零→respawn / 持续健康→不动 / 单次零→不动。
