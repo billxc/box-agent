@@ -293,6 +293,42 @@ class TestGateway:
         assert linked == ["demo-skill"]
         assert (workspace / ".agents" / "skills" / "demo-skill").is_symlink()
 
+    def test_sync_skills_falls_back_to_junction_on_windows(self, tmp_path, monkeypatch):
+        """When os.symlink raises WinError 1314, fall back to a directory junction
+        (mklink /J) so plain Windows users without Developer Mode still work."""
+        from pathlib import Path
+        from types import SimpleNamespace
+        from boxagent.agent import workspace as workspace_mod
+
+        monkeypatch.setattr(workspace_mod, "_is_windows", lambda: True)
+
+        def fake_symlink_to(self, target, target_is_directory=False):
+            raise OSError(1314, "A required privilege is not held by the client")
+
+        monkeypatch.setattr(Path, "symlink_to", fake_symlink_to)
+
+        recorded = []
+
+        def fake_run(args, **kw):
+            recorded.append(args)
+            # mklink /J <link> <target>  — emulate by mkdir on link path
+            link_path = Path(args[4])
+            link_path.mkdir(parents=True, exist_ok=True)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(workspace_mod.subprocess, "run", fake_run)
+
+        workspace = tmp_path / "workspace"
+        source_root = tmp_path / "skills-src"
+        (source_root / "demo-skill").mkdir(parents=True)
+
+        linked = workspace_mod.sync_skills(str(workspace), [str(source_root)])
+
+        assert linked == ["demo-skill"]
+        assert recorded, "expected mklink /J fallback to be invoked"
+        assert recorded[0][:3] == ["cmd", "/c", "mklink"]
+        assert "/J" in recorded[0]
+
     async def test_start_http_uses_tcp(self, tmp_path):
         from boxagent.gateway import Gateway
         from aiohttp import web

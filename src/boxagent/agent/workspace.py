@@ -9,9 +9,43 @@ helper — it knows BoxAgent backend conventions.
 """
 
 import logging
+import os
+import subprocess
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
+def _link_dir(link: Path, target: Path) -> None:
+    """Create a directory symlink, falling back to a Windows junction.
+
+    Why: ``os.symlink`` on Windows raises ``WinError 1314`` unless the user
+    is admin or has Developer Mode enabled, which is not the default. A
+    directory junction (``mklink /J``) is functionally equivalent for
+    read-only skill discovery and works without elevation on NTFS.
+    """
+    try:
+        link.symlink_to(target)
+        return
+    except OSError as symlink_error:
+        if not _is_windows():
+            raise
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip()
+            raise OSError(
+                f"symlink failed ({symlink_error}); "
+                f"junction fallback also failed: {detail}"
+            ) from symlink_error
+        logger.debug("Created junction (symlink not permitted): %s -> %s", link, target)
 
 
 def ensure_git_repo(workspace: Path) -> bool:
@@ -56,6 +90,9 @@ def sync_skills(
         if entry.is_symlink() and not entry.exists():
             logger.info("Removing broken skill symlink: %s", entry)
             entry.unlink()
+        elif _is_windows() and os.path.isjunction(entry) and not entry.exists():
+            logger.info("Removing broken skill junction: %s", entry)
+            os.rmdir(entry)
 
     linked = []
     for src_dir in extra_skill_dirs:
@@ -71,6 +108,6 @@ def sync_skills(
                 link.unlink()
             elif link.exists():
                 continue  # don't overwrite real dirs
-            link.symlink_to(child)
+            _link_dir(link, child)
             linked.append(child.name)
     return linked
