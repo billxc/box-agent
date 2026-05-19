@@ -177,6 +177,9 @@ def load_config(
             "move it to local.yaml as node_id"
         )
 
+    if not node_id and local_dir:
+        node_id = _ensure_default_node_id(Path(local_dir))
+
     effective_raw = _apply_node_overrides(raw, node_id)
 
     global_config = effective_raw.get("global", {})
@@ -372,6 +375,45 @@ def _load_telegram_bots(config_dir: Path) -> dict[str, str]:
         return {str(k): str(v) for k, v in raw.items()}
 
     return {}
+
+
+def _ensure_default_node_id(local_dir: Path) -> str:
+    """Generate a default node_id and persist it to local.yaml.
+
+    Why: without a node_id the gateway becomes an anonymous node — all configs
+    that gate on `enabled_on_nodes` get silently skipped (see node_matches),
+    and the cluster member can only run as guest. Auto-seeding a stable id on
+    first boot avoids the "configured a bunch of bots but none started" trap.
+    """
+    import re
+    import secrets
+    import socket
+
+    local_dir.mkdir(parents=True, exist_ok=True)
+    local_file = local_dir / "local.yaml"
+
+    existing: dict = {}
+    if local_file.is_file():
+        with open(local_file, encoding="utf-8") as f:
+            loaded = yaml.safe_load(f)
+        if isinstance(loaded, dict):
+            existing = loaded
+        if existing.get("node_id"):
+            return str(existing["node_id"])
+
+    hostname = socket.gethostname().split(".")[0]
+    hostname = re.sub(r"[^a-zA-Z0-9-]", "-", hostname).strip("-").lower() or "node"
+    node_id = f"{hostname}-{secrets.token_hex(2)}"
+
+    existing["node_id"] = node_id
+    with open(local_file, "w", encoding="utf-8") as f:
+        yaml.safe_dump(existing, f, sort_keys=False, allow_unicode=True)
+    logger.info(
+        "No node_id configured; generated default node_id=%s and wrote to %s",
+        node_id,
+        local_file,
+    )
+    return node_id
 
 
 def _load_local_config(local_dir: Path) -> dict:

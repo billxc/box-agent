@@ -426,7 +426,11 @@ class TestNodeId:
         config = load_config(tmp_path, local_dir=local_dir)
         assert config.node_id == "cloud-pc"
 
-    def test_node_id_empty_when_no_local_yaml(self, tmp_path):
+    def test_node_id_auto_generated_when_local_yaml_missing(self, tmp_path):
+        """When local_dir is provided but local.yaml has no node_id, generate one
+        and persist it so subsequent loads return the same id."""
+        import yaml as _yaml
+
         config = dedent("""\
             global: {}
             bots:
@@ -441,8 +445,43 @@ class TestNodeId:
         (tmp_path / "config.yaml").write_text(config)
         local_dir = tmp_path / "local"
         local_dir.mkdir()
-        config = load_config(tmp_path, local_dir=local_dir)
-        assert config.node_id == ""
+        loaded = load_config(tmp_path, local_dir=local_dir)
+        assert loaded.node_id  # non-empty
+        # Persisted to local.yaml
+        local_file = local_dir / "local.yaml"
+        assert local_file.is_file()
+        persisted = _yaml.safe_load(local_file.read_text())
+        assert persisted["node_id"] == loaded.node_id
+        # Stable across reloads
+        reloaded = load_config(tmp_path, local_dir=local_dir)
+        assert reloaded.node_id == loaded.node_id
+
+    def test_node_id_auto_generation_preserves_existing_local_keys(self, tmp_path):
+        """Auto-generation must merge into existing local.yaml, not overwrite it."""
+        import yaml as _yaml
+
+        config = dedent("""\
+            global: {}
+            bots:
+              my-bot:
+                ai_backend: claude-cli
+                workspace: /tmp
+                channels:
+                  telegram:
+                    token: "123:ABC"
+                    allowed_users: [111]
+        """)
+        (tmp_path / "config.yaml").write_text(config)
+        local_dir = tmp_path / "local"
+        local_dir.mkdir()
+        (local_dir / "local.yaml").write_text(
+            "global:\n  log_level: debug\n"
+        )
+        loaded = load_config(tmp_path, local_dir=local_dir)
+        assert loaded.node_id
+        persisted = _yaml.safe_load((local_dir / "local.yaml").read_text())
+        assert persisted["node_id"] == loaded.node_id
+        assert persisted["global"]["log_level"] == "debug"
 
     def test_node_id_empty_when_no_local_dir(self, tmp_path):
         config = dedent("""\
@@ -501,7 +540,7 @@ class TestNodeId:
         config = load_config(tmp_path, local_dir=local_dir)
         assert config.node_id == "new-node"
 
-    def test_node_id_empty_when_local_yaml_empty(self, tmp_path):
+    def test_node_id_auto_generated_when_local_yaml_empty(self, tmp_path):
         config = dedent("""\
             global: {}
             bots:
@@ -518,7 +557,7 @@ class TestNodeId:
         local_dir.mkdir()
         (local_dir / "local.yaml").write_text("")
         config = load_config(tmp_path, local_dir=local_dir)
-        assert config.node_id == ""
+        assert config.node_id
 
     def test_local_yaml_overrides_global_log_level(self, tmp_path):
         """local.yaml global section overrides config.yaml global."""

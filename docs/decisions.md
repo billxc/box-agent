@@ -401,3 +401,13 @@ CLI 子进程那条路准备废弃。为了不强迫所有用户立刻改 `~/.bo
 **为什么不改 `is_alive` 语义**：zombie 检测后立刻自愈（terminate → wait 返回 → respawn），整个流程内 monitor task 一直在跑，`is_alive()` 保持 True 正合 HostElection 的预期 —— 不希望瞬时抖动触发 demote/promote 抖动。
 
 **测试**：`tests/unit/test_cluster_tunnel.py::TestZombieDetection` 三例覆盖 K 次零→respawn / 持续健康→不动 / 单次零→不动。
+
+## 2026-05-19: 没配 node_id 时自动写入 local.yaml
+
+**决定**: `load_config` 检测到 `node_id` 为空且有 `local_dir` 时，自动生成 `<hostname>-<4hex>` 写入 `local.yaml`（合并保留现有字段），下次启动复用。
+
+**原因**: 匿名节点 (`node_id=""`) 是个隐性陷阱 —— `node_matches("", "")` 返回 True 让无过滤的 bot 起来，但凡有 `enabled_on_nodes: [...]` 的配置全部被静默 skip（`node_id in [...]` 为 False），出现"配置一堆 bot 一个都没起"。让首次启动自动产生稳定 id，避免用户每搭一台机都手写 local.yaml，也让 cluster 候选/guest 判定有确定输入。
+
+**为什么用 hostname+随机后缀**：纯 hostname 在双机重名时冲突；纯随机不可读。`secrets.token_hex(2)` 4 字符够 65k 空间，配合 hostname 在小规模 fleet 里基本无冲突且仍可读。
+
+**测试**：`tests/unit/test_config.py::TestNodeId::test_node_id_auto_generated_when_local_yaml_missing` / `..._preserves_existing_local_keys` / `..._when_local_yaml_empty`。
