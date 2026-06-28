@@ -46,10 +46,10 @@ from boxagent.config import AppConfig
 from boxagent.utils import default_config_dir, default_local_dir, default_workspace_dir
 from boxagent.sessions import Storage
 from boxagent.scheduler import Scheduler
-from boxagent.workgroup import WorkgroupManager
 
 if TYPE_CHECKING:
     from boxagent.events.bus import EventBus
+    from boxagent.workgroup import WorkgroupManager
     from boxagent.workgroup.http_routes import WorkgroupHttpRoutes
 
 logger = logging.getLogger(__name__)
@@ -148,7 +148,7 @@ class Gateway:
     _scheduler_task: asyncio.Task | None = field(default=None, repr=False)
     _host_election: HostElection | None = field(default=None, repr=False)
     _start_time: float = 0.0
-    _workgroup_manager: WorkgroupManager | None = field(default=None, repr=False)
+    _workgroup_manager: "WorkgroupManager | None" = field(default=None, repr=False)
     _bots: AgentManager | None = field(default=None, repr=False)
     _topology: TopologyService | None = field(default=None, repr=False)
     _peer: PeerService | None = field(default=None, repr=False)
@@ -250,25 +250,12 @@ class Gateway:
         # Bots (incl. synthetic raw passthrough).
         await self._bots.start_all_for_node(self.config.node_id)
 
-        # Workgroups.
+        # Workgroups. All assembly lives in workgroup.wiring so the gateway
+        # stays ignorant of how a WorkgroupManager is built and wired.
         if self.config.workgroups:
-            self._workgroup_manager = WorkgroupManager(
-                config=self.config.workgroups,
-                config_dir=str(self.config_dir),
-                node_id=self.config.node_id,
-                local_dir=storage.local_dir,
-                start_time=self._start_time,
-                storage=storage,
-                web_channels=self._bots.web_channels,
-                _peer_provider=self._topology.build_peer_descriptors,
-                gateway=self,
-            )
-            # Phase 2: topology + peer + web server now see workgroup_manager.
-            # (workgroup_manager.routes ships with the manager; no separate setter.)
-            self._topology.set_workgroup_manager(self._workgroup_manager)
-            self._peer.set_workgroup_manager(self._workgroup_manager)
-            self._web_server.set_workgroup_manager(self._workgroup_manager)
-            await self._workgroup_manager.start_all_for_node(self.config.node_id)
+            from boxagent.workgroup.wiring import install_workgroup
+
+            self._workgroup_manager = await install_workgroup(self, storage)
 
         # Scheduler + its HTTP route adapter.
         self._start_scheduler()
