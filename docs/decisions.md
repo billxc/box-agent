@@ -479,3 +479,22 @@ CLI 子进程那条路准备废弃。为了不强迫所有用户立刻改 `~/.bo
 **为什么不连 config.workgroups 一起反转**：`config.workgroups` 是 AppConfig（core）的字段，topology 读它是读 config，不是依赖 workgroup 包。强行也反转会把 `local_bot_descriptors`（按 web_channels 枚举本机 bot）搅复杂，收益不抵成本。
 
 **测试**：`test_topology_service` 的 set/assert 改 provider；`test_cluster_peer_e2e` 的 build_peer_descriptors 注入改 provider。全量 1064 passed（行为逐字节不变）。
+
+## 2026-06-28 — workgroup 测试拆分进 tests/unit/workgroup/（yait #98 收尾）
+
+代码隔离进 workgroup 包后，把测试也对称拆开。
+
+**新建 `tests/unit/workgroup/`**（含 `__init__.py`，与 `tests/unit` 包结构一致）。
+
+**拆 `test_workgroup.py`（598 行大杂烩，13 类混了 4+ 源模块）** 按源模块切分：
+- `test_formatting.py` ← format_running_tasks / extract_specialist_response
+- `test_heartbeat.py` ← is_silent_reply / _extract_action / _build_heartbeat_prompt / HeartbeatManager read-md / log facade / fork-skip（6 类 + 模块级 log 测试）
+- `test_workspace_templates.py` ← seed_admin/specialist_workspace + 模板格式
+- `test_manager.py` ← WorkgroupManager 纯方法
+- `TestBackendForkCapability`（测 backend.supports_fork，**非 workgroup**）移到 `test_agent_backend_protocol.py`
+
+**移入子目录**（去冗余 `workgroup_` 前缀）：integration / web_e2e / channel_adapter / prompt_fragment / config / template_loader / peer_service / agent_env。
+
+**刻意留在 `tests/unit/`**（cluster/peer-routing 集成，非纯 workgroup 包测试）：`test_cluster_peer.py` / `test_cluster_peer_e2e.py` / `test_peer_conditional_wiring.py` / `test_topology_service.py`。
+
+**不变量**：全量仍 1064 passed —— 纯重定位，零测试增减。用脚本按 class 边界切分 + 自动检测每文件实际用到的 import（避免 F401）。
