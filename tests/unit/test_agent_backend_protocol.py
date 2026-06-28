@@ -12,8 +12,8 @@ class TestProtocol:
         assert isinstance(backend, AgentBackend)
 
     def test_real_backend_satisfies_protocol(self):
-        from boxagent.agent.claude_process import ClaudeProcess
-        backend = ClaudeProcess(workspace="/tmp", bot_name="t")
+        from boxagent.agent.sdk_claude_process import AgentSDKClaude
+        backend = AgentSDKClaude(workspace="/tmp", bot_name="t")
         assert isinstance(backend, AgentBackend)
 
 

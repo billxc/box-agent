@@ -543,8 +543,8 @@ class TestBackendForkCapability:
     Lock the per-backend capability so heartbeat behavior stays predictable."""
 
     def test_claude_supports_fork(self):
-        from boxagent.agent.claude_process import ClaudeProcess
-        backend = ClaudeProcess(workspace="/tmp")
+        from boxagent.agent.sdk_claude_process import AgentSDKClaude
+        backend = AgentSDKClaude(workspace="/tmp")
         assert backend.supports_fork is True
 
     def test_codex_does_not_support_fork(self):

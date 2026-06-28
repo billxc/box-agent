@@ -25,10 +25,9 @@ def create_backend(
     ``send_to_peer`` / admin tools require it. CLI backends route tool
     calls through the HTTP MCP server, which captures gateway separately.
 
-    ``claude-cli`` is a legacy alias kept for config backward-compat: it now
-    silently routes to the in-process ``agent-sdk-claude`` backend. The CLI
-    subprocess implementation (``ClaudeProcess``) is on the way out and will
-    be removed in a follow-up commit.
+    ``claude-cli`` is a legacy alias kept for config backward-compat: it
+    silently routes to the in-process ``agent-sdk-claude`` backend. The old
+    CLI subprocess implementation (``ClaudeProcess``) has been removed.
     """
     if bot_config.ai_backend == "codex-cli":
         from boxagent.agent.codex_process import CodexProcess

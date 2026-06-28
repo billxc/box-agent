@@ -52,7 +52,6 @@ src/boxagent/
 │   ├── agent_manager.py     AgentManager（per-bot 生命周期、watchdog）
 │   ├── workspace.py         ensure_git_repo / sync_skills
 │   ├── base_cli.py          CLI 类 backend 共享基类
-│   ├── claude_process.py    Claude CLI subprocess —— **已退役，仅作占位**（`claude-cli` 被 `backend_factory` 静默重定向到 `sdk_claude_process.py`）
 │   ├── codex_process.py     Codex CLI（subprocess）
 │   ├── sdk_claude_process.py   claude_agent_sdk（in-process）
 │   ├── sdk_copilot_process.py  GitHub Copilot SDK（in-process）
@@ -174,7 +173,7 @@ sessions/browser → history → 后端原生 transcript 文件
 
 | ai_backend | 进程模型 | session 持久化 | MCP 挂载方式 |
 |---|---|---|---|
-| `claude-cli` | **当前已静默重定向到 `agent-sdk-claude`**（commit `fd3b5d8`）。`claude_process.py` 文件保留但运行时不再实例化 | 走 SDK 路径，跟 claude-cli 共享 `~/.claude/` | 走 SDK 路径 |
+| `claude-cli` | **当前已静默重定向到 `agent-sdk-claude`**（commit `fd3b5d8`）。`claude_process.py` 已删除 | 走 SDK 路径，跟 claude-cli 共享 `~/.claude/` | 走 SDK 路径 |
 | `codex-cli` | 每轮 spawn `codex exec` subprocess | `codex exec resume <session_id>`（Codex 自管） | `-c mcp_servers.X.url=...` 配置 override |
 | `agent-sdk-claude` | 长驻 in-process（`claude_agent_sdk.query`） | 跟 claude-cli 共享 ~/.claude/ | `SdkMcpServer` 直接注入 SDK |
 | `agent-sdk-copilot` | 长驻 in-process（`CopilotClient`） | 自己管的 session 文件 | 原生 Tool 对象列表 |
@@ -253,6 +252,6 @@ async def my_tool(args: dict, ctx: ToolContext) -> str:
 
 ## 已知坑
 
-1. **`mcp-port.txt` 偶发被外部清掉 → codex-cli backend 静默无 MCP**：`codex_process.py` 靠这个文件 gate 整个 MCP 挂载块。重启 boxagent 重写。仅影响 codex-cli 这一条 CLI 路径——`claude-cli` 已静默重定向到 `agent-sdk-claude`（`claude_process.py` 不再实例化）；SDK 后端走 in-process MCP，不依赖此文件。
+1. **`mcp-port.txt` 偶发被外部清掉 → codex-cli backend 静默无 MCP**：`codex_process.py` 靠这个文件 gate 整个 MCP 挂载块。重启 boxagent 重写。仅影响 codex-cli 这一条 CLI 路径——`claude-cli` 已静默重定向到 `agent-sdk-claude`（`claude_process.py` 已删除）；SDK 后端走 in-process MCP，不依赖此文件。
 2. **`Router.workgroup_role` 三态**：`""` 普通 bot / `"admin"` workgroup 管理员 / `"specialist"` specialist。曾经有一段时间 specialist 路径漏设、`AgentEnv.is_specialist` 是 dead code，已于 commit `ab9ab9d`（2026-05-10）修复（`workgroup/manager.py:193`）。如再次 grep 不到 specialist 赋值或下游分支失活，先查这条路径有没有回退。
 3. **`_compact_summaries` / `_resume_contexts`** 是 Router 实例的内存 dict，跨进程重启丢失

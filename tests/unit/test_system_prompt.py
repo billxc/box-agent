@@ -1,7 +1,6 @@
 """Tests for system prompt injection — verifying that system-level context
 is separated from user messages and passed correctly through each backend."""
 
-import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -9,7 +8,6 @@ import pytest
 from boxagent.transports.base import IncomingMessage
 from boxagent.router import Router
 from boxagent.testing.mocks import MockBackend, MockChannel
-from tests.unit.helpers import FakeProcess
 
 
 # ---- Helpers ----
@@ -24,14 +22,6 @@ def make_msg(text, user_id="123456", chat_id="123456", attachments=None):
     )
 
 
-def make_stream_lines(*events: dict) -> bytes:
-    return b"\n".join(json.dumps(e).encode() for e in events) + b"\n"
-
-
-def result_event(session_id: str = "sess_123") -> dict:
-    return {"type": "result", "session_id": session_id}
-
-
 @pytest.fixture
 def callback():
     callback = AsyncMock()
@@ -41,53 +31,6 @@ def callback():
     callback.on_file = AsyncMock()
     callback.on_image = AsyncMock()
     return callback
-
-
-# ---- Claude CLI system prompt tests ----
-
-class TestClaudeSystemPrompt:
-    def _make_cli(self, **kwargs):
-        from boxagent.agent.claude_process import ClaudeProcess
-        return ClaudeProcess(workspace="/tmp/test", **kwargs)
-
-    def test_append_system_prompt_adds_append_flag(self):
-        cli = self._make_cli()
-        args = cli._build_args("hello user", model="", chat_id="", append_system_prompt="You are a bot")
-        assert "--append-system-prompt" in args
-        idx = args.index("--append-system-prompt")
-        assert args[idx + 1] == "You are a bot"
-
-    def test_empty_append_system_prompt_no_flag(self):
-        cli = self._make_cli()
-        args = cli._build_args("hello user", model="", chat_id="", append_system_prompt="")
-        assert "--append-system-prompt" not in args
-
-    def test_append_system_prompt_does_not_pollute_user_message(self):
-        cli = self._make_cli()
-        args = cli._build_args("hello user", model="", chat_id="", append_system_prompt="system instructions")
-        # Message is the last positional arg (after --)
-        assert args[-1] == "hello user"
-        assert "system instructions" not in args[-1]
-
-    def test_append_system_prompt_before_p_flag(self):
-        """--append-system-prompt should appear before -p in args."""
-        cli = self._make_cli()
-        args = cli._build_args("msg", model="", chat_id="", append_system_prompt="sys")
-        sp_idx = args.index("--append-system-prompt")
-        p_idx = args.index("-p")
-        assert sp_idx < p_idx
-
-    async def test_append_system_prompt_threaded_through_execute_turn(self, callback):
-        cli = self._make_cli()
-        fake_proc = FakeProcess(make_stream_lines(result_event()))
-
-        with patch("asyncio.create_subprocess_exec", return_value=fake_proc) as mock_exec:
-            await cli._execute_turn("hello", callback, append_system_prompt="sys context")
-
-        call_args = mock_exec.call_args[0]
-        assert "--append-system-prompt" in call_args
-        idx = list(call_args).index("--append-system-prompt")
-        assert call_args[idx + 1] == "sys context"
 
 
 # ---- Codex CLI system prompt tests ----

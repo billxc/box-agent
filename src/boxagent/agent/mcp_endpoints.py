@@ -1,6 +1,6 @@
 """Resolve which boxagent MCP HTTP endpoints to attach to a backend turn.
 
-Both ``claude_process`` and ``codex_process`` need the same answer for
+Both ``sdk_claude_process`` and ``codex_process`` need the same answer for
 "given this env + chat_id, which boxagent-* MCP servers should the LLM see?"
 — previously duplicated inline. This module is the single source of truth.
 

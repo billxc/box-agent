@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from boxagent.agent.backend_factory import create_backend
-from boxagent.agent.claude_process import ClaudeProcess
 from boxagent.agent.protocol import AgentBackend, BACKEND_KINDS
 from boxagent.agent.workspace import ensure_git_repo, sync_skills
 from boxagent.config import AppConfig, BotConfig
@@ -325,13 +324,16 @@ class AgentManager:
         pool.start()
         self.pools[name] = pool
 
-        stub = ClaudeProcess(
+        # Placeholder backend so the Router has a non-None ``backend`` slot
+        # (only ``.yolo`` / ``.model`` are read off it — real turns go through
+        # the pool). Built via the same factory the pool uses, so it's a real
+        # AgentSDKClaude rather than a bespoke stub.
+        stub = self._raw_backend_factory(
+            backend="claude-cli",
             workspace="/tmp",
-            session_id=None,
             model="",
-            agent="",
+            session_id=None,
             bot_name=name,
-            yolo=True,
         )
         self.backends[name] = stub
 
