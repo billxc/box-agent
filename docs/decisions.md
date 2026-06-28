@@ -444,3 +444,22 @@ CLI 子进程那条路准备废弃。为了不强迫所有用户立刻改 `~/.bo
 **Router 不动**：Phase 1 只归并 AgentEnv（被传遍 dispatch 链的痛点）。Router 是装配期对象，污染影响面小，留待后续。
 
 **测试**：新增 `tests/unit/test_agent_env_workgroup.py`（6 例：property 委托 + 字段已删）。存量 6 个测试文件改构造点为嵌套形式。全量 1079 passed（基线 1073 + 6）。
+
+## 2026-06-28 — workgroup 隔离 Phase 2 + 3（yait #98）
+
+接 Phase 1（数据类归并），继续把 workgroup 知识从 core 收回 workgroup 包。
+
+**Phase 2 — system-prompt 片段外移**：`router/context.py` 不再硬编码 `[Workgroup]`/`[Peer Messaging]` 段，也不再 `import workgroup.formatting`。渲染逻辑（含 `_format_peer`）搬进 `workgroup/prompt_fragment.py: build_workgroup_block()`；context.py 缩成一个 `if workgroup_agents or has_peer_channel:` 守卫委托。输出逐字节不变。
+
+**Phase 3a — gateway 装配外移**：`WorkgroupManager` 的构造 + `set_workgroup_manager`(topology/peer/web) + start 搬进 `workgroup/wiring.py: install_workgroup(gateway, storage)`。gateway 18 行装配块 → 3 行守卫调用。`WorkgroupManager` import 降级到 TYPE_CHECKING + 字段注解字符串化（gateway 无 `from __future__ annotations`）。
+
+**Phase 3b — peer 条件化构造（方案 A）**：`cluster/peer_service.py` → `workgroup/peer_service.py`。PeerService 改为**仅 `config.workgroups` 时构造**（`gateway._peer` 否则为 None）。配套：
+- `ClusterHttpRoutes.register()` 拆分：`/api/guest/ws` 永远挂（核心 cluster），`/api/peer/*` 仅 `peer is not None` 时挂
+- `InternalApiServer.peer` 改 Optional，`/api/peer/send` 条件注册
+- `send_to_peer` 工具加 `_peer is None` 防御守卫
+
+**为什么 peer 构造守卫留在 gateway cluster 阶段（而非 install_workgroup 内）**：peer 路由必须在 `web_server.start()` 之前注册（aiohttp 启动后 router 冻结），而 install_workgroup 在其后。所以构造点必须前置，用 `if config.workgroups` 守卫保证条件化。
+
+**达成**：删 `workgroup/` 包后，core/cluster 运行时无 import 崩溃（gateway 的 workgroup 运行时 import 全在守卫块内；cluster 对 workgroup 只剩 TYPE_CHECKING）。peer 消息能力随 workgroup 一起出现/消失。
+
+**测试**：新增 test_workgroup_prompt_fragment.py（5）+ test_peer_conditional_wiring.py（2）；peer 3 个测试改 import 路径。全量 1086 passed（基线 1073 + 13）。

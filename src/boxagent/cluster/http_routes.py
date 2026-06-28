@@ -12,14 +12,14 @@ from aiohttp import web
 
 if TYPE_CHECKING:
     from boxagent.cluster.rpc import ClusterRpc
-    from boxagent.cluster.peer_service import PeerService
+    from boxagent.workgroup.peer_service import PeerService
 
 
 class ClusterHttpRoutes:
     def __init__(
         self,
         *,
-        peer: "PeerService",
+        peer: "PeerService | None",
         cluster_rpc: "ClusterRpc",
     ) -> None:
         self.peer = peer
@@ -29,10 +29,12 @@ class ClusterHttpRoutes:
         """Mount cluster RPC + guest WS routes on the web UI app.
 
         - ``/api/peer/send`` and ``/api/wg/peer/recv`` are HTTP RPCs used
-          by ``guest_client`` for cross-machine messaging.
+          by ``guest_client`` for cross-machine messaging. They mount only
+          when a PeerService exists (i.e. workgroups are configured).
         - ``/api/guest/ws`` is the WebSocket endpoint guests dial to
-          attach to a host.
+          attach to a host — always mounted (core cluster).
         """
-        web_app.router.add_post("/api/wg/peer/recv", self.peer.handle_wg_peer_recv)
-        web_app.router.add_post("/api/peer/send", self.peer.handle_peer_send)
+        if self.peer is not None:
+            web_app.router.add_post("/api/wg/peer/recv", self.peer.handle_wg_peer_recv)
+            web_app.router.add_post("/api/peer/send", self.peer.handle_peer_send)
         web_app.router.add_get("/api/guest/ws", self.cluster_rpc.handle_guest_ws)

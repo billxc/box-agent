@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from boxagent.cluster.peer_service import PeerService
+from boxagent.workgroup.peer_service import PeerService
 
 
 def _make() -> PeerService:

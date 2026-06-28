@@ -37,7 +37,6 @@ from boxagent.agent.agent_manager import AgentManager
 from boxagent.cluster.http_routes import ClusterHttpRoutes
 from boxagent.cluster.rpc import ClusterRpc
 from boxagent.cluster.host_election import HostElection
-from boxagent.cluster.peer_service import PeerService
 from boxagent.cluster.topology_service import TopologyService
 from boxagent.scheduler.http_routes import SchedulerHttpRoutes
 from boxagent.transports.mcp.server import McpHttpServer
@@ -51,6 +50,7 @@ if TYPE_CHECKING:
     from boxagent.events.bus import EventBus
     from boxagent.workgroup import WorkgroupManager
     from boxagent.workgroup.http_routes import WorkgroupHttpRoutes
+    from boxagent.workgroup.peer_service import PeerService
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ class InternalApiServer:
         *,
         config: AppConfig,
         local_dir: Path,
-        peer: PeerService,
+        peer: "PeerService | None",
         workgroup_routes: "WorkgroupHttpRoutes | None",
         scheduler_routes: SchedulerHttpRoutes | None,
     ) -> None:
@@ -109,7 +109,8 @@ class InternalApiServer:
             app.router.add_post("/api/workgroup/reset_specialist", workgroup.handle_reset_specialist)
             app.router.add_post("/api/workgroup/delete_specialist", workgroup.handle_delete_specialist)
             app.router.add_post("/api/workgroup/cancel_task", workgroup.handle_cancel_task)
-        app.router.add_post("/api/peer/send", self.peer.handle_peer_send)
+        if self.peer is not None:
+            app.router.add_post("/api/peer/send", self.peer.handle_peer_send)
         # NOTE: /api/wg/peer/recv lives on the Web UI port (see ClusterHttpRoutes)
         # because guest_client forwards RPC frames to the web port.
 
@@ -151,7 +152,7 @@ class Gateway:
     _workgroup_manager: "WorkgroupManager | None" = field(default=None, repr=False)
     _bots: AgentManager | None = field(default=None, repr=False)
     _topology: TopologyService | None = field(default=None, repr=False)
-    _peer: PeerService | None = field(default=None, repr=False)
+    _peer: "PeerService | None" = field(default=None, repr=False)
     _cluster_rpc: ClusterRpc | None = field(default=None, repr=False)
     _cluster_routes: ClusterHttpRoutes | None = field(default=None, repr=False)
     _scheduler_routes: SchedulerHttpRoutes | None = field(default=None, repr=False)
@@ -222,10 +223,18 @@ class Gateway:
             config=self.config,
             web_channels=self._bots.web_channels,
         )
-        self._peer = PeerService(
-            topology=self._topology,
-            main_chat_id_provider=storage.get_or_create_main_chat_id,
-        )
+        # Peer messaging only exists between workgroup admins, so the
+        # PeerService is built only when workgroups are configured. It must
+        # be constructed here (before web_server.start mounts cluster routes)
+        # so ClusterHttpRoutes can wire it; install_workgroup later attaches
+        # the workgroup_manager via set_workgroup_manager.
+        if self.config.workgroups:
+            from boxagent.workgroup.peer_service import PeerService
+
+            self._peer = PeerService(
+                topology=self._topology,
+                main_chat_id_provider=storage.get_or_create_main_chat_id,
+            )
         self._cluster_rpc = ClusterRpc(topology=self._topology)
         self._cluster_routes = ClusterHttpRoutes(
             peer=self._peer, cluster_rpc=self._cluster_rpc,

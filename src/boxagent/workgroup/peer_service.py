@@ -1,6 +1,12 @@
 """Peer messaging — local + cluster RPC dispatch.
 
-Composition class. Held by Gateway as ``self._peer``. Two-phase DI:
+Owned by the workgroup module: peer messaging only exists between
+workgroup admins, so the gateway constructs this **only when
+``config.workgroups`` is non-empty** (``self._peer`` is ``None``
+otherwise). Deleting the workgroup module removes this file and the
+peer routes vanish with it.
+
+Two-phase DI:
 
 - Phase 1 (constructor): topology (for guest_registry/guest_client lookups)
   and main_chat_id_provider (callable that mints/loads the admin's main
@@ -11,7 +17,8 @@ Public surface:
 - ``send_peer`` — cluster-aware peer message dispatch (used by MCP tool
   and by the /api/peer/send HTTP route).
 - ``handle_peer_send`` / ``handle_wg_peer_recv`` — aiohttp handlers
-  registered by ClusterRoutesMixin (and the API HTTP server).
+  registered by ClusterHttpRoutes (only when peer is present) and the
+  internal API HTTP server.
 """
 
 import logging
@@ -21,7 +28,7 @@ from aiohttp import web
 
 if TYPE_CHECKING:
     from boxagent.cluster.topology_service import TopologyService
-    from boxagent.workgroup import WorkgroupManager
+    from boxagent.workgroup.manager import WorkgroupManager
 
 logger = logging.getLogger(__name__)
 
