@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 async def send_to_peer(args: dict, ctx: ToolContext) -> str:
     if ctx.gateway is None:
         return "Error: gateway not available"
+    if ctx.gateway._peer is None:
+        return "Error: peer messaging not available (no workgroups configured)"
     if not ctx.bot_name:
         return "Error: bot_name not set"
 

@@ -290,7 +290,7 @@ async def test_send_peer_surfaces_404_from_sat_recv():
     guest side returned a non-2xx status. Calls PeerService.send_peer directly
     with a fake guest that returns 404.
     """
-    from boxagent.cluster.peer_service import PeerService
+    from boxagent.workgroup.peer_service import PeerService
     from boxagent.cluster.topology_service import TopologyService
 
     class _FakeSession:

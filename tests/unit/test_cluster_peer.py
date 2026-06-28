@@ -5,7 +5,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-from boxagent.cluster.peer_service import PeerService
+from boxagent.workgroup.peer_service import PeerService
 from boxagent.cluster.topology_service import TopologyService
 
 
