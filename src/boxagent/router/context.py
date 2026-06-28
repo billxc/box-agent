@@ -78,61 +78,22 @@ def build_session_context(
         lines.append(node_content)
         seen.add(node_content)
 
-    # Workgroup agent delegation info
-    if workgroup_agents:
-        from boxagent.workgroup.formatting import format_running_tasks
+    # Workgroup + peer delegation info — rendered by the workgroup module so
+    # the core prompt builder stays ignorant of workgroup/peer wording.
+    if workgroup_agents or has_peer_channel:
+        from boxagent.workgroup.prompt_fragment import build_workgroup_block
 
-        lines.append("")
-        lines.append("[Workgroup]")
-        lines.append("You are the admin of a workgroup. Available specialist agents:")
-        for agent_name in workgroup_agents:
-            lines.append(f"- {agent_name}")
-
-        # Running tasks status
-        lines.append("")
-        lines.append(format_running_tasks(running_tasks))
-
-        lines.append("")
-        lines.append(
-            "Use the send_to_agent MCP tool to delegate tasks to specialists. "
-            "The specialist processes your message asynchronously and returns "
-            "the result via callback."
+        block = build_workgroup_block(
+            workgroup_agents=workgroup_agents,
+            running_tasks=running_tasks,
+            peers=peers,
+            has_peer_channel=has_peer_channel,
         )
-        lines.append("[/Workgroup]")
-
-    # Peer messaging info — list comes from cluster registry via Router.get_peers
-    # (see Gateway._build_peer_descriptors). NOTE on guests the registry is
-    # not visible, so the list will be local-only until guest→host peer-list RPC
-    # lands (yait #67).
-    if has_peer_channel:
-        lines.append("")
-        lines.append("[Peer Messaging]")
-        lines.append("You can send messages to other workgroup admins using the send_to_peer MCP tool.")
-        if peers:
-            lines.append("Peers:")
-            for p in peers:
-                lines.append(_format_peer(p))
-        lines.append("[/Peer Messaging]")
+        if block:
+            lines.append(block)
 
     lines.append("[/BoxAgent Context]")
     return "\n".join(lines)
-
-
-def _format_peer(p) -> str:
-    """One bullet line per peer descriptor.
-
-    p shape: {name, machine, online, kind, description?}
-    """
-    if not isinstance(p, dict):
-        return f"- {p}"
-    name = p.get("name", "")
-    machine = p.get("machine", "")
-    online = p.get("online", True)
-    desc = p.get("description", "")
-    where = "local" if machine in ("", "local") else f"@{machine}"
-    status = "" if online else " (offline)"
-    suffix = f" — {desc}" if desc else ""
-    return f"- {name} ({where}){status}{suffix}"
 
 
 def build_schedule_context(
