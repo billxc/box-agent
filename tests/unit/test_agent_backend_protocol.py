@@ -133,3 +133,37 @@ class TestMockBackend:
         assert backend.last_turn_failed is False
         assert backend.last_turn_error == ""
         assert backend.supports_session_persistence is True
+
+
+class TestBackendForkCapability:
+    """Heartbeat fork dispatches via backend.supports_fork + fork_and_send.
+    Lock the per-backend capability so heartbeat behavior stays predictable."""
+
+    def test_claude_supports_fork(self):
+        from boxagent.agent.sdk_claude_process import AgentSDKClaude
+        backend = AgentSDKClaude(workspace="/tmp")
+        assert backend.supports_fork is True
+
+    def test_codex_does_not_support_fork(self):
+        """codex CLI's `codex fork` is interactive-only (no --json), so we
+        intentionally don't implement programmatic fork — heartbeat skips."""
+        from boxagent.agent.codex_process import CodexProcess
+        backend = CodexProcess(workspace="/tmp")
+        assert backend.supports_fork is False
+
+    def test_codex_fork_and_send_raises(self):
+        from boxagent.agent.codex_process import CodexProcess
+        import asyncio
+        backend = CodexProcess(workspace="/tmp")
+        with pytest.raises(NotImplementedError):
+            asyncio.run(backend.fork_and_send("sid", "msg", None))
+
+    def test_sdk_claude_supports_fork(self):
+        from boxagent.agent.sdk_claude_process import AgentSDKClaude
+        backend = AgentSDKClaude(workspace="/tmp")
+        assert backend.supports_fork is True
+
+    def test_sdk_copilot_supports_fork(self):
+        from boxagent.agent.sdk_copilot_process import AgentSDKCopilot
+        backend = AgentSDKCopilot(workspace="/tmp")
+        assert backend.supports_fork is True
