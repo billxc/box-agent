@@ -358,7 +358,7 @@ def test_build_peer_descriptors_combines_local_and_remote():
     he = SimpleNamespace(registry=reg, client=None, tunnel=None)
 
     ts = TopologyService(config=config, web_channels={})
-    ts.set_workgroup_manager(_FakeMgr())
+    ts.set_local_workgroup_provider(lambda: list(_FakeMgr.routers.keys()))
     ts.set_host_election(he)
 
     peers = ts.build_peer_descriptors(exclude="war-room")
@@ -388,7 +388,7 @@ def test_build_peer_descriptors_guest_node_returns_local_only():
         "guest-workgroup": WorkgroupConfig(name="guest-workgroup", display_name="Guest WG"),
     })
     ts = TopologyService(config=config, web_channels={})
-    ts.set_workgroup_manager(type("M", (), {"routers": {"guest-workgroup": object()}})())
+    ts.set_local_workgroup_provider(lambda: ["guest-workgroup"])
     # host_election remains None — guest mode
 
     peers = ts.build_peer_descriptors(exclude="")

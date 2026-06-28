@@ -322,7 +322,9 @@ class ChannelCallback:
 > - `router/context.py` 的 `[Workgroup]`/`[Peer]` 段 + `import workgroup.formatting` —— 已移到 `workgroup/prompt_fragment.py`，context.py 只剩守卫委托
 > - gateway 的 WorkgroupManager 装配 —— 已移到 `workgroup/wiring.py: install_workgroup`
 > - `cluster/peer_service.py` —— 已移到 `workgroup/peer_service.py`，且改为仅 `config.workgroups` 时构造；cluster 对 workgroup 只剩 TYPE_CHECKING 引用
-> - 仍保留（路线 B 刻意不动）：`Router.workgroup_*` 5 字段 + `dispatch_sync`、`topology_service` 的 federation 枚举、`config.py` 的 `WorkgroupConfig` 数据类
+> - `config.py` 的 `_parse_workgroup`/`_validate_workgroups` —— 已移到 `workgroup/config.py`（Phase 4），config.py 仅守卫内懒 import
+> - `topology_service` 的 `set_workgroup_manager` + `workgroup_manager.routers` 读取 —— 已反转为 `set_local_workgroup_provider` 回调（Phase 5），cluster 不再 import/持有 WorkgroupManager
+> - 仍保留（路线 B 刻意不动）：`Router.workgroup_*` 5 字段 + `dispatch_sync`、`config.py` 的 `WorkgroupConfig` 数据类（被多处读的 passive 类型）
 
 | 名字 | 物理位置 | 性质 |
 |---|---|---|
