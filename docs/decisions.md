@@ -428,3 +428,19 @@ CLI 子进程那条路准备废弃。为了不强迫所有用户立刻改 `~/.bo
 **测试数下降说明**：本次测试从 1073 → 1047（-26）。这是删除死代码连带删其测试的**合理例外**，非隐藏回归。Claude backend 的存活实现由 `test_sdk_claude_process.py`（9 例）覆盖，未丢核心覆盖。
 
 **为什么现在删**：`backend_factory` 早已不经 CLI 路径；保留只增加"4 个 backend"的认知负担和误导（测试里有人会 patch 错对象）。
+
+## 2026-06-28 — workgroup 隔离为可插拔模块（路线 B）Phase 1：数据类归并（yait #98）
+
+**背景**：`IncomingMessage` / `AgentEnv` / `Router` 三个核心数据类各自背着一批 workgroup/peer 专属字段，让单机单 agent 主链路读起来背着用不到的概念。Owner 决策不删 workgroup（日常在用），走**路线 B 务实隔离**：把 workgroup 知识尽量收回 workgroup 包，core 只留少量守卫分支，最终目标是删 workgroup = 删包 + 拔 ~5 个守卫（而非外科手术）。详见 yait #98 伞形 issue。
+
+**Phase 1 改动**（本 commit）：
+1. **删死字段 `via_workgroup`**：实测它在 4 处被写、0 处被读驱动行为（`is_specialist`/`is_workgroup_admin` 用的是 `workgroup_role`）。从 `IncomingMessage` + `AgentEnv` + env_builder + core.py(×2) + manager.py 整条删除。
+2. **AgentEnv 归并**：`has_peer_channel` + `workgroup_role` + `workgroup_agents` + `running_tasks` + `peers` 五个裸字段 → 单一 `workgroup: WorkgroupContext | None`。`is_workgroup_admin`/`is_specialist`/`has_peer_channel` 改为 property 委托到 `workgroup`。
+
+**为什么保留 property 作为读 API**：`agent/mcp_endpoints.py`、`tools/registry.py` 都通过 property 读 → 0 改动。真正要改的只有写入侧（env_builder、heartbeat）和读裸字段的 context.py。
+
+**为什么 env_builder 的 workgroup 守卫用 `role or has_peer_channel or agents`（不含 running_tasks/peers）**：role/peer/agents 是身份字段，running_tasks/peers 是动态状态。普通 bot 的 `get_running_tasks` 是 None，不会误建 WorkgroupContext。
+
+**Router 不动**：Phase 1 只归并 AgentEnv（被传遍 dispatch 链的痛点）。Router 是装配期对象，污染影响面小，留待后续。
+
+**测试**：新增 `tests/unit/test_agent_env_workgroup.py`（6 例：property 委托 + 字段已删）。存量 6 个测试文件改构造点为嵌套形式。全量 1079 passed（基线 1073 + 6）。

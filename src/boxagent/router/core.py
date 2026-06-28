@@ -161,7 +161,6 @@ class Router:
                 chat_id=chat_id,
                 user_id=msg.user_id,
                 text=combined_text,
-                via_workgroup=msg.via_workgroup,
                 trusted=msg.trusted,
                 channel_info=msg.channel_info,
             )
@@ -315,7 +314,6 @@ class Router:
             chat_id=chat_id,
             user_id=from_bot or "workgroup",
             text=text,
-            via_workgroup=True,
         )
         return await self._dispatch(msg)
 

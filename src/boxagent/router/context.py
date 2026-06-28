@@ -43,10 +43,11 @@ def build_session_context(
         node_id = env.node_id
         workspace = env.workspace
         config_dir = env.config_dir
-        workgroup_agents = list(env.workgroup_agents) if env.workgroup_agents else None
-        running_tasks = list(env.running_tasks) if env.running_tasks else None
-        peers = list(env.peers) if env.peers else []
-        has_peer_channel = env.has_peer_channel
+        wg = env.workgroup
+        workgroup_agents = list(wg.agents) if wg and wg.agents else None
+        running_tasks = list(wg.running_tasks) if wg and wg.running_tasks else None
+        peers = list(wg.peers) if wg and wg.peers else []
+        has_peer_channel = bool(wg and wg.has_peer_channel)
     else:
         peers = []
         has_peer_channel = False

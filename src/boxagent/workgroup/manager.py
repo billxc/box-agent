@@ -436,7 +436,6 @@ class WorkgroupManager:
                         user_id="workgroup",
                         text=f"[TaskResult from {target}]\n{result}",
                         trusted=True,
-                        via_workgroup=True,
                     )
                     try:
                         await admin_router.handle_message(callback_msg)

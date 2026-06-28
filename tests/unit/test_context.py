@@ -102,12 +102,14 @@ class TestPeerInjection:
     """Peer list comes from cluster registry (env.peers), not peers.yaml."""
 
     def _env(self, *, peers=(), has_peer_channel=True):
-        from boxagent.agent_env import AgentEnv
+        from boxagent.agent_env import AgentEnv, WorkgroupContext
         return AgentEnv(
             bot_name="war-room",
-            workgroup_role="admin",
-            has_peer_channel=has_peer_channel,
-            peers=tuple(peers),
+            workgroup=WorkgroupContext(
+                role="admin",
+                has_peer_channel=has_peer_channel,
+                peers=tuple(peers),
+            ),
         )
 
     def test_peer_section_omitted_when_no_peer_channel(self):
@@ -147,13 +149,15 @@ class TestPeerInjection:
         (tmp_path / "peers.yaml").write_text(
             "ghost-peer:\n  description: this should not appear\n"
         )
-        from boxagent.agent_env import AgentEnv
+        from boxagent.agent_env import AgentEnv, WorkgroupContext
         env = AgentEnv(
             bot_name="war-room",
-            workgroup_role="admin",
-            has_peer_channel=True,
             config_dir=str(tmp_path),
-            peers=(),
+            workgroup=WorkgroupContext(
+                role="admin",
+                has_peer_channel=True,
+                peers=(),
+            ),
         )
         ctx = build_session_context(env=env)
         assert "ghost-peer" not in ctx
