@@ -133,20 +133,6 @@ class AppConfig:
     log_file: Path | None = None
 
 
-def _validate_workgroups(
-    workgroups: dict[str, WorkgroupConfig],
-    node_id: str = "",
-) -> None:
-    """Validate workgroup configuration."""
-    for workgroup_name, workgroup in workgroups.items():
-        # Skip workgroups not enabled on this node
-        if not node_matches(workgroup.enabled_on_nodes, node_id):
-            continue
-
-        if not workgroup.workspace:
-            raise ConfigError(f"Workgroup '{workgroup_name}': missing workspace")
-
-
 def load_config(
     config_dir: Path | str,
     box_agent_dir: Path | str | None = None,
@@ -266,15 +252,20 @@ def load_config(
             telegram_bots=telegram_bots,
         )
 
-    # Parse workgroups
+    # Parse workgroups. Parsing/validation logic lives in the workgroup
+    # package; import it lazily so a plain (no-workgroup) config never pulls
+    # the workgroup module in.
     workgroups: dict[str, WorkgroupConfig] = {}
-    for workgroup_name, workgroup_raw in effective_raw.get("workgroups", {}).items():
-        workgroups[workgroup_name] = _parse_workgroup(
-            workgroup_name, workgroup_raw,
-            box_agent_dir=box_agent_dir, config_dir=config_dir,
-        )
+    raw_workgroups = effective_raw.get("workgroups", {})
+    if raw_workgroups:
+        from boxagent.workgroup.config import parse_workgroup, validate_workgroups
 
-    _validate_workgroups(workgroups, node_id=node_id)
+        for workgroup_name, workgroup_raw in raw_workgroups.items():
+            workgroups[workgroup_name] = parse_workgroup(
+                workgroup_name, workgroup_raw,
+                box_agent_dir=box_agent_dir, config_dir=config_dir,
+            )
+        validate_workgroups(workgroups, node_id=node_id)
 
     return AppConfig(
         node_id=node_id,
@@ -543,64 +534,5 @@ def _parse_bot(
         display_name=raw.get("display_name", ""),
         enabled_on_nodes=raw.get("enabled_on_nodes", ""),
         yolo=bool(raw.get("yolo", False)),
-        web_enabled=web_enabled,
-    )
-
-
-def _parse_workgroup(
-    name: str,
-    raw: dict,
-    *,
-    box_agent_dir: Path | str | None = None,
-    config_dir: Path | str | None = None,
-) -> WorkgroupConfig:
-    """Parse a standalone workgroup configuration block."""
-    ba_dir = resolve_boxagent_dir(box_agent_dir)
-    config_base = Path(config_dir).expanduser() if config_dir else None
-
-    # Workspace (required)
-    workspace = raw.get("workspace", "")
-    if workspace:
-        ws_path = Path(workspace).expanduser()
-        if not ws_path.is_absolute():
-            ws_path = ba_dir / ws_path
-        workspace = str(ws_path)
-
-    # Discord support has been removed; legacy admin.discord_* / discord_bot_id
-    # / transport fields are silently ignored.
-
-    # Agent config
-    ai_backend = raw.get("ai_backend", "claude-cli")
-    model = raw.get("model", "")
-    allowed_users = raw.get("allowed_users", [])
-    yolo = bool(raw.get("yolo", False))
-    display_name = raw.get("display_name", name)
-    display_tool_calls = raw.get("display", {}).get("tool_calls", "silent")
-
-    extra_skill_dirs: list[str] = []
-    for raw_dir in raw.get("extra_skill_dirs", []):
-        path = Path(raw_dir).expanduser()
-        if not path.is_absolute() and config_base is not None:
-            path = config_base / path
-        extra_skill_dirs.append(str(path))
-
-    heartbeat_interval_seconds = int(raw.get("heartbeat_interval_seconds", 0))
-    display_heartbeat = bool(raw.get("display_heartbeat", False))
-    # Workgroup admin/specialist always uses the WebChannel; force-enable.
-    web_enabled = True
-
-    return WorkgroupConfig(
-        name=name,
-        workspace=workspace,
-        enabled_on_nodes=raw.get("enabled_on_nodes", ""),
-        allowed_users=allowed_users,
-        model=model,
-        ai_backend=ai_backend,
-        yolo=yolo,
-        display_name=display_name,
-        display_tool_calls=display_tool_calls,
-        extra_skill_dirs=extra_skill_dirs,
-        heartbeat_interval_seconds=heartbeat_interval_seconds,
-        display_heartbeat=display_heartbeat,
         web_enabled=web_enabled,
     )
