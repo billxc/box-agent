@@ -411,3 +411,20 @@ CLI 子进程那条路准备废弃。为了不强迫所有用户立刻改 `~/.bo
 **为什么用 hostname+随机后缀**：纯 hostname 在双机重名时冲突；纯随机不可读。`secrets.token_hex(2)` 4 字符够 65k 空间，配合 hostname 在小规模 fleet 里基本无冲突且仍可读。
 
 **测试**：`tests/unit/test_config.py::TestNodeId::test_node_id_auto_generated_when_local_yaml_missing` / `..._preserves_existing_local_keys` / `..._when_local_yaml_empty`。
+
+## 2026-06-28 — 物理删除 ClaudeProcess（claude CLI subprocess backend）
+
+接 2026 早期"`claude-cli` 静默重定向到 `AgentSDKClaude`"的迁移，本次把 CLI 子进程实现 `claude_process.py` 物理删除（之前只是占位不实例化）。
+
+**调研发现**：删之前 `ClaudeProcess` 还有一处生产实例化 —— `agent_manager.py` 的 raw passthrough bot 用它当 Router 的占位 backend（Router.backend 不能为 None，`env_builder` 无条件读 `.yolo`/`.model`，但真正干活走 pool）。
+
+**改动**：
+- `agent_manager.py`：占位 stub 改用 `self._raw_backend_factory(backend="claude-cli", ...)` —— 和 pool 用同一个 factory，产出真正的 `AgentSDKClaude`，删掉 `from ...claude_process import ClaudeProcess`
+- 删 `src/boxagent/agent/claude_process.py`（240 行）
+- `_normalize_usage` 此前 claude_process / sdk_claude_process 各有一份（生产只用 SDK 那份），删 claude 那份，`test_session_info` 改用 `AgentSDKClaude._normalize_usage`（@staticmethod）
+- 删 `test_claude_process.py`（21 例，测 CLI stream-json 解析/`_build_args`）+ `tests/integration/test_cli_real.py`（4 例，真 CLI）+ `test_system_prompt.py::TestClaudeSystemPrompt`（5 例，测 `--append-system-prompt` 拼接）—— 都是 CLI 专属死代码
+- `test_workgroup`/`test_agent_backend_protocol` 的 ClaudeProcess 引用改指 `AgentSDKClaude`
+
+**测试数下降说明**：本次测试从 1073 → 1047（-26）。这是删除死代码连带删其测试的**合理例外**，非隐藏回归。Claude backend 的存活实现由 `test_sdk_claude_process.py`（9 例）覆盖，未丢核心覆盖。
+
+**为什么现在删**：`backend_factory` 早已不经 CLI 路径；保留只增加"4 个 backend"的认知负担和误导（测试里有人会 patch 错对象）。

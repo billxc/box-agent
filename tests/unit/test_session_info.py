@@ -63,8 +63,8 @@ def test_normalize_codex_usage_maps_cached_to_cache_read():
 
 
 def test_normalize_claude_usage_keeps_cache_keys():
-    from boxagent.agent.claude_process import _normalize_usage
-    out = _normalize_usage({
+    from boxagent.agent.sdk_claude_process import AgentSDKClaude
+    out = AgentSDKClaude._normalize_usage({
         "input_tokens": 1, "output_tokens": 2,
         "cache_read_input_tokens": 3, "cache_creation_input_tokens": 4,
         "service_tier": "standard",

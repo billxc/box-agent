@@ -1,9 +1,9 @@
 """AgentSDKClaude — Claude backend via the official ``claude-agent-sdk``.
 
-This is an alternative to ``ClaudeProcess`` (which spawns the ``claude``
-CLI per turn): we call ``claude_agent_sdk.query()`` directly so each turn
-runs in-process — no subprocess fork-per-message, fewer startup costs,
-typed message stream.
+We call ``claude_agent_sdk.query()`` directly so each turn runs in-process
+— no subprocess fork-per-message, fewer startup costs, typed message
+stream. This is the only Claude backend (the legacy ``claude-cli`` config
+value routes here too).
 
 We satisfy ``AgentBackend`` so this drops into Router / Watchdog /
 SessionPool exactly like the CLI backends.
