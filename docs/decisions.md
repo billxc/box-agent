@@ -463,3 +463,19 @@ CLI 子进程那条路准备废弃。为了不强迫所有用户立刻改 `~/.bo
 **达成**：删 `workgroup/` 包后，core/cluster 运行时无 import 崩溃（gateway 的 workgroup 运行时 import 全在守卫块内；cluster 对 workgroup 只剩 TYPE_CHECKING）。peer 消息能力随 workgroup 一起出现/消失。
 
 **测试**：新增 test_workgroup_prompt_fragment.py（5）+ test_peer_conditional_wiring.py（2）；peer 3 个测试改 import 路径。全量 1086 passed（基线 1073 + 13）。
+
+## 2026-06-28 — topology→workgroup 依赖反转（yait #98 Phase 5）
+
+接 Phase 1-4，处理最后一处**真实的 cluster→workgroup 运行时耦合**：`TopologyService` 此前通过 `set_workgroup_manager` 持有 `WorkgroupManager`，在 `build_peer_descriptors` / `push_peers_snapshot_to_sats` 里读 `workgroup_manager.routers` 拿"本机活跃 workgroup admin 名字"。
+
+**反转**：
+- 删 `TopologyService.set_workgroup_manager` + `self.workgroup_manager` + TYPE_CHECKING 的 `WorkgroupManager` import
+- 改为 `set_local_workgroup_provider(callable)` —— 一个返回本机活跃 workgroup admin 名字列表的回调
+- `workgroup/wiring.py` 在 install_workgroup 里注册 `lambda: list(manager.routers.keys())`
+- `config.workgroups`（core 的 AppConfig 字段）读取保留 —— 那是 config 字段访问，非 workgroup 包依赖
+
+**效果**：cluster 层不再 import / 持有 `WorkgroupManager`。依赖方向掰正：不再是"cluster 设施反向依赖 workgroup"，而是"workgroup 启动时把自己的 bot 名字注册进 cluster"。`cluster/` 对 workgroup 现在只剩 `http_routes.py` 一处 TYPE_CHECKING 的 `PeerService` 类型注解（无运行时依赖）。
+
+**为什么不连 config.workgroups 一起反转**：`config.workgroups` 是 AppConfig（core）的字段，topology 读它是读 config，不是依赖 workgroup 包。强行也反转会把 `local_bot_descriptors`（按 web_channels 枚举本机 bot）搅复杂，收益不抵成本。
+
+**测试**：`test_topology_service` 的 set/assert 改 provider；`test_cluster_peer_e2e` 的 build_peer_descriptors 注入改 provider。全量 1064 passed（行为逐字节不变）。

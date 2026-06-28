@@ -1,7 +1,7 @@
 """Tests for TopologyService — composition replacement for TopologyMixin.
 
 Locks the public contract: config/web_channels in __init__, host_election
-+ workgroup_manager injected via setters (Phase-2 DI).
++ a local-workgroup-name provider injected via setters (Phase-2 DI).
 """
 
 from unittest.mock import MagicMock
@@ -29,7 +29,7 @@ class TestTopologyServiceConstruction:
     def test_phase2_deps_default_none(self):
         ts = _make()
         assert ts.host_election is None
-        assert ts.workgroup_manager is None
+        assert ts._local_workgroup_provider is None
 
 
 class TestTopologyServicePhase2:
@@ -39,11 +39,13 @@ class TestTopologyServicePhase2:
         ts.set_host_election(he)
         assert ts.host_election is he
 
-    def test_set_workgroup_manager(self):
+    def test_set_local_workgroup_provider(self):
         ts = _make()
-        wm = MagicMock()
-        ts.set_workgroup_manager(wm)
-        assert ts.workgroup_manager is wm
+        def provider():
+            return ["war-room"]
+        ts.set_local_workgroup_provider(provider)
+        assert ts._local_workgroup_provider is provider
+        assert ts._local_workgroup_names() == ["war-room"]
 
 
 class TestTopologyServiceLocalIdentity:

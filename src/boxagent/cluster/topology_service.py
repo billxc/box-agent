@@ -4,8 +4,10 @@ Composition class. Held by Gateway as ``self._topology``. Two-phase DI:
 
 - Phase 1 (constructor): config + shared web_channels dict (read for the
   local bot list).
-- Phase 2 (setters): ``set_host_election`` / ``set_workgroup_manager`` after
-  those siblings exist.
+- Phase 2 (setters): ``set_host_election`` after it exists, and
+  ``set_local_workgroup_provider`` (a callback the workgroup module
+  registers so topology can enumerate local workgroup admins without
+  importing the workgroup package).
 
 Public surface (no leading underscore):
 - ``local_machine_id`` / ``local_role`` / ``local_bot_descriptors``
@@ -17,14 +19,13 @@ Public surface (no leading underscore):
 
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from boxagent.log import Category, log
 
 if TYPE_CHECKING:
     from boxagent.cluster.host_election import HostElection
     from boxagent.config import AppConfig
-    from boxagent.workgroup import WorkgroupManager
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +41,20 @@ class TopologyService:
         self.web_channels = web_channels
         # Phase 2 deps
         self.host_election: "HostElection | None" = None
-        self.workgroup_manager: "WorkgroupManager | None" = None
+        # Callback → names of workgroup admins active on this node. Registered
+        # by the workgroup module (see workgroup.wiring) so the cluster layer
+        # never imports WorkgroupManager.
+        self._local_workgroup_provider: "Callable[[], list[str]] | None" = None
 
     def set_host_election(self, host_election: "HostElection") -> None:
         self.host_election = host_election
 
-    def set_workgroup_manager(self, workgroup_manager: "WorkgroupManager") -> None:
-        self.workgroup_manager = workgroup_manager
+    def set_local_workgroup_provider(self, provider: "Callable[[], list[str]]") -> None:
+        self._local_workgroup_provider = provider
+
+    def _local_workgroup_names(self) -> list[str]:
+        provider = self._local_workgroup_provider
+        return list(provider()) if provider is not None else []
 
     # ── HostElection-owned views (re-exposed read-only) ──
 
@@ -105,20 +113,19 @@ class TopologyService:
 
     def build_peer_descriptors(self, exclude: str = "") -> list[dict]:
         out: list[dict] = []
-        if self.workgroup_manager is not None:
-            for name in self.workgroup_manager.routers:
-                if name == exclude:
-                    continue
-                if name not in self.config.workgroups:
-                    continue
-                workgroup = self.config.workgroups[name]
-                out.append({
-                    "name": name,
-                    "machine": "local",
-                    "online": True,
-                    "kind": "workgroup",
-                    "description": workgroup.display_name or "",
-                })
+        for name in self._local_workgroup_names():
+            if name == exclude:
+                continue
+            if name not in self.config.workgroups:
+                continue
+            workgroup = self.config.workgroups[name]
+            out.append({
+                "name": name,
+                "machine": "local",
+                "online": True,
+                "kind": "workgroup",
+                "description": workgroup.display_name or "",
+            })
         if self.guest_registry is not None:
             for machine_id, bot in self.guest_registry.list_bots():
                 if bot.kind != "workgroup" or bot.name == exclude:
@@ -168,20 +175,19 @@ class TopologyService:
                 bot.name for bot in session.bots if bot.kind == "workgroup"
             }
             peers: list[dict] = []
-            if self.workgroup_manager is not None:
-                for workgroup_name in self.workgroup_manager.routers:
-                    if workgroup_name in self_workgroup_names:
-                        continue
-                    if workgroup_name not in self.config.workgroups:
-                        continue
-                    workgroup = self.config.workgroups[workgroup_name]
-                    peers.append({
-                        "name": workgroup_name,
-                        "machine": self.config.node_id or "host",
-                        "online": True,
-                        "kind": "workgroup",
-                        "description": workgroup.display_name or "",
-                    })
+            for workgroup_name in self._local_workgroup_names():
+                if workgroup_name in self_workgroup_names:
+                    continue
+                if workgroup_name not in self.config.workgroups:
+                    continue
+                workgroup = self.config.workgroups[workgroup_name]
+                peers.append({
+                    "name": workgroup_name,
+                    "machine": self.config.node_id or "host",
+                    "online": True,
+                    "kind": "workgroup",
+                    "description": workgroup.display_name or "",
+                })
             for other_mid, other_bot in self.guest_registry.list_bots():
                 if other_mid == machine_id:
                     continue
