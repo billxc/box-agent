@@ -10,16 +10,28 @@ from __future__ import annotations
 
 from boxagent.agent.codex_process import CodexProcess
 from boxagent.agent.mcp_endpoints import pick_mcp_endpoints
-from boxagent.agent_env import AgentEnv
+from boxagent.agent_env import AgentEnv, WorkgroupContext
 
 
 def _env(tmp_path, **overrides):
-    """Build an AgentEnv with mcp-port.txt staged in tmp_path."""
+    """Build an AgentEnv with mcp-port.txt staged in tmp_path.
+
+    Accepts the old flat workgroup kwargs (``workgroup_role`` /
+    ``workgroup_agents`` / ``has_peer_channel``) and folds them into a
+    nested :class:`WorkgroupContext` so call sites stay terse.
+    """
     (tmp_path / "mcp-port.txt").write_text("9390\n")
+    role = overrides.pop("workgroup_role", "")
+    agents = overrides.pop("workgroup_agents", ())
+    has_peer_channel = overrides.pop("has_peer_channel", False)
     base = dict(
         bot_name="bot-1",
         local_dir=str(tmp_path),
     )
+    if role or agents or has_peer_channel:
+        base["workgroup"] = WorkgroupContext(
+            role=role, agents=tuple(agents), has_peer_channel=has_peer_channel,
+        )
     base.update(overrides)
     return AgentEnv(**base)
 

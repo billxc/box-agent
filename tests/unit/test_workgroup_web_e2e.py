@@ -249,7 +249,8 @@ async def test_admin_env_carries_workgroup_role(tmp_path):
         assert envs, "admin backend.send was never called"
         env = envs[0]
         assert env is not None, "router did not pass an AgentEnv"
-        assert env.workgroup_role == "admin", f"role lost: {env.workgroup_role!r}"
+        assert env.workgroup is not None, "admin env lost its workgroup context"
+        assert env.workgroup.role == "admin", f"role lost: {env.workgroup.role!r}"
         assert env.is_workgroup_admin is True
 
 
@@ -269,7 +270,8 @@ async def test_specialist_env_carries_workgroup_role(tmp_path):
         envs = [e for fp in fakes[spec_name] for e in fp.received_envs]
         assert envs, "specialist backend.send was never called"
         env = envs[0]
-        assert env.workgroup_role == "specialist", f"role lost: {env.workgroup_role!r}"
+        assert env.workgroup is not None, "specialist env lost its workgroup context"
+        assert env.workgroup.role == "specialist", f"role lost: {env.workgroup.role!r}"
         assert env.is_specialist is True
         assert env.is_workgroup_admin is False
 

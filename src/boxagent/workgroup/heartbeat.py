@@ -247,7 +247,7 @@ class HeartbeatManager:
         is opt-in and the alternative would be polluting the main session.
         """
         from boxagent.agent.backend_factory import create_backend
-        from boxagent.agent_env import AgentEnv
+        from boxagent.agent_env import AgentEnv, WorkgroupContext
         from boxagent.config import BotConfig
         from boxagent.router.callback import TextCollector
 
@@ -269,7 +269,7 @@ class HeartbeatManager:
             ai_backend=self.ai_backend,
             model=self.model,
             yolo=self.yolo,
-            workgroup_role="admin",
+            workgroup=WorkgroupContext(role="admin"),
         )
 
         # Build a backend that matches admin's ai_backend rather than

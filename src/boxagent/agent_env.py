@@ -81,6 +81,23 @@ def web_channel() -> ChannelInfo:
 
 
 @dataclass(frozen=True)
+class WorkgroupContext:
+    """Workgroup + peer membership for one turn.
+
+    ``None`` on a plain bot. Grouping these fields here keeps the
+    workgroup concern out of :class:`AgentEnv`'s top level — deleting the
+    workgroup module later means dropping this class and one ``AgentEnv``
+    field rather than surgery across the dataclass.
+    """
+
+    role: str = ""  # "admin" / "specialist"
+    agents: tuple[str, ...] = ()  # specialist names (admin only)
+    running_tasks: tuple = ()  # in-flight delegated tasks
+    peers: tuple = ()  # admins this admin can send_to_peer (cluster registry)
+    has_peer_channel: bool = False  # True = can use peer MCP
+
+
+@dataclass(frozen=True)
 class AgentEnv:
     """Per-message agent environment.
 
@@ -93,7 +110,6 @@ class AgentEnv:
     channel: ChannelInfo = field(default_factory=lambda: ChannelInfo(platform="unknown"))
     chat_id: str = ""
     user_id: str = ""
-    via_workgroup: bool = False
 
     # ── Agent identity ──
     bot_name: str = ""
@@ -105,13 +121,9 @@ class AgentEnv:
 
     # ── Credentials ──
     telegram_token: str = ""  # non-empty = can use telegram MCP
-    has_peer_channel: bool = False  # True = can use peer MCP
 
     # ── Workgroup ──
-    workgroup_role: str = ""  # "" / "admin" / "specialist"
-    workgroup_agents: tuple[str, ...] = ()
-    running_tasks: tuple = ()
-    peers: tuple = ()  # workgroup admins this admin can send_to_peer (cluster registry)
+    workgroup: WorkgroupContext | None = None  # None on plain bots
 
     # ── Config ──
     ai_backend: str = "claude-cli"
@@ -123,11 +135,15 @@ class AgentEnv:
 
     @property
     def is_workgroup_admin(self) -> bool:
-        return self.workgroup_role == "admin"
+        return self.workgroup is not None and self.workgroup.role == "admin"
 
     @property
     def is_specialist(self) -> bool:
-        return self.workgroup_role == "specialist"
+        return self.workgroup is not None and self.workgroup.role == "specialist"
+
+    @property
+    def has_peer_channel(self) -> bool:
+        return self.workgroup is not None and self.workgroup.has_peer_channel
 
     @property
     def has_telegram(self) -> bool:

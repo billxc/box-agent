@@ -43,14 +43,16 @@ def test_prompt_tools_exist_in_registry():
 def test_admin_prompt_only_mentions_real_tools():
     """Scan the rendered admin system prompt for ``XXX MCP tool`` patterns
     and assert each name resolves to a registered tool."""
-    from boxagent.agent_env import AgentEnv, ChannelInfo
+    from boxagent.agent_env import AgentEnv, ChannelInfo, WorkgroupContext
 
     env = AgentEnv(
         channel=ChannelInfo(platform="web"),
         bot_name="test-admin",
-        workgroup_role="admin",
-        workgroup_agents=("dev-1",),
-        has_peer_channel=True,
+        workgroup=WorkgroupContext(
+            role="admin",
+            agents=("dev-1",),
+            has_peer_channel=True,
+        ),
     )
     prompt = build_session_context(env=env)
 

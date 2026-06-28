@@ -211,6 +211,9 @@ guest_registry.get(machine_id_for_admin_b).call()                │
 
 ### `IncomingMessage` (transports/base.py:24)
 
+> **更新（2026-06-28，yait #98 Phase 1）**：`via_workgroup` 字段已删除——实测它从不被读来
+> 驱动行为（纯空载透传）。下面保留旧描述作对照。
+
 ```python
 class IncomingMessage:
     channel: str            # "telegram" / "web" / "internal"
@@ -235,6 +238,12 @@ class IncomingMessage:
 **毛病**：peer message 该不该带 `via_workgroup`？现在不带，但它确实是"非用户输入"。语义不一致。
 
 ### `AgentEnv` (agent_env.py:84)
+
+> **更新（2026-06-28，yait #98 Phase 1）**：下方"5 个 workgroup 字段平铺"的描述已过时。
+> 现在这些字段已归并进嵌套的 `workgroup: WorkgroupContext | None`（`role` / `agents` /
+> `running_tasks` / `peers` / `has_peer_channel`），`is_workgroup_admin` / `is_specialist` /
+> `has_peer_channel` 改为 property 委托到它；死字段 `via_workgroup` 已删除。下面保留旧描述
+> 作为重构前的对照。
 
 12 个字段里**5 个是 workgroup-specific**：
 

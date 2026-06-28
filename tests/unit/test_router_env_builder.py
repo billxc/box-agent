@@ -37,7 +37,6 @@ def _make_msg(**overrides):
         user_id="111",
         text="hi",
         trusted=True,
-        via_workgroup=False,
         channel_info=None,
     )
     base.update(overrides)
@@ -80,10 +79,15 @@ def test_msg_channel_info_wins_over_msg_channel():
 
 
 def test_running_tasks_and_peers_become_tuples():
+    # running_tasks / peers live under env.workgroup, which env_builder only
+    # populates for a workgroup admin (role / peer channel / agents set).
     router = _make_router(
+        workgroup_role="admin",
+        has_peer_channel=True,
         get_running_tasks=lambda: [{"task_id": "t1"}],
         get_peers=lambda: [{"name": "p1"}],
     )
     env = build_env(_make_msg(), router)
-    assert env.running_tasks == ({"task_id": "t1"},)
-    assert env.peers == ({"name": "p1"},)
+    assert env.workgroup is not None
+    assert env.workgroup.running_tasks == ({"task_id": "t1"},)
+    assert env.workgroup.peers == ({"name": "p1"},)
