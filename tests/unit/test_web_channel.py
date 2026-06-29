@@ -84,6 +84,8 @@ class TestInject:
 
         channel.on_message = on_msg
         await channel.inject(chat_id="c1", text="hi from web")
+        # Dispatch is fire-and-forget; let the spawned turn run.
+        await asyncio.sleep(0)
         assert len(received) == 1
         msg = received[0]
         assert msg.channel == "web"
@@ -91,6 +93,23 @@ class TestInject:
         assert msg.text == "hi from web"
         assert msg.trusted is True
         assert msg.channel_info.platform == "web"
+
+    async def test_inject_returns_before_slow_turn_completes(self, channel):
+        """Regression: /api/send must not block on the full turn (cross-machine
+        the POST is capped at 30s → long replies were 504'd and dropped)."""
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow(_):
+            started.set()
+            await release.wait()
+
+        channel.on_message = slow
+        # Returns immediately even though the turn is still running.
+        await asyncio.wait_for(channel.inject(chat_id="c1", text="x"), timeout=0.5)
+        await asyncio.wait_for(started.wait(), timeout=0.5)  # turn runs in background
+        release.set()
+        await asyncio.sleep(0)  # let the background turn finish
 
     async def test_inject_echoes_user_event(self, channel):
         async def on_msg(_):

@@ -498,3 +498,11 @@ CLI 子进程那条路准备废弃。为了不强迫所有用户立刻改 `~/.bo
 **刻意留在 `tests/unit/`**（cluster/peer-routing 集成，非纯 workgroup 包测试）：`test_cluster_peer.py` / `test_cluster_peer_e2e.py` / `test_peer_conditional_wiring.py` / `test_topology_service.py`。
 
 **不变量**：全量仍 1064 passed —— 纯重定位，零测试增减。用脚本按 class 边界切分 + 自动检测每文件实际用到的 import（避免 F401）。
+
+## 2026-06-29 — 修 WebUI 跨机整条丢消息：/api/send fire-and-forget（yait #100）
+
+症状：guest 浏览器正常聊天整条回复偶发消失 + 504 host timeout。非 buffer/queue（queue full 0 次）、非重连。
+
+根因：`WebChannel.inject()` `await on_message(msg)` 阻塞整轮；guest 的 `/api/send` 经 `guest_client.call` 中继到 host，硬超时 30s（rpc.py:92）。任何 >30s 回复 → 504 → turn 丢。回复本应走独立 SSE `/api/stream`（`_proxy_via_host_stream`，无超时），send 不该等整轮。
+
+修复：删掉 `inject` 里阻塞的 `await self.on_message(msg)`，换成一行 `asyncio.create_task(...)`。回复/错误走独立 SSE，`/api/send` 立即返回不撞 30s。活跃 turn task 一直在 await I/O、被 loop 引用，不会被 GC，无需额外跟踪。测试新增"慢 handler 下 inject 不阻塞"。

@@ -204,7 +204,10 @@ class WebChannel(Channel):
             trusted=True,
             channel_info=ChannelInfo(platform="web"),
         )
-        await self.on_message(msg)
+        # Reply streams back over the SSE channel, so /api/send must not block
+        # on the turn: cross-machine the POST is relayed with a 30s cap, so a
+        # long reply returned 504 "host timeout" and the whole turn was lost.
+        asyncio.create_task(self.on_message(msg))
 
     def _allocate_id(self) -> str:
         self._next_msg_id += 1
