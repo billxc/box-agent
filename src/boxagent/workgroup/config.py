@@ -12,12 +12,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from boxagent.config import (
-    ConfigError,
-    WorkgroupConfig,
-    node_matches,
-    resolve_boxagent_dir,
-)
+from boxagent.config import ConfigError, WorkgroupConfig, node_matches
+from boxagent.utils import resolve_boxagent_dir
 
 
 def parse_workgroup(
@@ -28,16 +24,16 @@ def parse_workgroup(
     config_dir: Path | str | None = None,
 ) -> WorkgroupConfig:
     """Parse a standalone workgroup configuration block."""
-    ba_dir = resolve_boxagent_dir(box_agent_dir)
-    config_base = Path(config_dir).expanduser() if config_dir else None
+    box_agent_root = resolve_boxagent_dir(box_agent_dir)
+    config_base_dir = Path(config_dir).expanduser() if config_dir else None
 
     # Workspace (required)
     workspace = raw.get("workspace", "")
     if workspace:
-        ws_path = Path(workspace).expanduser()
-        if not ws_path.is_absolute():
-            ws_path = ba_dir / ws_path
-        workspace = str(ws_path)
+        workspace_path = Path(workspace).expanduser()
+        if not workspace_path.is_absolute():
+            workspace_path = box_agent_root / workspace_path
+        workspace = str(workspace_path)
 
     # Discord support has been removed; legacy admin.discord_* / discord_bot_id
     # / transport fields are silently ignored.
@@ -51,11 +47,11 @@ def parse_workgroup(
     display_tool_calls = raw.get("display", {}).get("tool_calls", "silent")
 
     extra_skill_dirs: list[str] = []
-    for raw_dir in raw.get("extra_skill_dirs", []):
-        path = Path(raw_dir).expanduser()
-        if not path.is_absolute() and config_base is not None:
-            path = config_base / path
-        extra_skill_dirs.append(str(path))
+    for raw_skill_dir in raw.get("extra_skill_dirs", []):
+        skill_path = Path(raw_skill_dir).expanduser()
+        if not skill_path.is_absolute() and config_base_dir is not None:
+            skill_path = config_base_dir / skill_path
+        extra_skill_dirs.append(str(skill_path))
 
     heartbeat_interval_seconds = int(raw.get("heartbeat_interval_seconds", 0))
     display_heartbeat = bool(raw.get("display_heartbeat", False))
