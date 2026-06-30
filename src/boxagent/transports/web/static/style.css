@@ -493,6 +493,7 @@ body.sidebar-dragging * { user-select: none !important; }
 }
 
 .msg {
+  display: block; /* <chat-message> custom element defaults to inline */
   max-width: min(760px, 88%);
   padding: 8px 12px 10px 12px;
   word-wrap: break-word;

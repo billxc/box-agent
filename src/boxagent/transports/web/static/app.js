@@ -265,54 +265,11 @@
     requestAnimationFrame(() => { messagesEl.scrollTop = messagesEl.scrollHeight; });
   }
 
-  function renderMarkdown(text) {
-    try {
-      return window.marked
-        ? window.marked.parse(text, { breaks: true, gfm: true })
-        : escapeHtml(text);
-    } catch { return escapeHtml(text); }
-  }
-  function escapeHtml(s) {
-    return s.replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
-  }
-
-  function buildMessage(role, text, opts = {}) {
-    const el = document.createElement("div");
-    el.className = "msg " + role;
-    const markdown_el = document.createElement("div");
-    markdown_el.className = "markdown";
-    markdown_el.innerHTML = role === "user" ? escapeHtml(text).replace(/\n/g, "<br>") : renderMarkdown(text);
-    el.appendChild(markdown_el);
-    // Per-message timestamp. ts is epoch seconds (server-assigned via WebChannel
-    // _publish, or stored in transcript). Falls back to "now" for safety.
-    const tsSec = (opts.ts && opts.ts > 0) ? opts.ts : (Date.now() / 1000);
-    const time = document.createElement("time");
-    time.className = "msg-time";
-    const d = new Date(tsSec * 1000);
-    time.textContent = _fmtMessageTime(d);
-    time.title = d.toLocaleString();
-    time.dateTime = d.toISOString();
-    el.appendChild(time);
-    if (opts.id) el.dataset.id = opts.id;
-    return el;
-  }
-
-  // HH:MM if today, otherwise MM-DD HH:MM. Locale-aware via Intl, 24h to keep
-  // chats compact and unambiguous.
-  function _fmtMessageTime(d) {
-    const now = new Date();
-    const sameDay = d.getFullYear() === now.getFullYear()
-      && d.getMonth() === now.getMonth()
-      && d.getDate() === now.getDate();
-    const pad = (n) => String(n).padStart(2, "0");
-    const time_str = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    if (sameDay) return time_str;
-    return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${time_str}`;
-  }
-
+  // Message bubbles render via the <chat-message> custom element
+  // (components/chat-message.js); shared markdown/escape live in util.js.
   function addMessage(role, text, opts = {}) {
     removeTyping();
-    const el = buildMessage(role, text, opts);
+    const el = ChatMessage.create(role, text, opts);
     messagesEl.appendChild(el);
     scrollDown();
     return el;
@@ -561,7 +518,7 @@
         ToolCard.applyResult(frag, h.tool_id || "", !!h.ok, h.summary || "", h.error || "");
         continue;
       }
-      const el = buildMessage(h.role, h.text, { ts: h.ts });
+      const el = ChatMessage.create(h.role, h.text, { ts: h.ts });
       el.style.animation = "none";
       frag.appendChild(el);
     }
@@ -709,14 +666,14 @@
         const s = state.streamMsgs[ev.message_id];
         if (!s) return;
         s.text = ev.text != null ? ev.text : s.text + (ev.delta || "");
-        s.el.querySelector(".markdown").innerHTML = renderMarkdown(s.text);
+        s.el.setText(s.text);
         scrollDown();
         break;
       }
       case "stream_end": {
         const s = state.streamMsgs[ev.message_id];
         if (s) {
-          if (ev.text) s.el.querySelector(".markdown").innerHTML = renderMarkdown(ev.text);
+          if (ev.text) s.el.setText(ev.text);
           touchSession(ev.text || s.text);
           delete state.streamMsgs[ev.message_id];
         }
