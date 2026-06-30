@@ -19,4 +19,19 @@
       return window.escapeHtml(text);
     }
   };
+
+  // Single-glyph icon for a chat platform.
+  window.platformIcon = function (platform) {
+    return ({ telegram: "✈︎", web: "◉", claude: "✦", other: "•", unknown: "•" })[platform] || "•";
+  };
+
+  // Coarse "N{s,m,h,d} ago" from a unix-seconds timestamp.
+  window.formatRelative = function (ts) {
+    if (!ts) return "";
+    const diff = Math.floor(Date.now() / 1000 - ts);
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+  };
 })();

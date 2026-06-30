@@ -19,6 +19,9 @@ for (const rel of [
   "components/recap-banner.js",
   "components/session-info.js",
   "components/session-picker.js",
+  "components/recents-panel.js",
+  "components/machines-panel.js",
+  "components/sessions-panel.js",
 ]) {
   const code = fs.readFileSync(path.join(staticDir, rel), "utf8");
   vm.runInThisContext(code, { filename: rel });
@@ -31,6 +34,9 @@ module.exports = {
   get RecapBanner() { return globalThis.RecapBanner; },
   get SessionInfo() { return globalThis.SessionInfo; },
   get SessionPicker() { return globalThis.SessionPicker; },
+  get RecentsPanel() { return globalThis.RecentsPanel; },
+  get MachinesPanel() { return globalThis.MachinesPanel; },
+  get SessionsPanel() { return globalThis.SessionsPanel; },
   get escapeHtml() { return globalThis.escapeHtml; },
   get renderMarkdown() { return globalThis.renderMarkdown; },
 };

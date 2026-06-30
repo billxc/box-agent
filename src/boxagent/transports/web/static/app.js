@@ -6,8 +6,8 @@
 
   const $ = (id) => document.getElementById(id);
   const messagesEl = $("messages");
-  const machineList = $("machine-list");
-  const sessionList = $("session-list");
+  const machinesPanel = $("machines");
+  const sessionsPanel = $("sessions");
   const sessionsOf = $("sessions-of");
   const chatTitle = $("chat-title");
   const sessionInfoEl = $("session-info");
@@ -32,7 +32,6 @@
     machines: [],         // [{machine_id, online, role, self, bots, last_seen}]
     bot: null,            // selected bot name
     botMachine: null,     // selected bot's machine_id (for display)
-    collapsed: new Set(JSON.parse(localStorage.getItem("ba.collapsedMachines") || "[]")),
     sessions: {},         // "machine|bot" -> {chat_id: {title, preview, ts}}  (local browser-side)
     serverSessions: {},   // "machine|bot" -> [{chat_id, platform, preview, last_ts, ...}]
     chatId: null,
@@ -61,120 +60,19 @@
 
   function botKey(machine, bot) { return `${machine}|${bot}`; }
   function curKey() { return botKey(state.botMachine, state.bot); }
-  function recentKey(machine, bot, chatId) { return `${machine}|${bot}|${chatId}`; }
 
-  // ── Recents (cross-bot, browser-local) ──
-  // Stored as an array in localStorage["ba.recents"], capped at RECENTS_MAX,
-  // newest first. Each entry: {machine, bot, chat_id, title, preview, ts,
-  // platform, display_name}. Click → switch bot+machine then open chat.
-  const RECENTS_MAX = 25;
-
-  function loadRecents() {
-    try {
-      const raw = JSON.parse(localStorage.getItem("ba.recents") || "[]");
-      return Array.isArray(raw) ? raw : [];
-    } catch { return []; }
-  }
-  function saveRecents(arr) {
-    localStorage.setItem("ba.recents", JSON.stringify(arr.slice(0, RECENTS_MAX)));
-  }
-  // Bump a chat to the top of recents. Called on switchChat + on every
-  // incoming/outgoing message so the most-active chat sits at the top.
-  function touchRecent(patch) {
-    if (!patch.machine || !patch.bot || !patch.chat_id) return;
-    const key = recentKey(patch.machine, patch.bot, patch.chat_id);
-    const all = loadRecents();
-    const idx = all.findIndex(r => recentKey(r.machine, r.bot, r.chat_id) === key);
-    const prev = idx >= 0 ? all[idx] : {};
-    if (idx >= 0) all.splice(idx, 1);
-    const merged = {
-      machine: patch.machine,
-      bot: patch.bot,
-      chat_id: patch.chat_id,
-      title: patch.title || prev.title || patch.chat_id,
-      preview: patch.preview != null ? patch.preview : (prev.preview || ""),
-      recap: patch.recap != null ? patch.recap : (prev.recap || ""),
-      platform: patch.platform || prev.platform || "unknown",
-      display_name: patch.display_name || prev.display_name || patch.bot,
-      ts: patch.ts || Math.floor(Date.now() / 1000),
-    };
-    all.unshift(merged);
-    saveRecents(all);
-    renderRecents();
-  }
-  function removeRecent(machine, bot, chatId) {
-    const key = recentKey(machine, bot, chatId);
-    const all = loadRecents().filter(r => recentKey(r.machine, r.bot, r.chat_id) !== key);
-    saveRecents(all);
-    renderRecents();
-  }
-  function clearRecents() {
-    if (!confirm("Clear all recent chats from this browser?")) return;
-    saveRecents([]);
-    renderRecents();
-  }
-
-  function renderRecents() {
-    const ul = $("recents-list");
-    if (!ul) return;
-    ul.innerHTML = "";
-    const all = loadRecents();
-    if (all.length === 0) {
-      const li = document.createElement("li");
-      li.style.color = "var(--muted)";
-      li.style.cursor = "default";
-      li.textContent = "No recent chats";
-      ul.appendChild(li);
-      return;
-    }
-    const onlineMachines = new Set(
-      (state.machines || []).filter(m => m.online).map(m => m.machine_id),
-    );
-    for (const r of all) {
-      const li = document.createElement("li");
-      const isActive = state.bot === r.bot
-        && state.botMachine === r.machine
-        && state.chatId === r.chat_id;
-      if (isActive) li.classList.add("active");
-      if (state.machines.length && !onlineMachines.has(r.machine)) li.classList.add("offline");
-
-      const plat = document.createElement("span");
-      plat.className = "plat";
-      plat.title = r.platform;
-      plat.textContent = platformIcon(r.platform);
-
-      const body = document.createElement("div");
-      body.className = "recent-body";
-      const title = document.createElement("div");
-      title.className = "recent-title";
-      title.textContent = r.title || r.chat_id;
-      const meta = document.createElement("div");
-      meta.className = "recent-meta";
-      meta.textContent = `${r.display_name || r.bot} @ ${r.machine}${r.preview ? " · " + r.preview : ""}`;
-      body.appendChild(title);
-      body.appendChild(meta);
-
-      const time = document.createElement("span");
-      time.className = "recent-time";
-      time.textContent = r.ts ? formatRelative(r.ts) : "";
-
-      const del = document.createElement("button");
-      del.className = "recent-del";
-      del.textContent = "×";
-      del.title = "Remove from recents";
-      del.onclick = (e) => {
-        e.stopPropagation();
-        removeRecent(r.machine, r.bot, r.chat_id);
-      };
-
-      li.appendChild(plat);
-      li.appendChild(body);
-      li.appendChild(time);
-      li.appendChild(del);
-      li.onclick = () => openRecent(r);
-      ul.appendChild(li);
-    }
-  }
+  // ── Recents (cross-bot, browser-local) — component: components/recents-panel.js
+  // The <recents-panel> element owns the localStorage data + list render. We
+  // inject the current selection (for active/offline marking) and handle its
+  // "open" event with the navigation below.
+  const recents = $("recents");
+  recents.getContext = () => ({
+    machines: state.machines,
+    bot: state.bot,
+    botMachine: state.botMachine,
+    chatId: state.chatId,
+  });
+  recents.addEventListener("open", (e) => openRecent(e.detail));
 
   // Open a recent: switch bot+machine if needed, then open the chat.
   // Falls back to a friendly alert if the target machine is offline.
@@ -213,10 +111,6 @@
       const { sessions } = await r.json();
       return sessions || [];
     } catch { return []; }
-  }
-
-  function platformIcon(p) {
-    return ({ telegram: "✈︎", web: "◉", claude: "✦", other: "•", unknown: "•" })[p] || "•";
   }
 
   function setConn(state_) {
@@ -295,36 +189,8 @@
   function shortId(cid) { return cid.length > 12 ? cid.slice(0, 6) + "…" + cid.slice(-4) : cid; }
 
   function refreshSessionList() {
-    sessionList.innerHTML = "";
-    const entries = buildSessionList();
-    if (entries.length === 0) {
-      const li = document.createElement("li");
-      li.style.color = "var(--muted)";
-      li.style.cursor = "default";
-      li.textContent = "No sessions yet — start chatting";
-      sessionList.appendChild(li);
-      return;
-    }
-    for (const meta of entries) {
-      const li = document.createElement("li");
-      if (meta.chat_id === state.chatId) li.classList.add("active");
-      const title = document.createElement("div");
-      title.className = "session-title";
-      title.innerHTML = `<span class="plat" title="${meta.platform}">${platformIcon(meta.platform)}</span> ${escapeHtml(meta.title)}`;
-      const preview = document.createElement("div");
-      preview.className = "session-preview";
-      preview.textContent = meta.preview || "(no messages yet)";
-      li.appendChild(title); li.appendChild(preview);
-      if (meta.recap) {
-        const recap = document.createElement("div");
-        recap.className = "session-recap";
-        recap.textContent = meta.recap;
-        recap.title = meta.recap;
-        li.appendChild(recap);
-      }
-      li.onclick = () => { switchChat(meta.chat_id); closeSidebar(); };
-      sessionList.appendChild(li);
-    }
+    // <sessions-panel> renders; app.js owns the server+local merge.
+    sessionsPanel.render(buildSessionList(), { chatId: state.chatId });
   }
 
   async function restartMachine(machineId, online) {
@@ -376,7 +242,7 @@
     const botInfo = (state.machines || [])
       .find(m => m.machine_id === state.botMachine)?.bots
       ?.find(b => b.name === state.bot);
-    touchRecent({
+    recents.touch({
       machine: state.botMachine,
       bot: state.bot,
       chat_id: state.chatId,
@@ -490,7 +356,7 @@
     const botInfo = (state.machines || [])
       .find(m => m.machine_id === state.botMachine)?.bots
       ?.find(b => b.name === state.bot);
-    touchRecent({
+    recents.touch({
       machine: state.botMachine,
       bot: state.bot,
       chat_id: chatId,
@@ -664,7 +530,7 @@
     const { machines } = await r.json();
     state.machines = machines;
     renderMachines();
-    renderRecents();
+    recents.render();
     // Auto-pick a default bot on first load
     if (!state.bot) {
       const lastBot = localStorage.getItem("ba.lastBot");
@@ -697,65 +563,8 @@
   }
 
   function renderMachines() {
-    machineList.innerHTML = "";
-    if (state.machines.length === 0) {
-      machineList.innerHTML = "<li class='muted'>No machines</li>";
-      return;
-    }
-    for (const m of state.machines) {
-      const li = document.createElement("li");
-      li.className = "machine" + (m.online ? "" : " offline") + (state.collapsed.has(m.machine_id) ? " collapsed" : "");
-      const head = document.createElement("div");
-      head.className = "machine-head";
-      const dotCls = m.online ? "online" : "offline";
-      const lastSeen = m.online ? "" : ` · ${formatRelative(m.last_seen)}`;
-      head.innerHTML = `
-        <span class="caret"></span>
-        <span class="dot ${dotCls}"></span>
-        <span class="name">${escapeHtml(m.machine_id)}</span>
-        ${m.role && m.role !== "guest" ? `<span class="role">${m.role}${typeof m.host_index === "number" && m.host_index >= 0 ? `·#${m.host_index + 1}` : ""}</span>` : ""}
-        ${m.self ? `<span class="role self">this</span>` : ""}
-        <span class="last">${lastSeen}</span>
-        <button class="machine-restart icon-btn" title="Restart this node">⟲</button>
-      `;
-      head.onclick = (e) => {
-        if (e.target.classList.contains("machine-restart")) {
-          e.stopPropagation();
-          restartMachine(m.machine_id, m.online);
-          return;
-        }
-        toggleMachine(m.machine_id);
-      };
-      li.appendChild(head);
-
-      const bots = document.createElement("ul");
-      bots.className = "machine-bots";
-      for (const b of (m.bots || [])) {
-        const bot_li = document.createElement("li");
-        if (state.bot === b.name && state.botMachine === m.machine_id) {
-          bot_li.classList.add("active");
-        }
-        bot_li.innerHTML = `<span>${escapeHtml(b.display_name || b.name)}</span><span class="kind">${b.kind || "bot"}</span>`;
-        bot_li.onclick = (e) => {
-          e.stopPropagation();
-          if (!m.online) { alert(`Machine ${m.machine_id} is offline`); return; }
-          selectBot(b.name, m.machine_id);
-        };
-        bots.appendChild(bot_li);
-      }
-      if (!(m.bots || []).length) {
-        bots.innerHTML = "<li class='muted' style='cursor:default;'>(no bots)</li>";
-      }
-      li.appendChild(bots);
-      machineList.appendChild(li);
-    }
-  }
-
-  function toggleMachine(machine_id) {
-    if (state.collapsed.has(machine_id)) state.collapsed.delete(machine_id);
-    else state.collapsed.add(machine_id);
-    localStorage.setItem("ba.collapsedMachines", JSON.stringify([...state.collapsed]));
-    renderMachines();
+    // <machines-panel> renders the tree + owns collapse; app.js owns the data.
+    machinesPanel.render(state.machines, { bot: state.bot, botMachine: state.botMachine });
   }
 
   async function selectBot(botName, machineId) {
@@ -765,7 +574,7 @@
     $("messages-mask").classList.remove("hidden");
     // Also show a loading placeholder in the sidebar's session list so the
     // old bot's sessions don't sit there stale during the fetch.
-    sessionList.innerHTML = "<li class='muted' style='cursor:default;'>Loading sessions…</li>";
+    sessionsPanel.showLoading();
     state.bot = botName;
     state.botMachine = machineId;
     localStorage.setItem("ba.lastBot", botName);
@@ -780,19 +589,14 @@
     closeSidebar();
   }
 
-  function formatRelative(ts) {
-    if (!ts) return "";
-    const diff = Math.floor(Date.now() / 1000 - ts);
-    if (diff < 60) return `${diff}s ago`;
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-    return `${Math.floor(diff / 86400)}d ago`;
-  }
-
   // ── UI events ──
   $("refresh-machines").onclick = () => loadMachines().catch(() => {});
   $("restart-all").onclick = () => restartCluster();
-  $("recents-clear").onclick = () => clearRecents();
+  // Panel components emit intent; app.js owns the navigation + actions.
+  machinesPanel.addEventListener("select-bot", (e) => selectBot(e.detail.bot, e.detail.machine));
+  machinesPanel.addEventListener("restart-machine", (e) => restartMachine(e.detail.machine, e.detail.online));
+  sessionsPanel.addEventListener("select-session", (e) => { switchChat(e.detail.chat_id); closeSidebar(); });
+  $("recents-clear").onclick = () => recents.clear();
   const recentsSection = $("recents-section");
   const recentsToggle = $("recents-toggle");
   if (localStorage.getItem("ba.recentsCollapsed") === "1") {
@@ -969,7 +773,7 @@
   }
 
   // ── Boot ──
-  renderRecents();  // populate from localStorage before machines come back
+  recents.render();  // populate from localStorage before machines come back
   loadMachines().then(startMachinePoll).catch((e) => {
     console.error(e);
     setConn("offline");
