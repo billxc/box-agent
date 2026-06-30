@@ -1,9 +1,13 @@
 // <tool-card> — a tool-call card as a self-contained custom element.
 //
-// Native Web Component, no framework / no build step. Owns its own DOM and
-// lifecycle so app.js no longer juggles a `{el, headerEl, bodyEl, resultEl}`
-// registry (`state.toolCards`). Created via `document.createElement("tool-card")`;
-// call `.setCall(name, args)` then later `.setResult(ok, summary, error)`.
+// Native Web Component, no framework / no build step. Owns its own DOM,
+// result lifecycle, and the routing (find / create / dedup) of tool events to
+// cards — callers just hand it a container + the event. Depends on nothing
+// outside this file (browser APIs only).
+//
+// Usage: `ToolCard.upsertCall(root, toolId, name, args)` then later
+// `ToolCard.applyResult(root, toolId, ok, summary, error)`, where `root` is the
+// live #messages element or a detached history fragment.
 //
 // Built lazily in connectedCallback so a card can be staged into a detached
 // history fragment (setCall/setResult buffered) and renders once inserted.
