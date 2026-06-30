@@ -126,3 +126,47 @@ WC 化后每个组件都要肉眼手验，迟早漏。加自动测试，但**不
 覆盖：util escapeHtml/renderMarkdown（含 XSS fallback）、tool-card upsert/幂等/result/synth/subagent/**detached-fragment 连接时渲染时序**、chat-message markdown/user 转义/setText 流式/data-id/时间戳。15 个子测试。
 
 **为什么不 jsdom**：一个个人工具，自写 stub ~140 行覆盖组件实际用到的 DOM 子集，比拉进 npm + node_modules + package.json 这套异质工具链更轻、更符合无 build 的取向。stub 不是通用 DOM，够测这些组件即可。
+
+## 2026-06-30 — 从 web 层移除 workgroup（前端 UI + server + set_main）
+
+延续 route-B（workgroup 可插拔），把 workgroup 从 **web 层**整体拿掉。
+
+**前端**：删 specialist 抽屉 UI（loadSpecialists/renderSpecialistsInto/selectSpecialist/isSpecialistChat + renderMachines specialist 块 + workgroup: platform 分支）；删 **"set as main"**（badge/链接/setMainSession/is_main）—— 它本就是 workgroup 专属（tooltip：heartbeat/peer 消息路由进该会话）。
+
+**server.py**：删 `_handle_web_bots` 的 workgroup 分支、`/api/claude/resume` 的 workgroup backend/model/workspace/pool fallback、`set_workgroup_manager` + `workgroup_manager` 字段、`/api/sessions/set_main` 路由+handler、session 列表的 `is_main`。
+
+**topology**：删 `local_bot_descriptors` 的 workgroup 分支（这才是 web 侧边栏 bot 列表的真实来源）。`build_peer_descriptors`（peer 消息路由）保留——属 workgroup 模块内部，非 web bot 列表。
+
+**wiring**：删 `gateway._web_server.set_workgroup_manager`。
+
+**保留**：`storage.{get,set,get_or_create}_main_chat_id`（workgroup peer/heartbeat/manager 仍用）。
+
+**结果**：web 层零 workgroup（admin bot 不再在 UI 列出/可聊）。**workgroup 模块仍加载运行**（manager/heartbeat/peer），admin web channel 仍创建但不被列出 → 半死状态。clean finish = 删整个 workgroup 模块（另排）。app.js 1357→约 1230。全量 1066 passed。
+
+## 2026-06-30 — 物理删除整个 workgroup 模块（route-B endgame）
+
+接上一条（web 层移除 workgroup）的"另排 clean finish"，本次把 workgroup **整体物理删除**，结束 route-B（"workgroup 作为可插拔扩展隔离"）。
+
+**删了什么**：
+- 整个 `src/boxagent/workgroup/` 包（manager / heartbeat / peer_service / channel_adapter / config / formatting / http_routes / persistence / prompt_fragment / specialist_skills / task_queue / template_loader / templates / wiring / workspace_templates）。
+- `tools/builtin/admin.py` + `tools/builtin/peer.py`（send_to_agent / send_to_peer / list_specialists 工具）。
+- `AgentEnv.workgroup`（WorkgroupContext）+ `is_workgroup_admin` / `is_specialist` / `has_peer_channel` 属性 + `heartbeat_display_mode`。AgentEnv 现在零 workgroup 字段。
+- `Router` 的 5 个 workgroup 字段（workgroup_agents / get_running_tasks / get_peers / has_peer_channel / workgroup_role）+ `dispatch_sync` 方法。Router 回归纯 auth/command/dispatch。
+- gateway：PeerService 构造、`_peer` / `_workgroup_manager` 字段、`install_workgroup`、`/api/workgroup/*` + `/api/peer/send` 路由、InternalApiServer 的 `peer` / `workgroup_routes` 参数。
+- config：`SpecialistConfig` / `WorkgroupConfig` 数据类、`AppConfig.workgroups` 字段、parse 循环。
+- cluster/topology_service：`build_peer_descriptors` / `push_peers_snapshot_to_sats` / `set_local_workgroup_provider` / `_local_workgroup_names`（TopologyService 回归 machine-level only）。
+- cluster/guest_client：`remote_peers` 字段 + `peers_snapshot` 帧处理。
+- cluster/http_routes：`peer` 参数 + `/api/peer/send` + `/api/wg/peer/recv` 路由（只剩 `/api/guest/ws`）。
+- sessions/storage：`get/set/get_or_create_main_chat_id` + `main_sessions.yaml` + 旧 `wg:`→`workgroup:` 迁移。
+- log/categories：`HEARTBEAT_TICK/DRIVE/PAUSE`。
+- transports/mcp/server：`/mcp/admin` + `/mcp/peer` 端点（只剩 base + telegram）。
+
+**刻意保留**：
+- backend `supports_fork` / `fork_and_send` 能力留在 Protocol（曾被 HeartbeatManager 唯一调用，现无调用者）—— 它是 backend 层通用能力，不属 workgroup 模块；删它要动三个 backend 实现 + SDK fork 调用链，属另一条重构，本次不碰，只把注释里对已删 HeartbeatManager 的引用去掉。
+- `IncomingMessage.trusted`（cluster 绕 auth）、`ChannelCallback.webhook_name`（注释改为"bus replies"）。
+
+**"peer" 语义收敛**：cluster 层的 "peer" 现在只指 **peer 机器**（拓扑里的 machine / `cluster.peer.up` 事件），不再有 "workgroup admin peer"。
+
+**为什么物理删而不是继续留着**：route-B 隔离做完后，workgroup 模块虽可插拔但仍**加载运行**（半死状态：admin channel 创建但 UI 不列、heartbeat/peer 仍跑）。owner 决定一步到位删掉，避免长期养一个无 UI、无文档、无人用的子系统。隔离工作（PRs #15/#17）的价值正是让这次删除变成"删目录 + 摘调用点"而非大手术。
+
+**测试**：workgroup 专属测试（`tests/unit/workgroup/`、`test_cluster_peer*`、`test_peer_conditional_wiring`、`test_prompt_tool_names`）随模块一并删除；共享测试里的 workgroup case 摘掉。基线 1066 → **886 passed**（降幅即被删的 workgroup/peer 测试）。`uv run boxagent --help` + 全量 import OK。

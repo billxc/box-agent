@@ -1,7 +1,6 @@
 """Workspace setup helpers — git skeleton + skill symlinks.
 
-Used by both ``AgentManager`` and ``WorkgroupManager`` (to prepare bot /
-specialist workspaces). Module-level so both import directly.
+Used by ``AgentManager`` to prepare bot workspaces.
 
 Backend-aware (the skill dir is ``.agents/skills/`` for codex-cli vs
 ``.claude/skills/`` for the rest), so this isn't a generic ``utils``

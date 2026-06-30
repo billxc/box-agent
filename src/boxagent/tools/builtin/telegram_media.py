@@ -24,9 +24,6 @@ def _resolve_telegram_token(ctx: ToolContext) -> str:
     config = gateway.config.bots.get(ctx.bot_name)
     if config and config.telegram_token:
         return config.telegram_token
-    workgroup = gateway.config.workgroups.get(ctx.bot_name)
-    if workgroup:
-        return gateway.config.telegram_bots.get(ctx.bot_name, "")
     return ""
 
 

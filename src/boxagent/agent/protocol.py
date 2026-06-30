@@ -68,8 +68,8 @@ class AgentBackend(Protocol):
     #   conversation after process restart by re-using ``session_id``.
     # ``supports_fork``: backend can spin off a sibling session that
     #   inherits the source session's transcript but doesn't pollute it
-    #   on subsequent turns. Used by HeartbeatManager to wake the admin
-    #   without writing into its main chat history.
+    #   on subsequent turns. Lets a caller wake a session without writing
+    #   into its main chat history.
     # ``yolo``: skip permission prompts (where the backend supports such
     #   a notion). Read by env_builder; defaults to False on backends
     #   that don't expose it.
@@ -151,7 +151,7 @@ class AgentBackend(Protocol):
 
         The fork inherits the source session's transcript but its own
         turns do **not** mutate the source — the source stays clean.
-        Used by HeartbeatManager to wake the admin without polluting
-        its main chat. Raises ``NotImplementedError`` on backends with
+        Lets a caller wake a session without polluting its main chat.
+        Raises ``NotImplementedError`` on backends with
         ``supports_fork=False``."""
         ...

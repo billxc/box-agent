@@ -14,45 +14,6 @@ class Storage:
 
     def __init__(self, local_dir: Path | str):
         self._local_dir = Path(local_dir)
-        # main_sessions cache + lock — concurrent heartbeat/peer/webui calls
-        # would otherwise race on the yaml file and lose the pinned chat_id.
-        import threading
-        self._main_lock = threading.Lock()
-        self._main_cache: dict | None = None
-        # One-time legacy migration: pre-2026-05-10 specialist chat_ids used
-        # the prefix "wg:". Rewrite any sessions.yaml entries to "workgroup:"
-        # so loaders can use a single prefix everywhere.
-        self._migrate_legacy_workgroup_prefix()
-
-    def _migrate_legacy_workgroup_prefix(self) -> None:
-        """Rewrite sessions.yaml keys ``{bot}:wg:{name}`` → ``{bot}:workgroup:{name}``.
-
-        Idempotent — runs every Storage init but only writes if there's
-        actually something to rename.
-        """
-        path = self._local_dir / "sessions.yaml"
-        if not path.exists():
-            return
-        try:
-            with open(path) as f:
-                data = yaml.safe_load(f) or {}
-        except Exception as e:
-            logger.warning("sessions.yaml legacy-migration read failed (%s); skipping", e)
-            return
-        rewrites = {k: k.replace(":wg:", ":workgroup:", 1) for k in data if ":wg:" in k}
-        if not rewrites:
-            return
-        for old_key, new in rewrites.items():
-            data[new] = data.pop(old_key)
-        try:
-            with open(path, "w") as f:
-                yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
-            logger.info(
-                "Migrated %d sessions.yaml entries from 'wg:' to 'workgroup:' prefix",
-                len(rewrites),
-            )
-        except Exception as e:
-            logger.warning("sessions.yaml legacy-migration write failed (%s)", e)
 
     @property
     def local_dir(self) -> Path:
@@ -201,87 +162,6 @@ class Storage:
             new_entry["previous_session_ids"] = prev_chain[:20]
         sessions[key] = new_entry
         self._save_sessions(sessions)
-
-    # --- Main session per bot/workgroup ---
-    # Persists which chat_id is the bot's "main" session. Heartbeat ticks
-    # and incoming peer messages dispatch into this chat_id so they share
-    # the admin's primary conversation. Web UI can update it; if unset,
-    # the first heartbeat/peer event mints a new chat_id and pins it here.
-    #
-    # Cache + atomic-write because heartbeat / peer recv / webui set_main
-    # can all hit set_main_chat_id concurrently. Without atomic writes a
-    # mid-write read sees a truncated file → safe_load returns None →
-    # callers think "no main pinned" and mint a fresh `main-<bot>-<ts>`,
-    # so the main session appears to flap on every event.
-
-    def _main_sessions_path(self) -> Path:
-        self._ensure_dir()
-        return self._local_dir / "main_sessions.yaml"
-
-    def _load_main_sessions(self) -> dict:
-        if self._main_cache is not None:
-            return self._main_cache
-        path = self._main_sessions_path()
-        if not path.exists():
-            self._main_cache = {}
-            return self._main_cache
-        try:
-            with open(path) as f:
-                data = yaml.safe_load(f)
-            self._main_cache = data or {}
-        except Exception as e:
-            logger.warning("main_sessions.yaml read failed (%s); treating as empty", e)
-            self._main_cache = {}
-        return self._main_cache or {}
-
-    def _save_main_sessions(self, data: dict) -> None:
-        # Atomic write: dump to temp file, then rename. POSIX rename is
-        # atomic so concurrent readers either see the old_entry or new file,
-        # never a half-written one.
-        path = self._main_sessions_path()
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        with open(tmp, "w") as f:
-            yaml.safe_dump(data, f)
-        tmp.replace(path)
-        self._main_cache = data
-
-    def get_main_chat_id(self, bot_id: str) -> str:
-        with self._main_lock:
-            return str(self._load_main_sessions().get(bot_id) or "")
-
-    def get_or_create_main_chat_id(self, bot_id: str) -> str:
-        """Return the persisted main chat_id for a bot, minting one if unset.
-
-        Used for heartbeat ticks and incoming peer messages so they always
-        land in the admin's designated main session.
-        """
-        chat_id = self.get_main_chat_id(bot_id)
-        if chat_id:
-            return chat_id
-        chat_id = f"main-{bot_id}-{int(time.time())}"
-        self.set_main_chat_id(bot_id, chat_id)
-        return chat_id
-
-    def set_main_chat_id(self, bot_id: str, chat_id: str) -> None:
-        with self._main_lock:
-            data = dict(self._load_main_sessions())  # copy to avoid in-place mutation of cache
-            old_entry = data.get(bot_id, "")
-            if old_entry == chat_id:
-                return  # no-op, don't churn the file
-            if chat_id:
-                data[bot_id] = chat_id
-            else:
-                data.pop(bot_id, None)
-            self._save_main_sessions(data)
-            # Caller stack helps diagnose "main keeps flipping" — without it
-            # we can't tell whether heartbeat, peer recv, or webui set it.
-            import traceback
-            stack = traceback.extract_stack(limit=6)
-            caller = " > ".join(f"{Path(f.filename).name}:{f.lineno}" for f in stack[-5:-1])
-            logger.warning(
-                "main_chat_id changed bot=%s old_entry=%s new=%s caller=%s",
-                bot_id, old_entry or "(empty)", chat_id or "(empty)", caller,
-            )
 
     def _session_history_path(self) -> Path:
         self._ensure_dir()

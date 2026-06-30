@@ -21,8 +21,6 @@ def build_session_context(
     node_id: str = "",
     workspace: str = "",
     config_dir: str = "",
-    workgroup_agents: list[str] | None = None,
-    running_tasks: list[dict] | None = None,
 ) -> str:
     """Build a one-time context block for the first message of a session.
 
@@ -34,7 +32,6 @@ def build_session_context(
     1. BoxAgent runtime info (bot name, node, backend, model, etc.)
     2. {config_dir}/BOXAGENT.md (if exists)
     3. {workspace}/BOXAGENT.md (if exists, and different from config)
-    4. Workgroup agent info (if this bot is an admin with specialists)
     """
     # Resolve parameters — prefer env when available
     if env is not None:
@@ -43,14 +40,6 @@ def build_session_context(
         node_id = env.node_id
         workspace = env.workspace
         config_dir = env.config_dir
-        wg = env.workgroup
-        workgroup_agents = list(wg.agents) if wg and wg.agents else None
-        running_tasks = list(wg.running_tasks) if wg and wg.running_tasks else None
-        peers = list(wg.peers) if wg and wg.peers else []
-        has_peer_channel = bool(wg and wg.has_peer_channel)
-    else:
-        peers = []
-        has_peer_channel = False
 
     lines = [
         "[BoxAgent Context]",
@@ -77,20 +66,6 @@ def build_session_context(
         lines.append("\n# BOXAGENT (node)")
         lines.append(node_content)
         seen.add(node_content)
-
-    # Workgroup + peer delegation info — rendered by the workgroup module so
-    # the core prompt builder stays ignorant of workgroup/peer wording.
-    if workgroup_agents or has_peer_channel:
-        from boxagent.workgroup.prompt_fragment import build_workgroup_block
-
-        block = build_workgroup_block(
-            workgroup_agents=workgroup_agents,
-            running_tasks=running_tasks,
-            peers=peers,
-            has_peer_channel=has_peer_channel,
-        )
-        if block:
-            lines.append(block)
 
     lines.append("[/BoxAgent Context]")
     return "\n".join(lines)

@@ -15,7 +15,7 @@ from boxagent.transports.web.server import WebHttpServer
 def _make_server(tmp_path, *, guest_registry, guest_client):
     config = SimpleNamespace(
         web_token="", web_trust_header="X-Trusted",
-        web_host="127.0.0.1", web_port=0, bots={}, workgroups={},
+        web_host="127.0.0.1", web_port=0, bots={},
         node_id="node-a",
     )
     topology = MagicMock()

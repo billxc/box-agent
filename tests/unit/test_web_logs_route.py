@@ -13,7 +13,7 @@ from boxagent.transports.web.server import WebHttpServer
 def _make_server(tmp_path, log_file=None) -> WebHttpServer:
     config = SimpleNamespace(
         web_token="", web_trust_header="X-Trusted",
-        web_host="127.0.0.1", web_port=0, bots={}, workgroups={},
+        web_host="127.0.0.1", web_port=0, bots={},
         log_file=log_file,
     )
     cluster_rpc = MagicMock()

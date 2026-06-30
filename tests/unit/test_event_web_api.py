@@ -16,7 +16,7 @@ from boxagent.transports.web.server import WebHttpServer
 def _make_server(tmp_path) -> WebHttpServer:
     config = SimpleNamespace(
         web_token="", web_trust_header="X-Trusted",
-        web_host="127.0.0.1", web_port=0, bots={}, workgroups={},
+        web_host="127.0.0.1", web_port=0, bots={},
     )
     server = WebHttpServer(
         config=config,
@@ -63,7 +63,7 @@ def _seed(server):
     bus.publish("info", "scheduler.run", "task fired", task_id="t1", bot="bot_a")
     bus.publish("error", "backend.crash", "boom", bot="bot_b")
     bus.publish("notify", "agent.notify", "hello", bot="bot_a")
-    bus.publish("debug", "workgroup.heartbeat.tick", "tick #1")
+    bus.publish("debug", "cluster.peer.up", "tick #1")
 
 
 # ---------- /api/events query ----------
@@ -90,11 +90,11 @@ async def test_query_filter_by_levels(server):
 async def test_query_filter_by_category_prefix(server):
     _seed(server)
     resp = await server._handle_events_query(
-        _make_request({"category_prefix": "workgroup"})
+        _make_request({"category_prefix": "cluster"})
     )
     body = json.loads(resp.body)
     assert len(body["events"]) == 1
-    assert body["events"][0]["category"] == "workgroup.heartbeat.tick"
+    assert body["events"][0]["category"] == "cluster.peer.up"
 
 
 @pytest.mark.asyncio
@@ -147,7 +147,7 @@ async def test_categories_lists_distinct_with_counts(server):
         "scheduler.run": 2,
         "backend.crash": 1,
         "agent.notify": 1,
-        "workgroup.heartbeat.tick": 1,
+        "cluster.peer.up": 1,
     }
 
 
@@ -197,7 +197,7 @@ async def test_read_all_with_filter(server):
 async def test_query_returns_empty_when_bus_not_bound(tmp_path):
     config = SimpleNamespace(
         web_token="", web_trust_header="X-Trusted",
-        web_host="127.0.0.1", web_port=0, bots={}, workgroups={},
+        web_host="127.0.0.1", web_port=0, bots={},
     )
     server = WebHttpServer(
         config=config, local_dir=tmp_path, config_dir=tmp_path, storage=None,

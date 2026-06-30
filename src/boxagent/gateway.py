@@ -5,7 +5,6 @@ Owns lifecycle wiring; behavior lives in the composed managers built in
 
   - ``_bots``             AgentManager        (per-bot lifecycle + teardown)
   - ``_topology``         TopologyService     (cluster identity / peer list)
-  - ``_peer``             PeerService         (cross-admin peer messaging)
   - ``_cluster_rpc``      ClusterRpc          (host↔guest HTTP/SSE proxying)
   - ``_cluster_routes``   ClusterHttpRoutes   (cluster routes on web port)
   - ``_scheduler_routes`` SchedulerHttpRoutes (POST /api/schedule/run)
@@ -13,15 +12,12 @@ Owns lifecycle wiring; behavior lives in the composed managers built in
   - ``_mcp_server``       McpHttpServer       (uvicorn streamable-http MCP)
   - ``_web_server``       WebHttpServer       (Web UI aiohttp server)
 
-Workgroup HTTP routes live on the WorkgroupManager itself
-(``workgroup_manager.routes``) so wiring stays inside the workgroup module.
-
 Two-phase DI:
   Phase 1 — managers built with infrastructure (config / shared dicts /
             sibling refs that already exist).
   Phase 2 — late-bound siblings injected via setters
-            (workgroup_manager in ``set_workgroup_manager``, scheduler in
-            ``set_scheduler``, host_election in ``set_host_election``).
+            (scheduler in ``set_scheduler``, host_election in
+            ``set_host_election``).
 """
 
 import asyncio
@@ -48,21 +44,17 @@ from boxagent.scheduler import Scheduler
 
 if TYPE_CHECKING:
     from boxagent.events.bus import EventBus
-    from boxagent.workgroup import WorkgroupManager
-    from boxagent.workgroup.http_routes import WorkgroupHttpRoutes
-    from boxagent.workgroup.peer_service import PeerService
 
 logger = logging.getLogger(__name__)
 
 
-# ── Internal HTTP API server (workgroup / scheduler / peer routes) ──
+# ── Internal HTTP API server (scheduler routes) ──
 
 
 class InternalApiServer:
     """TCP aiohttp app exposing the internal API used by IPC siblings.
 
-    Held by Gateway. Mounts whatever route adapters were provided
-    (workgroup, scheduler, peer); each adapter is optional.
+    Held by Gateway. Mounts the scheduler route adapter when provided.
 
     Port resolved at bind time and written to ``api-port.txt`` so other
     in-process siblings (the schedule CLI, doctor) can find us. Stale
@@ -75,14 +67,10 @@ class InternalApiServer:
         *,
         config: AppConfig,
         local_dir: Path,
-        peer: "PeerService | None",
-        workgroup_routes: "WorkgroupHttpRoutes | None",
         scheduler_routes: SchedulerHttpRoutes | None,
     ) -> None:
         self.config = config
         self.local_dir = local_dir
-        self.peer = peer
-        self.workgroup_routes = workgroup_routes
         self.scheduler_routes = scheduler_routes
         self._runner: web.AppRunner | None = None
 
@@ -100,19 +88,6 @@ class InternalApiServer:
         app = web.Application(middlewares=[error_logging_middleware])
         if self.scheduler_routes is not None:
             app.router.add_post("/api/schedule/run", self.scheduler_routes.handle_schedule_run)
-        if self.workgroup_routes is not None:
-            workgroup = self.workgroup_routes
-            app.router.add_get("/api/workgroup/specialists", workgroup.handle_list_specialists)
-            app.router.add_get("/api/workgroup/specialist_status", workgroup.handle_specialist_status)
-            app.router.add_post("/api/workgroup/send", workgroup.handle_workgroup_send)
-            app.router.add_post("/api/workgroup/create_specialist", workgroup.handle_create_specialist)
-            app.router.add_post("/api/workgroup/reset_specialist", workgroup.handle_reset_specialist)
-            app.router.add_post("/api/workgroup/delete_specialist", workgroup.handle_delete_specialist)
-            app.router.add_post("/api/workgroup/cancel_task", workgroup.handle_cancel_task)
-        if self.peer is not None:
-            app.router.add_post("/api/peer/send", self.peer.handle_peer_send)
-        # NOTE: /api/wg/peer/recv lives on the Web UI port (see ClusterHttpRoutes)
-        # because guest_client forwards RPC frames to the web port.
 
         runner = web.AppRunner(app)
         await runner.setup()
@@ -149,10 +124,8 @@ class Gateway:
     _scheduler_task: asyncio.Task | None = field(default=None, repr=False)
     _host_election: HostElection | None = field(default=None, repr=False)
     _start_time: float = 0.0
-    _workgroup_manager: "WorkgroupManager | None" = field(default=None, repr=False)
     _bots: AgentManager | None = field(default=None, repr=False)
     _topology: TopologyService | None = field(default=None, repr=False)
-    _peer: "PeerService | None" = field(default=None, repr=False)
     _cluster_rpc: ClusterRpc | None = field(default=None, repr=False)
     _cluster_routes: ClusterHttpRoutes | None = field(default=None, repr=False)
     _scheduler_routes: SchedulerHttpRoutes | None = field(default=None, repr=False)
@@ -223,21 +196,9 @@ class Gateway:
             config=self.config,
             web_channels=self._bots.web_channels,
         )
-        # Peer messaging only exists between workgroup admins, so the
-        # PeerService is built only when workgroups are configured. It must
-        # be constructed here (before web_server.start mounts cluster routes)
-        # so ClusterHttpRoutes can wire it; install_workgroup later attaches
-        # the workgroup_manager via set_workgroup_manager.
-        if self.config.workgroups:
-            from boxagent.workgroup.peer_service import PeerService
-
-            self._peer = PeerService(
-                topology=self._topology,
-                main_chat_id_provider=storage.get_or_create_main_chat_id,
-            )
         self._cluster_rpc = ClusterRpc(topology=self._topology)
         self._cluster_routes = ClusterHttpRoutes(
-            peer=self._peer, cluster_rpc=self._cluster_rpc,
+            cluster_rpc=self._cluster_rpc,
         )
         self._web_server = WebHttpServer(
             config=self.config,
@@ -259,23 +220,13 @@ class Gateway:
         # Bots (incl. synthetic raw passthrough).
         await self._bots.start_all_for_node(self.config.node_id)
 
-        # Workgroups. All assembly lives in workgroup.wiring so the gateway
-        # stays ignorant of how a WorkgroupManager is built and wired.
-        if self.config.workgroups:
-            from boxagent.workgroup.wiring import install_workgroup
-
-            self._workgroup_manager = await install_workgroup(self, storage)
-
         # Scheduler + its HTTP route adapter.
         self._start_scheduler()
 
-        # Internal API + MCP HTTP — both depend on workgroup_manager.routes +
-        # scheduler_routes existing.
+        # Internal API + MCP HTTP — internal API hosts scheduler_routes.
         self._internal_api = InternalApiServer(
             config=self.config,
             local_dir=self.local_dir,
-            peer=self._peer,
-            workgroup_routes=(self._workgroup_manager.routes if self._workgroup_manager else None),
             scheduler_routes=self._scheduler_routes,
         )
         await self._internal_api.start()
@@ -368,10 +319,6 @@ class Gateway:
         # AgentManager owns channels, web_channels, backends, pools, watchdogs.
         if self._bots is not None:
             await self._bots.stop()
-
-        # Workgroup resources
-        if self._workgroup_manager:
-            await self._workgroup_manager.stop()
 
         # Event log: emit shutdown event then unbind + close.
         if self._event_bus is not None:

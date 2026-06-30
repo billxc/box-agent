@@ -35,7 +35,6 @@
     collapsed: new Set(JSON.parse(localStorage.getItem("ba.collapsedMachines") || "[]")),
     sessions: {},         // "machine|bot" -> {chat_id: {title, preview, ts}}  (local browser-side)
     serverSessions: {},   // "machine|bot" -> [{chat_id, platform, preview, last_ts, ...}]
-    specialists: {},      // "machine|wg" -> [{name, display_name}] (workgroup specialists)
     chatId: null,
     es: null,
     streamMsgs: {},
@@ -207,24 +206,6 @@
     localStorage.setItem("ba.sessions." + botKey(machine, bot), JSON.stringify(sessions));
   }
 
-  // Fetch the specialist list for a workgroup once per session and cache it.
-  // Local-only for v1: remote-machine workgroups would need API forwarding
-  // (out of scope; tracked under #9).
-  async function loadSpecialists(machine, wgName) {
-    const key = botKey(machine, wgName);
-    if (state.specialists[key]) return state.specialists[key];
-    let list = [];
-    try {
-      const r = await api(`workgroup/specialists?workgroup=${encodeURIComponent(wgName)}`);
-      if (r.ok) {
-        const data = await r.json();
-        if (data && data.ok && Array.isArray(data.specialists)) list = data.specialists;
-      }
-    } catch { /* swallow — cache empty list to avoid retry loop */ }
-    state.specialists[key] = list;
-    return list;
-  }
-
   async function fetchServerSessions(machine, bot) {
     try {
       const r = await api(`sessions?bot=${encodeURIComponent(bot)}&machine=${encodeURIComponent(machine)}`);
@@ -281,7 +262,6 @@
       merged.set(s.chat_id, {
         chat_id: s.chat_id,
         platform: s.platform || "unknown",
-        is_main: !!s.is_main,
         title: backendTitle || (local[s.chat_id] && local[s.chat_id].title) || defaultTitle(s),
         custom_title: s.custom_title || "",
         summary: s.summary || "",
@@ -308,7 +288,6 @@
   }
 
   function defaultTitle(s) {
-    if (s.is_main) return `★ Main session`;
     if (s.platform === "claude") return `✦ Resumed Claude session`;
     const tag = ({ telegram: "Telegram", web: "Web", other: "Chat" })[s.platform] || "Chat";
     return `${tag} · ${shortId(s.chat_id)}`;
@@ -331,22 +310,10 @@
       if (meta.chat_id === state.chatId) li.classList.add("active");
       const title = document.createElement("div");
       title.className = "session-title";
-      const mainBadge = meta.is_main ? `<span class="main-badge" title="Main session">★</span> ` : "";
-      title.innerHTML = `${mainBadge}<span class="plat" title="${meta.platform}">${platformIcon(meta.platform)}</span> ${escapeHtml(meta.title)}`;
+      title.innerHTML = `<span class="plat" title="${meta.platform}">${platformIcon(meta.platform)}</span> ${escapeHtml(meta.title)}`;
       const preview = document.createElement("div");
       preview.className = "session-preview";
       preview.textContent = meta.preview || "(no messages yet)";
-      const actions = document.createElement("div");
-      actions.className = "session-actions";
-      if (!meta.is_main) {
-        const setMain = document.createElement("a");
-        setMain.href = "#";
-        setMain.className = "session-action";
-        setMain.textContent = "set as main";
-        setMain.title = "Heartbeat ticks and incoming peer messages will route into this session";
-        setMain.onclick = (e) => { e.stopPropagation(); e.preventDefault(); setMainSession(meta.chat_id); };
-        actions.appendChild(setMain);
-      }
       li.appendChild(title); li.appendChild(preview);
       if (meta.recap) {
         const recap = document.createElement("div");
@@ -355,24 +322,8 @@
         recap.title = meta.recap;
         li.appendChild(recap);
       }
-      if (actions.children.length) li.appendChild(actions);
       li.onclick = () => { switchChat(meta.chat_id); closeSidebar(); };
       sessionList.appendChild(li);
-    }
-  }
-
-  async function setMainSession(chatId) {
-    try {
-      const r = await api("sessions/set_main", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bot: state.bot, machine: state.botMachine, chat_id: chatId }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      state.serverSessions[curKey()] = await fetchServerSessions(state.botMachine, state.bot);
-      refreshSessionList();
-    } catch (e) {
-      alert(`Failed to set main session: ${e.message || e}`);
     }
   }
 
@@ -431,9 +382,7 @@
       chat_id: state.chatId,
       title: current.title,
       preview: current.preview,
-      platform: state.chatId.startsWith("web-") ? "web"
-        : state.chatId.startsWith("workgroup:") ? "workgroup"
-        : "other",
+      platform: state.chatId.startsWith("web-") ? "web" : "other",
       display_name: botInfo?.display_name || state.bot,
     });
   }
@@ -549,8 +498,7 @@
       preview: serverMeta?.preview || meta.preview || "",
       recap: serverMeta?.recap || "",
       platform: serverMeta?.platform
-        || (chatId.startsWith("web-") ? "web"
-            : chatId.startsWith("workgroup:") ? "workgroup" : "other"),
+        || (chatId.startsWith("web-") ? "web" : "other"),
       display_name: botInfo?.display_name || state.bot,
       ts: serverMeta?.last_ts || Math.floor(Date.now() / 1000),
     });
@@ -784,7 +732,7 @@
       bots.className = "machine-bots";
       for (const b of (m.bots || [])) {
         const bot_li = document.createElement("li");
-        if (state.bot === b.name && state.botMachine === m.machine_id && !isSpecialistChat(state.chatId)) {
+        if (state.bot === b.name && state.botMachine === m.machine_id) {
           bot_li.classList.add("active");
         }
         bot_li.innerHTML = `<span>${escapeHtml(b.display_name || b.name)}</span><span class="kind">${b.kind || "bot"}</span>`;
@@ -794,16 +742,6 @@
           selectBot(b.name, m.machine_id);
         };
         bots.appendChild(bot_li);
-
-        // For local workgroup admins, render specialists as collapsible
-        // children so users can open each specialist's stream directly.
-        // Remote workgroups are skipped (cluster RPC needed; #9).
-        if (b.kind === "workgroup" && m.self) {
-          const subUl = document.createElement("ul");
-          subUl.className = "machine-bots specialist-sublist";
-          bot_li.appendChild(subUl);
-          renderSpecialistsInto(subUl, m.machine_id, b.name);
-        }
       }
       if (!(m.bots || []).length) {
         bots.innerHTML = "<li class='muted' style='cursor:default;'>(no bots)</li>";
@@ -811,79 +749,6 @@
       li.appendChild(bots);
       machineList.appendChild(li);
     }
-  }
-
-  // Marker: chat ids of the form "workgroup:<sp_name>" are specialist sub-chats.
-  // ("wg:" is the legacy prefix; both honored during migration window.)
-  function isSpecialistChat(chatId) {
-    return typeof chatId === "string"
-      && (chatId.startsWith("workgroup:") || chatId.startsWith("wg:"));
-  }
-
-  // Populate `<ul>` with one <li> per specialist of the given workgroup.
-  // Uses cached state.specialists; first call triggers a fetch and re-render.
-  function renderSpecialistsInto(ul, machineId, wgName) {
-    const key = botKey(machineId, wgName);
-    const cached = state.specialists[key];
-    if (!cached) {
-      ul.innerHTML = "<li class='muted specialist' style='cursor:default;'>…</li>";
-      loadSpecialists(machineId, wgName).then(() => renderMachines());
-      return;
-    }
-    ul.innerHTML = "";
-    if (cached.length === 0) {
-      // Don't show an empty placeholder — just collapse.
-      return;
-    }
-    for (const sp of cached) {
-      const li = document.createElement("li");
-      li.className = "specialist";
-      const chatId = `workgroup:${sp.name}`;
-      if (state.bot === wgName && state.botMachine === machineId && state.chatId === chatId) {
-        li.classList.add("active");
-      }
-      li.innerHTML = `<span>↳ ${escapeHtml(sp.display_name || sp.name)}</span>`;
-      li.onclick = (e) => {
-        e.stopPropagation();
-        selectSpecialist(machineId, wgName, sp);
-      };
-      ul.appendChild(li);
-    }
-  }
-
-  // Open a specialist's chat. Same bot (the workgroup admin) but chat_id
-  // points at the specialist's virtual `workgroup:<name>` stream so the SSE
-  // subscription receives that specialist's events.
-  async function selectSpecialist(machineId, wgName, sp) {
-    const chatId = `workgroup:${sp.name}`;
-    // Make sure the target bot is loaded as the active bot first.
-    if (state.bot !== wgName || state.botMachine !== machineId) {
-      $("messages-mask").classList.remove("hidden");
-      sessionList.innerHTML = "<li class='muted' style='cursor:default;'>Loading sessions…</li>";
-      state.bot = wgName;
-      state.botMachine = machineId;
-      localStorage.setItem("ba.lastBot", wgName);
-      localStorage.setItem("ba.lastBotMachine", machineId);
-      sessionsOf.textContent = `· ${wgName} @ ${machineId}`;
-      const key = botKey(machineId, wgName);
-      state.sessions[key] = loadSessions(machineId, wgName);
-      state.serverSessions[key] = await fetchServerSessions(machineId, wgName);
-    }
-    // Persist a session entry for this specialist chat so the session
-    // sidebar lists it like any other conversation.
-    const key = botKey(machineId, wgName);
-    const sessions = state.sessions[key] || {};
-    if (!sessions[chatId]) {
-      sessions[chatId] = {
-        title: `Specialist · ${sp.display_name || sp.name}`,
-        preview: "",
-        ts: Date.now(),
-      };
-      saveSessions(machineId, wgName, sessions);
-      state.sessions[key] = sessions;
-    }
-    renderMachines();
-    await switchChat(chatId);
   }
 
   function toggleMachine(machine_id) {

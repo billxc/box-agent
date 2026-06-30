@@ -10,28 +10,16 @@ from __future__ import annotations
 
 from boxagent.agent.codex_process import CodexProcess
 from boxagent.agent.mcp_endpoints import pick_mcp_endpoints
-from boxagent.agent_env import AgentEnv, WorkgroupContext
+from boxagent.agent_env import AgentEnv
 
 
 def _env(tmp_path, **overrides):
-    """Build an AgentEnv with mcp-port.txt staged in tmp_path.
-
-    Accepts the old flat workgroup kwargs (``workgroup_role`` /
-    ``workgroup_agents`` / ``has_peer_channel``) and folds them into a
-    nested :class:`WorkgroupContext` so call sites stay terse.
-    """
+    """Build an AgentEnv with mcp-port.txt staged in tmp_path."""
     (tmp_path / "mcp-port.txt").write_text("9390\n")
-    role = overrides.pop("workgroup_role", "")
-    agents = overrides.pop("workgroup_agents", ())
-    has_peer_channel = overrides.pop("has_peer_channel", False)
     base = dict(
         bot_name="bot-1",
         local_dir=str(tmp_path),
     )
-    if role or agents or has_peer_channel:
-        base["workgroup"] = WorkgroupContext(
-            role=role, agents=tuple(agents), has_peer_channel=has_peer_channel,
-        )
     base.update(overrides)
     return AgentEnv(**base)
 
@@ -66,28 +54,10 @@ def test_base_endpoint_always_present(tmp_path):
     }
 
 
-def test_admin_endpoint_added_for_workgroup_admin(tmp_path):
-    env = _env(tmp_path, workgroup_role="admin")
-    names = [e["name"] for e in pick_mcp_endpoints(env, "chat-1")]
-    assert "boxagent-admin" in names
-
-
 def test_telegram_endpoint_added_when_token_set(tmp_path):
     env = _env(tmp_path, telegram_token="t-token")
     names = [e["name"] for e in pick_mcp_endpoints(env, "chat-1")]
     assert "boxagent-telegram" in names
-
-
-def test_peer_endpoint_added_when_has_peer_channel(tmp_path):
-    env = _env(tmp_path, has_peer_channel=True)
-    names = [e["name"] for e in pick_mcp_endpoints(env, "chat-1")]
-    assert "boxagent-peer" in names
-
-
-def test_admin_with_peer_gets_both(tmp_path):
-    env = _env(tmp_path, workgroup_role="admin", has_peer_channel=True)
-    names = [e["name"] for e in pick_mcp_endpoints(env, "chat-1")]
-    assert {"boxagent", "boxagent-admin", "boxagent-peer"}.issubset(names)
 
 
 # ── CodexProcess._mcp_args ──
@@ -117,24 +87,11 @@ def test_codex_mcp_args_emits_url_and_headers(tmp_path):
     assert '"X-BoxAgent-Chat-Id" = "chat-1"' in joined
 
 
-def test_codex_mcp_args_admin_emits_two_servers(tmp_path):
+def test_codex_mcp_args_telegram_emits_two_servers(tmp_path):
     backend = CodexProcess(workspace="/tmp")
-    env = _env(tmp_path, workgroup_role="admin")
+    env = _env(tmp_path, telegram_token="t")
     args = backend._mcp_args("chat-1", env=env)
     joined = " ".join(args)
     assert "mcp_servers.boxagent.url=" in joined
-    assert "mcp_servers.boxagent-admin.url=" in joined
+    assert "mcp_servers.boxagent-telegram.url=" in joined
     assert args.count("-c") == 4  # 2 endpoints × (url + headers)
-
-
-def test_codex_mcp_args_full_admin(tmp_path):
-    backend = CodexProcess(workspace="/tmp")
-    env = _env(
-        tmp_path, workgroup_role="admin",
-        telegram_token="t", has_peer_channel=True,
-    )
-    args = backend._mcp_args("chat-1", env=env)
-    joined = " ".join(args)
-    for name in ("boxagent", "boxagent-admin", "boxagent-telegram", "boxagent-peer"):
-        assert f"mcp_servers.{name}.url=" in joined
-    assert args.count("-c") == 8  # 4 endpoints × 2

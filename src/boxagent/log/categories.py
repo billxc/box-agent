@@ -15,10 +15,6 @@ class Category:
     SCHEDULER_FAIL = "scheduler.fail"
     SCHEDULER_SKIP = "scheduler.skip"
 
-    HEARTBEAT_TICK = "workgroup.heartbeat.tick"
-    HEARTBEAT_DRIVE = "workgroup.heartbeat.drive"
-    HEARTBEAT_PAUSE = "workgroup.heartbeat.pause"
-
     BACKEND_START = "backend.start"
     BACKEND_STOP = "backend.stop"
     BACKEND_CRASH = "backend.crash"

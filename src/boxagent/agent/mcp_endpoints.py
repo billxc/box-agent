@@ -56,10 +56,6 @@ def pick_mcp_endpoints(env: "AgentEnv", chat_id: str) -> list[McpEndpoint]:
     out: list[McpEndpoint] = [
         {"name": "boxagent", "url": f"{base_url}/mcp/base", "headers": headers},
     ]
-    if env.is_workgroup_admin:
-        out.append({"name": "boxagent-admin", "url": f"{base_url}/mcp/admin", "headers": headers})
     if env.has_telegram:
         out.append({"name": "boxagent-telegram", "url": f"{base_url}/mcp/telegram", "headers": headers})
-    if env.has_peer_channel:
-        out.append({"name": "boxagent-peer", "url": f"{base_url}/mcp/peer", "headers": headers})
     return out

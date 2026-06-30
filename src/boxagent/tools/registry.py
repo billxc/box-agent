@@ -1,7 +1,7 @@
 """Unified BoxAgent tool registry — single definition, multi-backend dispatch.
 
 Today each AI backend has its own way to expose BoxAgent capabilities
-(send_photo, schedule_*, send_to_peer, …):
+(send_photo, schedule_*, …):
 
 - claude-cli  → ``--mcp-config`` pointing at our HTTP MCP server
 - codex-cli   → no tools currently
@@ -76,11 +76,11 @@ ToolHandler = Callable[[dict, ToolContext], Awaitable[Any]]
 # lives on (HTTP MCP path) and which capability flag injects it for SDK
 # backends. Match the existing endpoint naming so claude-cli's URL routes
 # stay stable.
-ToolGroup = str  # "base" | "telegram" | "admin" | "peer"
+ToolGroup = str  # "base" | "telegram"
 
 # Allowed values for ``ToolDef.requires`` capability flags.
 # Adapters filter tools whose requirements aren't met by the env.
-KnownRequirement = str  # "telegram" | "workgroup_admin" | "peer_channel"
+KnownRequirement = str  # "telegram"
 
 
 @dataclass
@@ -191,9 +191,9 @@ def tools_for(*, group: str | None = None, env_caps: set[str] | None = None) -> 
 
     Args:
         group: If set, restrict to tools in this group.
-        env_caps: Capability flags this env satisfies (e.g. {"telegram",
-            "workgroup_admin"}). Tools whose ``requires`` aren't all in
-            ``env_caps`` are excluded. ``None`` skips capability filtering.
+        env_caps: Capability flags this env satisfies (e.g. {"telegram"}).
+            Tools whose ``requires`` aren't all in ``env_caps`` are
+            excluded. ``None`` skips capability filtering.
     """
     out = []
     for t in _TOOLS:
@@ -213,10 +213,6 @@ def env_capabilities(env: Any) -> set[str]:
         return capabilities
     if getattr(env, "has_telegram", False):
         capabilities.add("telegram")
-    if getattr(env, "is_workgroup_admin", False):
-        capabilities.add("workgroup_admin")
-    if getattr(env, "has_peer_channel", False):
-        capabilities.add("peer_channel")
     return capabilities
 
 
