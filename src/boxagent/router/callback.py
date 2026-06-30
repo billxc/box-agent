@@ -59,7 +59,7 @@ class ChannelCallback:
     """Routes agent streaming output to a channel."""
     channel: "Channel"
     chat_id: str
-    webhook_name: str = ""  # bot name for webhook-based workgroup replies
+    webhook_name: str = ""  # bot name for webhook-based bus replies
     _handle: "StreamHandle | None" = None
     _typing_task: asyncio.Task | None = None
     _closed: bool = False

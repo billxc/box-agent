@@ -13,7 +13,6 @@ class TestMCPHttpApp:
         gateway = MagicMock()
         gateway.config = MagicMock()
         gateway.config.bots = {}
-        gateway.config.workgroups = {}
         gateway.config.telegram_bots = {}
         return gateway
 
@@ -30,7 +29,7 @@ class TestMCPHttpApp:
         assert isinstance(app, Starlette)
 
     def test_app_has_one_endpoint_per_group(self):
-        """4 endpoints (base/telegram/admin/peer) → 4+ routes (each MCP server
+        """2 endpoints (base/telegram) → 2+ routes (each MCP server
         contributes its own streamable_http_path)."""
         from boxagent.transports.mcp.server import create_mcp_app, _ENDPOINTS
 
@@ -38,7 +37,7 @@ class TestMCPHttpApp:
             config_dir="/tmp/config", local_dir="/tmp/loc",
             node_id="n", gateway=self._gateway_stub(),
         )
-        assert len(_ENDPOINTS) == 4
+        assert len(_ENDPOINTS) == 2
         # Every endpoint path appears at least once in the route table.
         route_paths = {getattr(r, "path", "") for r in app.routes}
         for path, _server, _group in _ENDPOINTS:
@@ -66,9 +65,8 @@ class TestMCPHttpApp:
 
         for path, server_name, group in _ENDPOINTS:
             tools = tools_for(group=group)
-            # We don't require non-empty (a fresh deploy might not have peer
-            # tools etc.) — just sanity-check the group key is valid.
-            assert group in {"base", "telegram", "admin", "peer"}, (
+            # We don't require non-empty — just sanity-check the group key.
+            assert group in {"base", "telegram"}, (
                 f"unknown group {group} in _ENDPOINTS"
             )
             for t in tools:

@@ -1,6 +1,6 @@
 """SDK backends must propagate the gateway reference into ToolContext.
 
-Without this, in-process tools like ``send_to_peer`` / admin tools see
+Without this, in-process tools that need a live Gateway see
 ``ctx.gateway is None`` and return "Error: gateway not available".
 """
 
@@ -109,25 +109,3 @@ class TestAgentManagerStoresGateway:
             gateway=gw,
         )
         assert manager.gateway is gw
-
-
-class TestWorkgroupManagerStoresGateway:
-    def test_constructor_accepts_gateway(self):
-        from boxagent.workgroup.manager import WorkgroupManager
-
-        gw = _FakeGateway()
-        manager = WorkgroupManager(config={}, gateway=gw)
-        assert manager.gateway is gw
-
-    def test_make_backend_forwards_gateway(self):
-        from boxagent.workgroup.manager import WorkgroupManager
-        from boxagent.agent.sdk_claude_process import AgentSDKClaude
-
-        gw = _FakeGateway()
-        manager = WorkgroupManager(config={}, gateway=gw)
-        bot_config = BotConfig(
-            name="t", ai_backend="agent-sdk-claude", workspace="/tmp",
-        )
-        backend = manager._make_backend(bot_config)
-        assert isinstance(backend, AgentSDKClaude)
-        assert backend.gateway is gw

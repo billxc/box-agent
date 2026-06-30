@@ -2,8 +2,8 @@
 
 Categories supplied by agents are auto-prefixed with ``agent.`` if they
 don't already start with it (per design Q3) — this keeps the namespace
-boundary clean: system-emitted categories (scheduler.*, workgroup.*,
-backend.*) cannot be forged by agent traffic.
+boundary clean: system-emitted categories (scheduler.*, backend.*)
+cannot be forged by agent traffic.
 """
 from __future__ import annotations
 

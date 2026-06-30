@@ -1,8 +1,7 @@
 """Backend factory — instantiate the right ``AgentBackend`` for a ``BotConfig``.
 
-Used by both ``AgentManager`` and ``WorkgroupManager``. Module-level so
-both can ``from boxagent.agent.backend_factory import create_backend``
-directly — no DI plumbing through Gateway needed.
+Module-level so callers can ``from boxagent.agent.backend_factory import
+create_backend`` directly — no DI plumbing through Gateway needed.
 """
 
 from typing import Any
@@ -21,9 +20,9 @@ def create_backend(
     """Instantiate the AI backend for a bot config.
 
     ``gateway`` is forwarded to in-process SDK backends so their
-    ``ToolContext`` carries a live Gateway reference; tools like
-    ``send_to_peer`` / admin tools require it. CLI backends route tool
-    calls through the HTTP MCP server, which captures gateway separately.
+    ``ToolContext`` carries a live Gateway reference; tools that need a
+    live Gateway require it. CLI backends route tool calls through the
+    HTTP MCP server, which captures gateway separately.
 
     ``claude-cli`` is a legacy alias kept for config backward-compat: it
     silently routes to the in-process ``agent-sdk-claude`` backend. The old

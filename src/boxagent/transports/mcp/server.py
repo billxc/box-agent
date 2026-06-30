@@ -7,8 +7,6 @@ regardless of backend:
 
   /mcp/base      — group="base"     (schedule, sessions)
   /mcp/telegram  — group="telegram" (media — bots with telegram channel)
-  /mcp/admin     — group="admin"    (workgroup admin tools)
-  /mcp/peer      — group="peer"     (cross-admin messaging)
 
 Tool definitions live in :mod:`boxagent.tools.builtin`. This file is just
 the HTTP transport — adapters/mcp_http.py does the registry → FastMCP
@@ -72,13 +70,11 @@ def _make_mcp(name: str, path: str) -> FastMCP:
 
 
 # Path → (server name, registry group) mapping.
-# Server names match the SDK adapter naming (boxagent / boxagent-telegram /
-# boxagent-admin / boxagent-peer) so the LLM sees consistent tool prefixes.
+# Server names match the SDK adapter naming (boxagent / boxagent-telegram)
+# so the LLM sees consistent tool prefixes.
 _ENDPOINTS = [
     ("/mcp/base",     "boxagent",          "base"),
     ("/mcp/telegram", "boxagent-telegram", "telegram"),
-    ("/mcp/admin",    "boxagent-admin",    "admin"),
-    ("/mcp/peer",     "boxagent-peer",     "peer"),
 ]
 
 

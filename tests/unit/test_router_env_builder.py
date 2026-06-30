@@ -18,13 +18,8 @@ def _make_router(**overrides):
         config_dir="/tmp/config",
         local_dir="/tmp/local",
         telegram_token="abc",
-        has_peer_channel=False,
-        workgroup_role="",
-        workgroup_agents=[],
         ai_backend="claude-cli",
         passthrough=False,
-        get_running_tasks=lambda: [],
-        get_peers=lambda: [],
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -76,18 +71,3 @@ def test_msg_channel_info_wins_over_msg_channel():
     info = ChannelInfo(platform="web")
     env = build_env(_make_msg(channel="telegram", channel_info=info), _make_router())
     assert env.channel.platform == "web"
-
-
-def test_running_tasks_and_peers_become_tuples():
-    # running_tasks / peers live under env.workgroup, which env_builder only
-    # populates for a workgroup admin (role / peer channel / agents set).
-    router = _make_router(
-        workgroup_role="admin",
-        has_peer_channel=True,
-        get_running_tasks=lambda: [{"task_id": "t1"}],
-        get_peers=lambda: [{"name": "p1"}],
-    )
-    env = build_env(_make_msg(), router)
-    assert env.workgroup is not None
-    assert env.workgroup.running_tasks == ({"task_id": "t1"},)
-    assert env.workgroup.peers == ({"name": "p1"},)

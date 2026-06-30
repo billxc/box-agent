@@ -1,16 +1,13 @@
 """Web transport — aiohttp server, auth, and route handlers for the Web UI.
 
-Composition class. Held by Gateway as ``self._web_server``. Two-phase DI:
+Composition class. Held by Gateway as ``self._web_server``. Built in one
+phase with config + storage + shared dicts + topology + cluster_rpc +
+cluster_routes (all Phase-1 siblings).
 
-- Phase 1 (constructor): config + storage + shared dicts + topology +
-  cluster_rpc + cluster_routes (all Phase-1 siblings).
-- Phase 2 (setter): ``set_workgroup_manager`` after WorkgroupManager exists
-  (used only by ``/api/claude/resume`` to look up specialist pools).
-
-The host's *web* port (default 9292) also carries cluster RPC routes
-(``/api/peer/send``, ``/api/wg/peer/recv``, ``/api/guest/ws``); those are
-mounted by ``ClusterHttpRoutes.register`` on the same aiohttp app, since
-the rest of the cluster code already targets that port.
+The host's *web* port (default 9292) also carries the cluster guest WS
+route (``/api/guest/ws``); it is mounted by ``ClusterHttpRoutes.register``
+on the same aiohttp app, since the rest of the cluster code already
+targets that port.
 """
 
 import asyncio
@@ -100,16 +97,11 @@ class WebHttpServer:
         self.topology = topology
         self.cluster_rpc = cluster_rpc
         self.cluster_routes = cluster_routes
-        # Phase 2 dep
-        self.workgroup_manager = None
         self.event_bus = None
         # Internal state — process-local preview cache (sid → {mtime, ...})
         # used by /api/sessions to avoid re-reading transcript JSONL every poll.
         self.session_meta_cache: dict = {}
         self._runner: web.AppRunner | None = None
-
-    def set_workgroup_manager(self, workgroup_manager) -> None:
-        self.workgroup_manager = workgroup_manager
 
     def set_event_bus(self, event_bus) -> None:
         self.event_bus = event_bus
@@ -161,7 +153,6 @@ class WebHttpServer:
         app.router.add_get("/api/bots", self._handle_web_bots)
         app.router.add_get("/api/machines", self._handle_web_machines)
         app.router.add_get("/api/sessions", self._handle_web_sessions)
-        app.router.add_post("/api/sessions/set_main", self._handle_set_main_session)
         app.router.add_post("/api/sessions/rename", self._handle_rename_session)
         app.router.add_get("/api/session_info", self._handle_web_session_info)
         app.router.add_get("/api/version", self._handle_version)
@@ -228,7 +219,6 @@ class WebHttpServer:
         local_machine_id = self.topology.local_machine_id()
         for name, channel in self.web_channels.items():
             config = self.config.bots.get(name)
-            workgroup = self.config.workgroups.get(name)
             if config is not None:
                 bots.append({
                     "name": name,
@@ -236,15 +226,6 @@ class WebHttpServer:
                     "backend": config.ai_backend,
                     "model": config.model,
                     "kind": "bot",
-                    "machine": local_machine_id,
-                })
-            elif workgroup is not None:
-                bots.append({
-                    "name": name,
-                    "display_name": (workgroup.display_name or name) + "  (workgroup)",
-                    "backend": workgroup.ai_backend,
-                    "model": workgroup.model,
-                    "kind": "workgroup",
                     "machine": local_machine_id,
                 })
         if self.topology.guest_registry is not None:
@@ -314,11 +295,9 @@ class WebHttpServer:
             return web.json_response({"ok": True, "sessions": []})
 
         sessions = self.storage.list_chat_sessions(bot)
-        main_chat_id = self.storage.get_main_chat_id(bot)
 
         bot_config = self.config.bots.get(bot)
-        workgroup_config = self.config.workgroups.get(bot)
-        backend = (bot_config.ai_backend if bot_config else None) or (workgroup_config.ai_backend if workgroup_config else "claude-cli")
+        backend = (bot_config.ai_backend if bot_config else None) or "claude-cli"
         if backend in ("claude-cli", "agent-sdk-claude"):
             try:
                 from boxagent.history import get_history
@@ -335,7 +314,6 @@ class WebHttpServer:
         for s in sessions:
             sid = s.get("session_id") or ""
             s["platform"] = infer_platform(s["chat_id"])
-            s["is_main"] = bool(main_chat_id and s["chat_id"] == main_chat_id)
             s["preview"] = ""
             s["last_ts"] = 0
             s["message_count"] = 0
@@ -433,29 +411,6 @@ class WebHttpServer:
         sessions.sort(key=lambda x: x.get("last_ts") or 0, reverse=True)
         return web.json_response({"ok": True, "sessions": sessions})
 
-    async def _handle_set_main_session(self, request: web.Request) -> web.Response:
-        if not self._authorized(request):
-            return self._unauthorized()
-        try:
-            data = await request.json()
-        except Exception:
-            return web.json_response({"ok": False, "error": "invalid json"}, status=400)
-        bot = str(data.get("bot") or "").strip()
-        machine = str(data.get("machine") or "").strip()
-        chat_id = str(data.get("chat_id") or "").strip()
-        if not bot or not machine:
-            return web.json_response({"ok": False, "error": "missing bot/machine"}, status=400)
-        if machine != self.topology.local_machine_id():
-            response = await self.cluster_rpc.dispatch_machine_request(
-                machine, "POST", "/api/sessions/set_main", request, body=data,
-            )
-            if response is not None:
-                return response
-        if self.storage is None:
-            return web.json_response({"ok": False, "error": "no storage"}, status=500)
-        self.storage.set_main_chat_id(bot, chat_id)
-        return web.json_response({"ok": True, "main_chat_id": chat_id})
-
     async def _handle_rename_session(self, request: web.Request) -> web.Response:
         if not self._authorized(request):
             return self._unauthorized()
@@ -478,8 +433,8 @@ class WebHttpServer:
             if response is not None:
                 return response
         bot_config = self.config.bots.get(bot)
-        workgroup_config = self.config.workgroups.get(bot)
-        backend = (bot_config.ai_backend if bot_config else None) or (workgroup_config.ai_backend if workgroup_config else "claude-cli")
+        bot_config = self.config.bots.get(bot)
+        backend = (bot_config.ai_backend if bot_config else None) or "claude-cli"
         if backend not in ("claude-cli", "agent-sdk-claude"):
             return web.json_response(
                 {"ok": False, "error": f"backend {backend!r} does not support rename"},
@@ -933,18 +888,15 @@ class WebHttpServer:
         workspace = ""
         if self.storage:
             config = self.config.bots.get(bot)
-            workgroup = self.config.workgroups.get(bot)
-            model = (config.model if config else None) or (workgroup.model if workgroup else "")
+            model = (config.model if config else None) or ""
             if is_raw:
                 backend = backend_override or "claude-cli"
             else:
-                backend = (config.ai_backend if config else None) or (workgroup.ai_backend if workgroup else "claude-cli")
+                backend = (config.ai_backend if config else None) or "claude-cli"
             # ``encoded`` (project_id) is now the cwd path — use it
             # directly. Older callers that don't supply project still
-            # fall back to bot/workgroup defaults below.
-            workspace = encoded or (
-                config.workspace if config else (workgroup.admin_workspace if workgroup else "")
-            )
+            # fall back to bot defaults below.
+            workspace = encoded or (config.workspace if config else "")
             chat_id = f"{backend.split('-')[0]}-{sid}" if is_raw else f"claude-{sid}"
             self.storage.save_session(
                 bot, sid,
@@ -955,8 +907,6 @@ class WebHttpServer:
                 workspace=workspace,
             )
             pool = self.pools.get(bot)
-            if pool is None and self.workgroup_manager is not None:
-                pool = self.workgroup_manager.pools.get(bot)
             if pool is not None:
                 if workspace:
                     pool.set_workspace(chat_id, workspace)

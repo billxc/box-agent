@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from boxagent.agent_env import AgentEnv, ChannelInfo, WorkgroupContext
+from boxagent.agent_env import AgentEnv, ChannelInfo
 from boxagent.transports.base import IncomingMessage
 
 if TYPE_CHECKING:
@@ -33,19 +33,6 @@ def build_env(msg: IncomingMessage, router: "Router") -> AgentEnv:
         model = router.backend.model or ""
         workspace = router.workspace
 
-    running_tasks = router.get_running_tasks() if callable(router.get_running_tasks) else []
-    peers = router.get_peers() if callable(router.get_peers) else []
-
-    workgroup = None
-    if router.workgroup_role or router.has_peer_channel or router.workgroup_agents:
-        workgroup = WorkgroupContext(
-            role=router.workgroup_role,
-            agents=tuple(router.workgroup_agents),
-            running_tasks=tuple(running_tasks),
-            peers=tuple(peers),
-            has_peer_channel=router.has_peer_channel,
-        )
-
     return AgentEnv(
         channel=channel,
         chat_id=chat_id,
@@ -57,7 +44,6 @@ def build_env(msg: IncomingMessage, router: "Router") -> AgentEnv:
         config_dir=router.config_dir,
         local_dir=str(router.local_dir) if router.local_dir else "",
         telegram_token=router.telegram_token,
-        workgroup=workgroup,
         ai_backend=router.ai_backend,
         model=model,
         yolo=router.backend.yolo,
@@ -78,13 +64,10 @@ def build_session_context(chat_id: str, router: "Router", env: AgentEnv | None =
     if env is not None:
         return _build(env=env)
 
-    running_tasks = router.get_running_tasks() if callable(router.get_running_tasks) else []
     return _build(
         bot_name=router.bot_name,
         display_name=router.display_name,
         node_id=router.node_id,
         workspace=router.workspace,
         config_dir=router.config_dir,
-        workgroup_agents=router.workgroup_agents,
-        running_tasks=running_tasks,
     )

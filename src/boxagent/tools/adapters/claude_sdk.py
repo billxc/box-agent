@@ -34,9 +34,8 @@ GROUP_TO_SERVER_NAME = {
 def build_mcp_servers(*, ctx: ToolContext, env: Any) -> dict[str, Any]:
     """Build a dict for ``ClaudeAgentOptions.mcp_servers``.
 
-    Filters tools by env capabilities (``has_telegram`` / ``is_workgroup_admin``
-    / ``has_peer_channel``) and groups them into one in-process MCP server
-    per ``ToolDef.group``.
+    Filters tools by env capabilities (``has_telegram``) and groups them
+    into one in-process MCP server per ``ToolDef.group``.
     """
     capabilities = env_capabilities(env)
     visible = tools_for(env_caps=capabilities)

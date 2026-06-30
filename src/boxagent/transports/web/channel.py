@@ -17,7 +17,7 @@ class WebChannel(Channel):
     """In-process pub/sub for web UI sessions.
 
     Frontend connects via SSE on /api/stream, server fans out events from
-    bots/workgroups via _publish.
+    bots via _publish.
     """
 
     """In-process channel that routes between the Router and browser clients.

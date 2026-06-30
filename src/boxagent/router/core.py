@@ -39,12 +39,7 @@ class Router:
     extra_skill_dirs: list[str] = field(default_factory=list)
     ai_backend: str = "claude-cli"
     on_backend_switched: Callable[[str, AgentBackend, str], Awaitable[None]] | None = None
-    workgroup_agents: list[str] = field(default_factory=list)  # specialist names for context
-    get_running_tasks: Callable[[], list[dict]] | None = None
-    get_peers: Callable[[], list[dict]] | None = None  # workgroup admin only
-    has_peer_channel: bool = False
     telegram_token: str = ""      # from BotConfig at startup
-    workgroup_role: str = ""      # "admin" / "specialist" / ""
     passthrough: bool = False     # raw bot: skip context + MCP injection
     _compact_summaries: dict[str, str] = field(default_factory=dict, repr=False)
     _resume_contexts: dict[str, str] = field(default_factory=dict, repr=False)
@@ -301,21 +296,6 @@ class Router:
                 logger.warning("Failed to save session: %s", e)
 
         return callback.collected_text
-
-    # ---- Workgroup delegation ----
-
-    async def dispatch_sync(self, text: str, chat_id: str, from_bot: str = "") -> str:
-        """Process a message internally and return the response text.
-
-        Used by workgroup delegation — skips auth and command handling.
-        """
-        msg = IncomingMessage(
-            channel="internal",
-            chat_id=chat_id,
-            user_id=from_bot or "workgroup",
-            text=text,
-        )
-        return await self._dispatch(msg)
 
     # ---- Internal helpers ----
 

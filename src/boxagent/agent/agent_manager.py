@@ -5,8 +5,7 @@ one as ``self._bots`` and drives it via ``start_bot`` / ``start_raw_bot``
 / ``restart_bot`` / ``on_backend_switched``.
 
 Backend-factory and workspace helpers live in sibling modules
-(``backend_factory.py`` / ``workspace.py``) — both AgentManager and
-WorkgroupManager import them directly.
+(``backend_factory.py`` / ``workspace.py``).
 """
 
 import asyncio
@@ -62,9 +61,8 @@ class AgentManager:
         self.start_time = start_time
         self.gateway = gateway
         # State this manager owns. Other managers that need a read view
-        # (TopologyService → web_channels, WebHttpServer → pools/web_channels,
-        # WorkgroupManager → web_channels) receive the dict by reference at
-        # their own construction time.
+        # (TopologyService → web_channels, WebHttpServer → pools/web_channels)
+        # receive the dict by reference at their own construction time.
         self.backends: dict[str, AgentBackend] = {}
         self.pools: dict = {}
         self.routers: dict[str, "Router"] = {}
@@ -225,7 +223,6 @@ class AgentManager:
             extra_skill_dirs=bot_config.extra_skill_dirs,
             ai_backend=bot_config.ai_backend,
             on_backend_switched=self.on_backend_switched,
-            has_peer_channel=False,
             telegram_token=bot_config.telegram_token,
         )
 
@@ -353,7 +350,6 @@ class AgentManager:
             extra_skill_dirs=[],
             ai_backend="claude-cli",
             on_backend_switched=self.on_backend_switched,
-            has_peer_channel=False,
             telegram_token="",
             passthrough=True,
         )

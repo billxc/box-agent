@@ -71,12 +71,12 @@ class TestFilter:
                        requires=["telegram"])
         async def t1(args, ctx): return ""
 
-        @boxagent_tool(name="a1", group="admin", description="",
-                       requires=["workgroup_admin"])
+        @boxagent_tool(name="a1", group="ops", description="",
+                       requires=["ops"])
         async def a1(args, ctx): return ""
 
-        @boxagent_tool(name="ap", group="admin", description="",
-                       requires=["workgroup_admin", "telegram"])
+        @boxagent_tool(name="ap", group="ops", description="",
+                       requires=["ops", "telegram"])
         async def ap(args, ctx): return ""
 
     def test_filter_by_group(self):
@@ -87,13 +87,13 @@ class TestFilter:
         names = {t.name for t in tools_for(env_caps={"telegram"})}
         assert names == {"b1", "t1"}
 
-    def test_filter_by_env_caps_admin_alone_excludes_combo(self):
-        names = {t.name for t in tools_for(env_caps={"workgroup_admin"})}
-        # ap requires telegram + workgroup_admin — should be excluded
+    def test_filter_by_env_caps_single_excludes_combo(self):
+        names = {t.name for t in tools_for(env_caps={"ops"})}
+        # ap requires telegram + ops — should be excluded
         assert names == {"b1", "a1"}
 
     def test_filter_by_env_caps_combo(self):
-        names = {t.name for t in tools_for(env_caps={"workgroup_admin", "telegram"})}
+        names = {t.name for t in tools_for(env_caps={"ops", "telegram"})}
         assert names == {"b1", "t1", "a1", "ap"}
 
     def test_no_filter_returns_all(self):
@@ -103,12 +103,8 @@ class TestFilter:
 class TestEnvCapabilities:
     def test_pulls_caps_from_env_attrs(self):
         from types import SimpleNamespace
-        env = SimpleNamespace(
-            has_telegram=True,
-            is_workgroup_admin=False,
-            has_peer_channel=True,
-        )
-        assert env_capabilities(env) == {"telegram", "peer_channel"}
+        env = SimpleNamespace(has_telegram=True)
+        assert env_capabilities(env) == {"telegram"}
 
     def test_none_env_yields_empty(self):
         assert env_capabilities(None) == set()

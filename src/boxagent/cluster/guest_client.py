@@ -52,11 +52,6 @@ class GuestClient:
     _stop: bool = False
     _ws: aiohttp.ClientWebSocketResponse | None = None
     _session: ClientSession | None = None
-    # Peers (host + other guests' workgroup-kind bots) pushed by host
-    # via `peers_snapshot` frames. Each entry: {name, machine, online,
-    # kind, description}. Read by Gateway._build_peer_descriptors so the
-    # local admin sees cross-machine peers.
-    remote_peers: list[dict] = field(default_factory=list)
     # Cluster machine list (host + all sats minus self), pushed by host via
     # `machines_snapshot` frames after every topology change. Read by guest-side
     # _handle_web_machines / _handle_web_bots so the local webui can render
@@ -343,13 +338,6 @@ class GuestClient:
                     ]
                     logger.debug("guest: machines_snapshot received (%d machines)",
                                  len(self.remote_machines))
-                elif payload.get("type") == "peers_snapshot":
-                    # Host pushes the full cross-cluster peer list (host's
-                    # local workgroups + other sats' workgroups, minus this
-                    # guest's own). Replace cache wholesale.
-                    raw = payload.get("peers") or []
-                    self.remote_peers = [p for p in raw if isinstance(p, dict) and p.get("name")]
-                    logger.debug("guest: peers_snapshot received (%d peers)", len(self.remote_peers))
                 elif self.on_unknown_frame is not None:
                     try:
                         await self.on_unknown_frame(payload)

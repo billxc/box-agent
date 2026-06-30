@@ -54,7 +54,7 @@ class RemoteBot:
     display_name: str = ""
     backend: str = ""
     model: str = ""
-    kind: str = "bot"  # "bot" | "workgroup"
+    kind: str = "bot"
 
 
 class _PendingResponse:
@@ -165,9 +165,9 @@ class GuestRegistry:
     # web UI can show an offline tile instead of the row vanishing.
     history: dict[str, dict] = field(default_factory=dict)  # machine_id → {bots: [...], last_seen}
     # Optional: called by handle_ws after a guest's hello/bots_update, and after
-    # any guest disconnects. Lets the host push a peers_snapshot to all (or just the
-    # the changed) guests so each guest learns about the other workgroups in the
-    # cluster. None = no push.
+    # any guest disconnects. Lets the host push a machines_snapshot to all (or
+    # just the changed) guests so each guest learns the current cluster topology.
+    # None = no push.
     on_topology_change: Callable[[str | None], Awaitable[None]] | None = None
     # Optional: called for any unknown frame type from a guest. Returns True
     # if the frame was consumed. Used by the events syncer to handle

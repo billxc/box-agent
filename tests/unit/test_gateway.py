@@ -14,8 +14,6 @@ def _internal_api_from(gateway):
     return InternalApiServer(
         config=gateway.config,
         local_dir=gateway.local_dir,
-        peer=gateway._peer,
-        workgroup_routes=gateway._workgroup_routes,
         scheduler_routes=gateway._scheduler_routes,
     )
 
@@ -342,8 +340,6 @@ class TestGateway:
         local_dir = tmp_path / "local"
         local_dir.mkdir()
         gateway = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
-        gateway._peer = MagicMock()
-        gateway._workgroup_routes = MagicMock()
         gateway._scheduler_routes = MagicMock()
         api = _internal_api_from(gateway)
 
@@ -374,8 +370,6 @@ class TestGateway:
         local_dir = tmp_path / "local"
         local_dir.mkdir()
         gateway = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
-        gateway._peer = MagicMock()
-        gateway._workgroup_routes = MagicMock()
         gateway._scheduler_routes = MagicMock()
         api = _internal_api_from(gateway)
 
@@ -399,8 +393,6 @@ class TestGateway:
         local_dir = tmp_path / "local"
         local_dir.mkdir()
         gateway = Gateway(config=mock_config, config_dir=tmp_path, local_dir=local_dir)
-        gateway._peer = MagicMock()
-        gateway._workgroup_routes = MagicMock()
         gateway._scheduler_routes = MagicMock()
         api = _internal_api_from(gateway)
 
@@ -427,8 +419,6 @@ class TestGateway:
         api = InternalApiServer(
             config=MagicMock(),
             local_dir=local_dir,
-            peer=MagicMock(),
-            workgroup_routes=None,
             scheduler_routes=MagicMock(),
         )
         api._clear_artifacts()

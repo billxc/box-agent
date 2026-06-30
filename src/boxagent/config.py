@@ -39,58 +39,6 @@ class BotConfig:
 
 
 @dataclass
-class SpecialistConfig:
-    """A specialist agent within a workgroup."""
-
-    name: str
-    model: str = ""
-    workspace: str = ""
-    ai_backend: str = ""
-    display_name: str = ""
-    extra_skill_dirs: list[str] = field(default_factory=list)
-    template: str = ""  # template name used at create time (metadata only)
-
-
-@dataclass
-class WorkgroupConfig:
-    """A standalone workgroup: admin agent + N specialist agents.
-
-    The admin is created inline (not referencing the bots section).
-    Specialists are virtual agents reachable only via send_to_agent.
-    """
-
-    name: str
-    workspace: str = ""             # root directory; admin uses {workspace}/.boxagent-workgroup/admin/
-    enabled_on_nodes: str | list[str] = ""  # empty = run everywhere
-    # Agent config
-    allowed_users: list[int] = field(default_factory=list)
-    model: str = ""
-    ai_backend: str = "claude-cli"
-    yolo: bool = False
-    display_name: str = ""
-    display_tool_calls: str = "silent"
-    extra_skill_dirs: list[str] = field(default_factory=list)
-    heartbeat_interval_seconds: int = 0  # 0 = disabled
-    display_heartbeat: bool = False
-    web_enabled: bool = True
-    specialists: dict[str, SpecialistConfig] = field(default_factory=dict)
-
-    @property
-    def workgroup_dir(self) -> str:
-        """The .boxagent-workgroup directory under workspace."""
-        return str(Path(self.workspace) / ".boxagent-workgroup") if self.workspace else ""
-
-    @property
-    def admin_workspace(self) -> str:
-        return str(Path(self.workgroup_dir) / "admin") if self.workgroup_dir else ""
-
-    def specialist_workspace(self, specialist_name: str) -> str:
-        if not self.workgroup_dir:
-            return ""
-        return str(Path(self.workgroup_dir) / "specialists" / specialist_name)
-
-
-@dataclass
 class AppConfig:
     node_id: str = ""
     log_level: str = "info"
@@ -117,7 +65,6 @@ class AppConfig:
     guest_token: str = ""
     host_token: str = ""
     bots: dict[str, BotConfig] = field(default_factory=dict)
-    workgroups: dict[str, WorkgroupConfig] = field(default_factory=dict)
     telegram_bots: dict[str, str] = field(default_factory=dict)
     # Standalone Telegram push notifier — decoupled from chat bots. Sends a
     # message to `notify_telegram_chat_id` whenever an event matching
@@ -252,21 +199,6 @@ def load_config(
             telegram_bots=telegram_bots,
         )
 
-    # Parse workgroups. Parsing/validation logic lives in the workgroup
-    # package; import it lazily so a plain (no-workgroup) config never pulls
-    # the workgroup module in.
-    workgroups: dict[str, WorkgroupConfig] = {}
-    raw_workgroups = effective_raw.get("workgroups", {})
-    if raw_workgroups:
-        from boxagent.workgroup.config import parse_workgroup, validate_workgroups
-
-        for workgroup_name, workgroup_raw in raw_workgroups.items():
-            workgroups[workgroup_name] = parse_workgroup(
-                workgroup_name, workgroup_raw,
-                box_agent_dir=box_agent_dir, config_dir=config_dir,
-            )
-        validate_workgroups(workgroups, node_id=node_id)
-
     return AppConfig(
         node_id=node_id,
         log_level=log_level,
@@ -282,7 +214,6 @@ def load_config(
         cluster_tunnel=cluster_tunnel,
         host_token=host_token,
         bots=bots,
-        workgroups=workgroups,
         telegram_bots=telegram_bots,
         notify_telegram_token=notify_telegram_token,
         notify_telegram_chat_id=notify_telegram_chat_id,
