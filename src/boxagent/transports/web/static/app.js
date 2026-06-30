@@ -5,7 +5,7 @@
   if (params.get("token")) localStorage.setItem("ba.token", TOKEN);
 
   const $ = (id) => document.getElementById(id);
-  const messagesEl = $("messages");
+  const chatLog = $("messages");
   const machinesPanel = $("machines");
   const sessionsPanel = $("sessions");
   const sessionsOf = $("sessions-of");
@@ -37,7 +37,6 @@
     chatId: null,
     es: null,
     streamMsgs: {},
-    typingEl: null,
     refreshTimer: null,
     historyOffset: 0,     // how many items already loaded from end of history
     historyTotal: 0,      // total items reported by server
@@ -112,32 +111,13 @@
     connLabel.textContent = state_;
   }
 
-  function scrollDown() {
-    requestAnimationFrame(() => { messagesEl.scrollTop = messagesEl.scrollHeight; });
-  }
-
-  // Message bubbles render via the <chat-message> custom element
-  // (components/chat-message.js); shared markdown/escape live in util.js.
-  function addMessage(role, text, opts = {}) {
-    removeTyping();
-    const el = ChatMessage.create(role, text, opts);
-    messagesEl.appendChild(el);
-    scrollDown();
-    return el;
-  }
-
-  function showTyping() {
-    if (state.typingEl) return;
-    const el = document.createElement("div");
-    el.className = "typing";
-    el.innerHTML = "<span></span><span></span><span></span>";
-    messagesEl.appendChild(el);
-    state.typingEl = el;
-    scrollDown();
-  }
-  function removeTyping() {
-    if (state.typingEl) { state.typingEl.remove(); state.typingEl = null; }
-  }
+  // Message area is the <chat-log> custom element (components/chat-log.js).
+  // These stay as thin delegators so the controller's call sites don't move;
+  // addMessage returns the bubble element so the stream can write deltas into it.
+  function scrollDown() { chatLog.scrollToBottom(); }
+  function addMessage(role, text, opts = {}) { return chatLog.addMessage(role, text, opts); }
+  function showTyping() { chatLog.showTyping(); }
+  function removeTyping() { chatLog.removeTyping(); }
 
   // ── Sessions ──
   // buildSessionList(local, server) / defaultTitle / shortId live in
@@ -243,24 +223,6 @@
     }
   }
 
-  function renderHistoryFragment(items) {
-    const frag = document.createDocumentFragment();
-    for (const h of items) {
-      if (h.role === "tool_call") {
-        ToolCard.upsertCall(frag, h.tool_id || "", h.name || "tool", h.args || {});
-        continue;
-      }
-      if (h.role === "tool_result") {
-        ToolCard.applyResult(frag, h.tool_id || "", !!h.ok, h.summary || "", h.error || "");
-        continue;
-      }
-      const el = ChatMessage.create(h.role, h.text, { ts: h.ts });
-      el.style.animation = "none";
-      frag.appendChild(el);
-    }
-    return frag;
-  }
-
   async function loadOlderHistory() {
     if (state.historyLoading || state.historyExhausted) return;
     if (!state.chatId || !state.bot) return;
@@ -273,16 +235,7 @@
       const items = j.history || [];
       state.historyTotal = j.total || state.historyTotal;
       if (!items.length) { state.historyExhausted = true; return; }
-      const frag = renderHistoryFragment(items);
-      // Preserve scroll position: remember height before prepend, restore after.
-      const prevBehavior = messagesEl.style.scrollBehavior;
-      messagesEl.style.scrollBehavior = "auto";
-      const beforeHeight = messagesEl.scrollHeight;
-      const beforeTop = messagesEl.scrollTop;
-      messagesEl.insertBefore(frag, messagesEl.firstChild);
-      const afterHeight = messagesEl.scrollHeight;
-      messagesEl.scrollTop = beforeTop + (afterHeight - beforeHeight);
-      messagesEl.style.scrollBehavior = prevBehavior;
+      chatLog.prependHistory(items); // builds bubbles + preserves scroll position
       state.historyOffset += items.length;
       if (state.historyOffset >= state.historyTotal) state.historyExhausted = true;
     } catch (e) {
@@ -292,9 +245,8 @@
     }
   }
 
-  messagesEl.addEventListener("scroll", () => {
-    if (messagesEl.scrollTop < 100) loadOlderHistory();
-  }, { passive: true });
+  // <chat-log> calls this when the user scrolls near the top; we fetch more.
+  chatLog.onLoadOlder = loadOlderHistory;
 
   async function switchChat(chatId) {
     if (state.es) { state.es.close(); state.es = null; }
@@ -352,14 +304,7 @@
       }
     } catch (e) { console.warn("history load failed", e); }
 
-    const frag = renderHistoryFragment(history);
-    // Disable smooth scroll just for the bottom-jump; the live-stream
-    // appends below still use the smooth behavior set in CSS.
-    const prevBehavior = messagesEl.style.scrollBehavior;
-    messagesEl.style.scrollBehavior = "auto";
-    messagesEl.replaceChildren(frag);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
-    messagesEl.style.scrollBehavior = prevBehavior;
+    chatLog.setHistory(history); // replace bubbles + jump to bottom (no smooth)
 
     requestAnimationFrame(() => mask.classList.add("hidden"));
 
@@ -435,14 +380,14 @@
   }
 
   // ── Tool call rendering ──
-  // <tool-card> (components/tool-card.js) owns find / create / dedup / result;
-  // here we just hand it the live #messages container.
+  // <chat-log> wraps <tool-card>'s find / create / dedup / result over the live
+  // message container.
   function renderToolCall(toolId, name, args, parentToolId = "") {
-    ToolCard.upsertCall(messagesEl, toolId, name, args, parentToolId);
+    chatLog.upsertToolCall(toolId, name, args, parentToolId);
   }
 
   function renderToolResult(toolId, ok, summary, error) {
-    ToolCard.applyResult(messagesEl, toolId, ok, summary, error);
+    chatLog.applyToolResult(toolId, ok, summary, error);
   }
 
   // ── Send ──

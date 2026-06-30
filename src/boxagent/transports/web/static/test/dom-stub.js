@@ -39,6 +39,7 @@ class El {
     this._className = "";
     this._textContent = "";
     this._innerHTML = "";
+    this._listeners = {};
     this.classList = new ClassList(this);
     this.dataset = new Proxy({}, {
       set: (t, key, value) => { this.attributes["data-" + camelToKebab(key)] = String(value); t[key] = value; return true; },
@@ -70,6 +71,11 @@ class El {
       this.parentNode.children = this.parentNode.children.filter((c) => c !== this);
       this.parentNode = null;
     }
+  }
+  addEventListener(type, fn) { (this._listeners[type] = this._listeners[type] || []).push(fn); }
+  dispatchEvent(event) {
+    for (const fn of this._listeners[event.type] || []) fn.call(this, event);
+    return true;
   }
   querySelector(selector) {
     const match = parseSelector(selector);
@@ -132,6 +138,9 @@ function install() {
   globalThis.document = document;
   globalThis.customElements = customElements;
   globalThis.CSS = { escape: (s) => String(s).replace(/["\\\]]/g, "\\$&") };
+  // Run rAF callbacks synchronously — tests don't paint, they just need the
+  // scroll-to-bottom logic to execute.
+  globalThis.requestAnimationFrame = (fn) => { fn(); return 0; };
   const store = new Map();
   globalThis.localStorage = {
     getItem: (k) => (store.has(k) ? store.get(k) : null),
