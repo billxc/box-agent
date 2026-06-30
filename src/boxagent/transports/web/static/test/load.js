@@ -14,6 +14,7 @@ install(); // sets globalThis.window / document / customElements / CSS / HTMLEle
 const staticDir = path.join(__dirname, "..");
 for (const rel of [
   "util.js",
+  "session-data.js",
   "components/tool-card.js",
   "components/chat-message.js",
   "components/recap-banner.js",
@@ -39,4 +40,9 @@ module.exports = {
   get SessionsPanel() { return globalThis.SessionsPanel; },
   get escapeHtml() { return globalThis.escapeHtml; },
   get renderMarkdown() { return globalThis.renderMarkdown; },
+  get loadSessions() { return globalThis.loadSessions; },
+  get saveSessions() { return globalThis.saveSessions; },
+  get buildSessionList() { return globalThis.buildSessionList; },
+  get defaultTitle() { return globalThis.defaultTitle; },
+  get shortId() { return globalThis.shortId; },
 };
