@@ -114,3 +114,15 @@
 **净行数 +56**（组件 91 − app.js −35）—— 印证"WC 换结构不减行数"。收益是 tool-card 逻辑内聚、app.js 不再 juggle DOM 引用注册表。
 
 **风险/限制**：前端 0 测试，本改动靠浏览器手验（live 工具卡 / 历史卡 / ✓✗ 结果 / 折叠 / subagent 嵌套）。若继续 WC 化，需先加 jsdom smoke-test 作安全网。
+
+## 2026-06-30 — 前端组件测试：node --test + 自写 DOM stub（无 jsdom/npm）
+
+WC 化后每个组件都要肉眼手验，迟早漏。加自动测试，但**不引入 jsdom/npm 工具链**（项目刻意 vanilla 无 build）。
+
+方案：`static/test/dom-stub.js` 自写最小 DOM（createElement / classList / append / querySelector 支持 tag+[data-attr]+.class / dataset↔attribute / custom-element upgrade + connectedCallback），`load.js` 用 `vm.runInThisContext` 把 util.js + 组件源码 eval 进 stub 全局，`*.test.js` 用 Node 内置 `node:test` 断言。
+
+接进主套件：`tests/unit/test_web_frontend.py` shell 出 `node --test static/test/*.test.js`，`uv run pytest` 一并跑（node 缺失则 skip）。
+
+覆盖：util escapeHtml/renderMarkdown（含 XSS fallback）、tool-card upsert/幂等/result/synth/subagent/**detached-fragment 连接时渲染时序**、chat-message markdown/user 转义/setText 流式/data-id/时间戳。15 个子测试。
+
+**为什么不 jsdom**：一个个人工具，自写 stub ~140 行覆盖组件实际用到的 DOM 子集，比拉进 npm + node_modules + package.json 这套异质工具链更轻、更符合无 build 的取向。stub 不是通用 DOM，够测这些组件即可。
