@@ -976,247 +976,28 @@
     addMessage("assistant", "_Failed to connect: " + e.message + "_");
   });
 
-  // ── Claude session picker ──
+  // ── Claude session picker (component: components/session-picker.js) ──
+  // The <session-picker> element owns the modal + all Claude-resume HTTP +
+  // pagination. We inject the HTTP wrapper + current-bot context; on a
+  // successful resume it emits "resumed", and we update the local session
+  // caches + navigate (app state the component deliberately doesn't touch).
   const picker = $("claude-picker");
-  const pickerProjects = $("picker-projects");
-  const pickerSessions = $("picker-sessions");
-  const pickerPreview = $("picker-preview");
-  const pickerCrumb = $("picker-crumb");
-  const pickerBack = $("picker-back");
-  const pickerCount = $("picker-count");
-  const pickerResume = $("picker-resume");
-  let picker_state = { project: null, session: null };
-  let picker_paging = { offset: 0, total: 0, loading: false, done: false, observer: null };
-
-  function renderSessionItem(s) {
-    const li = document.createElement("li");
-    const title = (s.first_user || "(no user message)").trim();
-    li.innerHTML = `<div class="grow"><div class="row1">${escapeHtml(title)}</div><div class="row2">${formatTs(s.last_ts)} · ${s.session_id.slice(0, 8)}</div></div><span class="meta">💬 ${s.message_count}</span>`;
-    li.onclick = () => selectSession(li, s);
-    return li;
-  }
-
-  function openPicker() {
-    picker.classList.remove("hidden");
-    showProjects();
-  }
-  function closePicker() {
-    picker.classList.add("hidden");
-    pickerPreview.classList.add("hidden");
-    pickerPreview.innerHTML = "";
-    picker_state = { project: null, session: null };
-  }
-  $("open-claude-picker").onclick = openPicker;
-  $("picker-close").onclick = closePicker;
-  $("picker-cancel").onclick = closePicker;
-  pickerBack.onclick = () => {
-    if (picker_state.session) { picker_state.session = null; pickerResume.disabled = true; pickerPreview.classList.add("hidden"); pickerPreview.innerHTML = ""; pickerSessions.classList.remove("hidden"); pickerCrumb.textContent = picker_state.project ? picker_state.project.label : ""; }
-    else if (picker_state.project) { showProjects(); }
-  };
-
-  async function showProjects() {
-    picker_state = { project: null, session: null };
-    pickerCrumb.textContent = "";
-    pickerBack.classList.add("hidden");
-    pickerSessions.classList.add("hidden");
-    pickerPreview.classList.add("hidden");
-    pickerPreview.innerHTML = "";
-    pickerResume.disabled = true;
-    pickerProjects.classList.remove("hidden");
-    pickerProjects.innerHTML = "<li class='muted'>Loading…</li>";
-    pickerCount.textContent = "";
-    try {
-      await loadProjectsPage(0, /*replace=*/ true);
-    } catch (e) {
-      pickerProjects.innerHTML = `<li class='muted'>Error: ${escapeHtml(e.message)}</li>`;
-    }
-  }
-
-  const PROJECTS_PAGE_SIZE = 30;
-
-  async function loadProjectsPage(offset, replace) {
-    const r = await api(
-      `claude/projects?machine=${encodeURIComponent(state.botMachine)}` +
-      `&offset=${offset}&limit=${PROJECTS_PAGE_SIZE}`,
-    );
-    const { projects, total, has_more } = await r.json();
-    const existingMore = pickerProjects.querySelector(".load-more");
-    if (existingMore) existingMore.remove();
-    if (replace) pickerProjects.innerHTML = "";
-    if (replace && projects.length === 0) {
-      pickerProjects.innerHTML = "<li class='muted'>No Claude sessions found at ~/.claude/projects/</li>";
-      pickerCount.textContent = "0 projects";
-      return;
-    }
-    for (const p of projects) {
-      const li = document.createElement("li");
-      li.innerHTML = `<div class="grow"><div class="row1">📁 ${escapeHtml(p.label)}</div><div class="row2">${escapeHtml(p.cwd || p.encoded)}</div></div><span class="meta">${p.session_count} · ${formatTs(p.last_ts)}</span>`;
-      li.onclick = () => showSessions(p);
-      pickerProjects.appendChild(li);
-    }
-    const shown = pickerProjects.querySelectorAll("li:not(.load-more):not(.muted)").length;
-    pickerCount.textContent = `${shown} / ${total} projects`;
-    if (has_more) {
-      const li = document.createElement("li");
-      li.className = "load-more muted";
-      li.style.cursor = "pointer";
-      li.style.textAlign = "center";
-      li.textContent = "Load more…";
-      li.onclick = async () => {
-        li.textContent = "Loading…";
-        li.onclick = null;
-        try {
-          await loadProjectsPage(offset + PROJECTS_PAGE_SIZE, /*replace=*/ false);
-        } catch (e) {
-          li.textContent = `Error: ${e.message}`;
-        }
-      };
-      pickerProjects.appendChild(li);
-    }
-  }
-
-  async function showSessions(project) {
-    picker_state = { project, session: null };
-    pickerProjects.classList.add("hidden");
-    pickerSessions.classList.remove("hidden");
-    pickerPreview.classList.add("hidden");
-    pickerPreview.innerHTML = "";
-    pickerResume.disabled = true;
-    pickerBack.classList.remove("hidden");
-    pickerCrumb.textContent = project.label;
-    pickerSessions.innerHTML = "<li class='muted'>Loading…</li>";
-    if (picker_paging.observer) { picker_paging.observer.disconnect(); }
-    picker_paging = { offset: 0, total: 0, loading: false, done: false, observer: null };
-    try {
-      await loadSessionPage();
-    } catch (e) {
-      pickerSessions.innerHTML = `<li class='muted'>Error: ${escapeHtml(e.message)}</li>`;
-    }
-  }
-
-  const SESSION_PAGE_SIZE = 50;
-
-  async function loadSessionPage() {
-    if (picker_paging.loading || picker_paging.done) return;
-    picker_paging.loading = true;
-    const project = picker_state.project;
-    const url =
-      `claude/sessions?machine=${encodeURIComponent(state.botMachine)}` +
-      `&project=${encodeURIComponent(project.encoded)}` +
-      `&offset=${picker_paging.offset}&limit=${SESSION_PAGE_SIZE}`;
-    let firstPage = picker_paging.offset === 0;
-    let sentinel = pickerSessions.querySelector("li.sentinel");
-    if (sentinel) sentinel.remove();
-    if (firstPage) pickerSessions.innerHTML = "";
-    try {
-      const r = await api(url);
-      const data = await r.json();
-      const sessions = data.sessions || [];
-      picker_paging.total = data.total ?? sessions.length;
-      picker_paging.offset += sessions.length;
-      picker_paging.done = !data.has_more || sessions.length === 0;
-      for (const s of sessions) {
-        pickerSessions.appendChild(renderSessionItem(s));
-      }
-      pickerCount.textContent = `${picker_paging.offset} / ${picker_paging.total} sessions`;
-      if (firstPage && sessions.length === 0) {
-        pickerSessions.innerHTML = "<li class='muted'>(empty)</li>";
-        return;
-      }
-      if (!picker_paging.done) {
-        const newSentinel = document.createElement("li");
-        newSentinel.className = "sentinel muted";
-        newSentinel.textContent = "Loading more…";
-        pickerSessions.appendChild(newSentinel);
-        if (!picker_paging.observer) {
-          picker_paging.observer = new IntersectionObserver((entries) => {
-            for (const entry of entries) {
-              if (entry.isIntersecting) {
-                loadSessionPage().catch((e) => console.error("page load failed", e));
-              }
-            }
-          }, { root: pickerSessions, rootMargin: "200px" });
-        }
-        picker_paging.observer.observe(newSentinel);
-      }
-    } finally {
-      picker_paging.loading = false;
-    }
-  }
-
-  async function selectSession(li, session) {
-    picker_state.session = session;
-    for (const x of pickerSessions.querySelectorAll("li")) x.classList.remove("selected");
-    li.classList.add("selected");
-    pickerResume.disabled = false;
-    pickerPreview.classList.remove("hidden");
-    pickerPreview.innerHTML = "<div class='muted'>Loading transcript…</div>";
-    try {
-      const r = await api(`claude/transcript?machine=${encodeURIComponent(state.botMachine)}&project=${encodeURIComponent(picker_state.project.encoded)}&session_id=${encodeURIComponent(session.session_id)}`);
-      const { messages } = await r.json();
-      pickerPreview.innerHTML = "";
-      const tail = messages.slice(-12);
-      for (const m of tail) {
-        const div = document.createElement("div");
-        div.className = "pmsg";
-        div.innerHTML = `<span class="role">${m.role}</span>${escapeHtml((m.text || "").slice(0, 240))}${m.text.length > 240 ? "…" : ""}`;
-        pickerPreview.appendChild(div);
-      }
-    } catch (e) {
-      pickerPreview.innerHTML = `<div class='muted'>Preview failed: ${escapeHtml(e.message)}</div>`;
-    }
-  }
-
-  pickerResume.onclick = async () => {
-    if (!picker_state.session || !state.bot) return;
-    pickerResume.disabled = true;
-    pickerResume.textContent = "Resuming…";
-    const raw = $("picker-raw") && $("picker-raw").checked;
-    const resumeBot = raw ? "raw" : state.bot;
-    const resumeMachine = raw ? state.botMachine : state.botMachine;
-    try {
-      const r = await api("claude/resume", {
-        method: "POST",
-        body: JSON.stringify({
-          bot: resumeBot,
-          machine: resumeMachine,
-          project: picker_state.project.encoded,
-          session_id: picker_state.session.session_id,
-          backend: raw ? "claude-cli" : undefined,
-        }),
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const { chat_id } = await r.json();
-      const sessions = loadSessions(resumeMachine, resumeBot);
-      sessions[chat_id] = {
-        title: `${raw ? "Raw" : "Claude"} · ${picker_state.project.label}`,
-        preview: picker_state.session.first_user || "",
-        ts: Date.now(),
-      };
-      saveSessions(resumeMachine, resumeBot, sessions);
-      // Switch active bot if we routed to raw
-      if (raw && state.bot !== "raw") {
-        state.bot = "raw";
-        state.botMachine = resumeMachine;
-      }
-      const key = curKey();
-      state.sessions[key] = sessions;
-      state.serverSessions[key] = await fetchServerSessions(resumeMachine, resumeBot);
-      closePicker();
-      await switchChat(chat_id);
-    } catch (e) {
-      alert("Resume failed: " + e.message);
-    } finally {
-      pickerResume.disabled = false;
-      pickerResume.textContent = "Resume";
-    }
-  };
-
-  function formatTs(ts) {
-    if (!ts) return "";
-    const d = new Date(ts * 1000);
-    const now = new Date();
-    const sameDay = d.toDateString() === now.toDateString();
-    return sameDay ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : d.toLocaleDateString();
-  }
+  picker.api = api;
+  picker.getContext = () => ({ machine: state.botMachine, bot: state.bot });
+  picker.addEventListener("resumed", async (e) => {
+    const { chat_id, machine, bot, raw, project, session } = e.detail;
+    const sessions = loadSessions(machine, bot);
+    sessions[chat_id] = {
+      title: `${raw ? "Raw" : "Claude"} · ${project.label}`,
+      preview: session.first_user || "",
+      ts: Date.now(),
+    };
+    saveSessions(machine, bot, sessions);
+    if (raw && state.bot !== "raw") { state.bot = "raw"; state.botMachine = machine; }
+    const key = curKey();
+    state.sessions[key] = sessions;
+    state.serverSessions[key] = await fetchServerSessions(machine, bot);
+    await switchChat(chat_id);
+  });
+  $("open-claude-picker").onclick = () => picker.open();
 })();

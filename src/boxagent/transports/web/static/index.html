@@ -81,38 +81,14 @@
 
   <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 
-  <div id="claude-picker" class="picker hidden" role="dialog" aria-modal="true">
-    <div class="picker-card">
-      <header class="picker-head">
-        <strong>Resume Claude Session</strong>
-        <span id="picker-crumb" class="muted"></span>
-        <span class="spacer"></span>
-        <button id="picker-back" class="text-btn hidden">← Back</button>
-        <button id="picker-close" class="icon-btn" aria-label="Close">×</button>
-      </header>
-      <div class="picker-body">
-        <ul id="picker-projects" class="picker-list"></ul>
-        <ul id="picker-sessions" class="picker-list hidden"></ul>
-        <div id="picker-preview" class="picker-preview hidden"></div>
-      </div>
-      <footer class="picker-foot">
-        <span id="picker-count" class="muted"></span>
-        <span class="spacer"></span>
-        <label class="muted" style="display:flex;align-items:center;gap:4px;font-size:12px;">
-          <input type="checkbox" id="picker-raw" checked />
-          Raw passthrough (no BoxAgent injection)
-        </label>
-        <button id="picker-cancel" class="text-btn">Cancel</button>
-        <button id="picker-resume" class="primary-btn" disabled>Resume</button>
-      </footer>
-    </div>
-  </div>
+  <session-picker id="claude-picker"></session-picker>
 
   <script src="util.js"></script>
   <script src="components/tool-card.js"></script>
   <script src="components/chat-message.js"></script>
   <script src="components/recap-banner.js"></script>
   <script src="components/session-info.js"></script>
+  <script src="components/session-picker.js"></script>
   <script src="app.js"></script>
   <script>BoxAgentTheme.mount(document.getElementById("theme-slot"));</script>
 </body>
