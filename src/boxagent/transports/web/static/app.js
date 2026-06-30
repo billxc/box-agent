@@ -554,16 +554,11 @@
     const frag = document.createDocumentFragment();
     for (const h of items) {
       if (h.role === "tool_call") {
-        frag.appendChild(_makeToolCard(h.tool_id || "", h.name || "tool", h.args || {}));
+        ToolCard.upsertCall(frag, h.tool_id || "", h.name || "tool", h.args || {});
         continue;
       }
       if (h.role === "tool_result") {
-        let card = _findToolCard(h.tool_id || "", frag);
-        if (!card) {
-          card = _makeToolCard(h.tool_id || "", "tool", {});
-          frag.appendChild(card);
-        }
-        card.setResult(!!h.ok, h.summary || "", h.error || "");
+        ToolCard.applyResult(frag, h.tool_id || "", !!h.ok, h.summary || "", h.error || "");
         continue;
       }
       const el = buildMessage(h.role, h.text, { ts: h.ts });
@@ -748,36 +743,14 @@
   }
 
   // ── Tool call rendering ──
-  // The <tool-card> custom element (components/tool-card.js) owns the DOM +
-  // result lifecycle; here we just create / find / update cards.
+  // <tool-card> (components/tool-card.js) owns find / create / dedup / result;
+  // here we just hand it the live #messages container.
   function renderToolCall(toolId, name, args, parentToolId = "") {
-    if (!toolId) toolId = `t${Math.random().toString(36).slice(2, 10)}`;
-    const existing = _findToolCard(toolId, document);
-    if (existing) { existing.setCall(name, args); return; }  // idempotent
-    const card = _makeToolCard(toolId, name, args, parentToolId);
-    document.getElementById("messages").appendChild(card);
+    ToolCard.upsertCall(messagesEl, toolId, name, args, parentToolId);
   }
 
   function renderToolResult(toolId, ok, summary, error) {
-    let card = _findToolCard(toolId, document);
-    if (!card) {  // result without a preceding call (rare)
-      card = _makeToolCard(toolId, "tool", {});
-      document.getElementById("messages").appendChild(card);
-    }
-    card.setResult(ok, summary, error);
-  }
-
-  function _findToolCard(toolId, root) {
-    if (!toolId) return null;
-    return root.querySelector(`tool-card[data-tool-id="${CSS.escape(toolId)}"]`);
-  }
-
-  function _makeToolCard(toolId, name, args, parentToolId = "") {
-    const card = document.createElement("tool-card");
-    if (toolId) card.dataset.toolId = toolId;
-    if (parentToolId) card.setAttribute("subagent", "");
-    card.setCall(name, args);  // buffered until the element connects
-    return card;
+    ToolCard.applyResult(messagesEl, toolId, ok, summary, error);
   }
 
   // ── Send ──
