@@ -85,7 +85,43 @@
         this._body.textContent = String(this._args);
       }
     }
+
+    // ── Card routing (owns find / create / dedup so callers stay one-liners) ──
+    // `root` is the container the card lives in: the live #messages element, or
+    // a detached history DocumentFragment. Querying + appending share that root.
+
+    static _find(root, toolId) {
+      return toolId ? root.querySelector(`tool-card[data-tool-id="${CSS.escape(toolId)}"]`) : null;
+    }
+
+    static _create(root, toolId, parentToolId) {
+      const card = document.createElement("tool-card");
+      if (toolId) card.dataset.toolId = toolId;
+      if (parentToolId) card.setAttribute("subagent", "");
+      root.appendChild(card);
+      return card;
+    }
+
+    // Create or update a card for a tool call (idempotent on toolId).
+    static upsertCall(root, toolId, name, args, parentToolId = "") {
+      if (!toolId) toolId = `t${Math.random().toString(36).slice(2, 10)}`;
+      const card = ToolCard._find(root, toolId) || ToolCard._create(root, toolId, parentToolId);
+      card.setCall(name, args);
+      return card;
+    }
+
+    // Apply a tool result, synthesising a card if the call was never seen.
+    static applyResult(root, toolId, ok, summary, error) {
+      let card = ToolCard._find(root, toolId);
+      if (!card) {
+        card = ToolCard._create(root, toolId, "");
+        card.setCall("tool", {});
+      }
+      card.setResult(ok, summary, error);
+      return card;
+    }
   }
 
   customElements.define("tool-card", ToolCard);
+  window.ToolCard = ToolCard; // component's public API for app.js (cf. marked / BoxAgentTheme globals)
 })();
