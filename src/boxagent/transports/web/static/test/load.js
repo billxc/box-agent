@@ -18,6 +18,7 @@ for (const rel of [
   "components/chat-message.js",
   "components/recap-banner.js",
   "components/session-info.js",
+  "components/session-picker.js",
 ]) {
   const code = fs.readFileSync(path.join(staticDir, rel), "utf8");
   vm.runInThisContext(code, { filename: rel });
@@ -29,6 +30,7 @@ module.exports = {
   get ChatMessage() { return globalThis.ChatMessage; },
   get RecapBanner() { return globalThis.RecapBanner; },
   get SessionInfo() { return globalThis.SessionInfo; },
+  get SessionPicker() { return globalThis.SessionPicker; },
   get escapeHtml() { return globalThis.escapeHtml; },
   get renderMarkdown() { return globalThis.renderMarkdown; },
 };
