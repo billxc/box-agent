@@ -57,7 +57,6 @@
     chatId: null,
     es: null,
     streamMsgs: {},
-    toolCards: {},        // tool_id -> {el, headerEl, resultEl, name, args}
     typingEl: null,
     refreshTimer: null,
     historyOffset: 0,     // how many items already loaded from end of history
@@ -555,13 +554,16 @@
     const frag = document.createDocumentFragment();
     for (const h of items) {
       if (h.role === "tool_call") {
-        const card = _buildToolCard(h.tool_id || "", h.name || "tool", h.args || {});
-        frag.appendChild(card.el);
-        state.toolCards[h.tool_id || `__hist${frag.children.length}`] = card;
+        frag.appendChild(_makeToolCard(h.tool_id || "", h.name || "tool", h.args || {}));
         continue;
       }
       if (h.role === "tool_result") {
-        _applyToolResult(h.tool_id || "", !!h.ok, h.summary || "", h.error || "");
+        let card = _findToolCard(h.tool_id || "", frag);
+        if (!card) {
+          card = _makeToolCard(h.tool_id || "", "tool", {});
+          frag.appendChild(card);
+        }
+        card.setResult(!!h.ok, h.summary || "", h.error || "");
         continue;
       }
       const el = buildMessage(h.role, h.text, { ts: h.ts });
@@ -610,7 +612,6 @@
     if (state.es) { state.es.close(); state.es = null; }
     state.chatId = chatId;
     state.streamMsgs = {};
-    state.toolCards = {};
     refreshSessionList();
     const meta = (state.sessions[curKey()] || {})[chatId] || {};
     const serverList = state.serverSessions[curKey()] || [];
@@ -747,72 +748,36 @@
   }
 
   // ── Tool call rendering ──
-  function _argSummary(args) {
-    if (!args || typeof args !== "object") return "";
-    for (const v of Object.values(args)) {
-      if (typeof v === "string" && v.length) {
-        const s = v.replace(/\s+/g, " ");
-        return s.length > 60 ? s.slice(0, 60) + "…" : s;
-      }
-    }
-    try {
-      const j = JSON.stringify(args);
-      return j.length > 60 ? j.slice(0, 60) + "…" : j;
-    } catch { return ""; }
-  }
-
-  function _buildToolCard(toolId, name, args) {
-    const details_el = document.createElement("details");
-    details_el.className = "tool-card";
-    const summary = document.createElement("summary");
-    summary.className = "tool-card-header";
-    summary.textContent = `▶ ${name}(${_argSummary(args)})`;
-    const body = document.createElement("pre");
-    body.className = "tool-card-body";
-    try { body.textContent = JSON.stringify(args, null, 2); } catch { body.textContent = String(args); }
-    const result = document.createElement("div");
-    result.className = "tool-card-result hidden";
-    details_el.appendChild(summary);
-    details_el.appendChild(body);
-    details_el.appendChild(result);
-    return { el: details_el, headerEl: summary, bodyEl: body, resultEl: result, name, args, toolId };
-  }
-
-  function _applyToolResult(toolId, ok, summary, error) {
-    const card = state.toolCards[toolId];
-    if (!card) {
-      // Result without preceding call (rare; e.g. history machine_id-truncated).
-      const synth = _buildToolCard(toolId || "?", "tool", {});
-      document.getElementById("messages").appendChild(synth.el);
-      state.toolCards[toolId || "?"] = synth;
-      return _applyToolResult(toolId || "?", ok, summary, error);
-    }
-    const icon = ok ? "✓" : "✗";
-    card.headerEl.textContent = `${icon} ${card.name}(${_argSummary(card.args)})`;
-    card.resultEl.classList.remove("hidden");
-    card.resultEl.textContent = ok ? (summary || "(ok)") : (error || summary || "(failed)");
-    card.resultEl.classList.toggle("ok", ok);
-    card.resultEl.classList.toggle("failed", !ok);
-  }
-
+  // The <tool-card> custom element (components/tool-card.js) owns the DOM +
+  // result lifecycle; here we just create / find / update cards.
   function renderToolCall(toolId, name, args, parentToolId = "") {
     if (!toolId) toolId = `t${Math.random().toString(36).slice(2, 10)}`;
-    let card = state.toolCards[toolId];
-    if (card) {
-      // Idempotent: same id arriving twice (Claude streaming start + final).
-      card.args = args;
-      card.headerEl.textContent = `▶ ${name}(${_argSummary(args)})`;
-      try { card.bodyEl.textContent = JSON.stringify(args, null, 2); } catch {}
-      return;
-    }
-    card = _buildToolCard(toolId, name, args);
-    if (parentToolId) card.el.classList.add("subagent");
-    document.getElementById("messages").appendChild(card.el);
-    state.toolCards[toolId] = card;
+    const existing = _findToolCard(toolId, document);
+    if (existing) { existing.setCall(name, args); return; }  // idempotent
+    const card = _makeToolCard(toolId, name, args, parentToolId);
+    document.getElementById("messages").appendChild(card);
   }
 
   function renderToolResult(toolId, ok, summary, error) {
-    _applyToolResult(toolId, ok, summary, error);
+    let card = _findToolCard(toolId, document);
+    if (!card) {  // result without a preceding call (rare)
+      card = _makeToolCard(toolId, "tool", {});
+      document.getElementById("messages").appendChild(card);
+    }
+    card.setResult(ok, summary, error);
+  }
+
+  function _findToolCard(toolId, root) {
+    if (!toolId) return null;
+    return root.querySelector(`tool-card[data-tool-id="${CSS.escape(toolId)}"]`);
+  }
+
+  function _makeToolCard(toolId, name, args, parentToolId = "") {
+    const card = document.createElement("tool-card");
+    if (toolId) card.dataset.toolId = toolId;
+    if (parentToolId) card.setAttribute("subagent", "");
+    card.setCall(name, args);  // buffered until the element connects
+    return card;
   }
 
   // ── Send ──

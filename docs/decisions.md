@@ -506,3 +506,15 @@ CLI 子进程那条路准备废弃。为了不强迫所有用户立刻改 `~/.bo
 根因：`WebChannel.inject()` `await on_message(msg)` 阻塞整轮；guest 的 `/api/send` 经 `guest_client.call` 中继到 host，硬超时 30s（rpc.py:92）。任何 >30s 回复 → 504 → turn 丢。回复本应走独立 SSE `/api/stream`（`_proxy_via_host_stream`，无超时），send 不该等整轮。
 
 修复：删掉 `inject` 里阻塞的 `await self.on_message(msg)`，换成一行 `asyncio.create_task(...)`。回复/错误走独立 SSE，`/api/send` 立即返回不撞 30s。活跃 turn task 一直在 await I/O、被 loop 引用，不会被 GC，无需额外跟踪。测试新增"慢 handler 下 inject 不阻塞"。
+
+## 2026-06-30 — 前端 Web Component 试点：<tool-card>（无框架/无 build）
+
+目标是**可维护性**（不是减行数）。把 tool-call 卡片抽成原生 custom element，放进独立文件 `static/components/tool-card.js`，作为前端组件化 + 文件拆分的第一刀。
+
+- 新建 `<tool-card>`：自包含 DOM + `setCall()`/`setResult()` 生命周期；connectedCallback 延迟构建，兼容 history 的 detached fragment（setCall/setResult 先缓冲，连接时渲染）。
+- app.js 删掉 `_buildToolCard`/`_applyToolResult`/`_argSummary` + `state.toolCards` 注册表，改为 `document.createElement("tool-card")` + 按 `data-tool-id` DOM 查找。
+- index.html 加一行 `<script src="components/tool-card.js">`（classic script，全局注册，无 ES module/无 build）。
+
+**净行数 +56**（组件 91 − app.js −35）—— 印证"WC 换结构不减行数"。收益是 tool-card 逻辑内聚、app.js 不再 juggle DOM 引用注册表。
+
+**风险/限制**：前端 0 测试，本改动靠浏览器手验（live 工具卡 / 历史卡 / ✓✗ 结果 / 折叠 / subagent 嵌套）。若继续 WC 化，需先加 jsdom smoke-test 作安全网。
