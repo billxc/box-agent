@@ -37,6 +37,5 @@ async def install_workgroup(gateway: "Gateway", storage: "Storage") -> Workgroup
     # (keeps the cluster layer free of any WorkgroupManager import).
     gateway._topology.set_local_workgroup_provider(lambda: list(manager.routers.keys()))
     gateway._peer.set_workgroup_manager(manager)
-    gateway._web_server.set_workgroup_manager(manager)
     await manager.start_all_for_node(gateway.config.node_id)
     return manager

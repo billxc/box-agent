@@ -342,13 +342,6 @@ body.sidebar-dragging * { user-select: none !important; }
 #session-list .session-preview { font-size: 11px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #session-list .session-recap { font-size: 11px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 #session-list .session-recap::before { content: "[!] "; opacity: 0.85; }
-#session-list .session-actions { margin-top: 4px; font-size: 10px; }
-#session-list .session-action {
-  color: var(--accent); text-decoration: none; cursor: pointer;
-  text-transform: lowercase; letter-spacing: 0.04em;
-}
-#session-list .session-action:hover { text-decoration: underline; }
-#session-list .main-badge { color: var(--amber); font-weight: 700; margin-right: 2px; }
 
 .side-foot {
   display: flex; align-items: center; gap: 8px;

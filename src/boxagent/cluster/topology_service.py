@@ -90,7 +90,6 @@ class TopologyService:
         out: list[dict] = []
         for name in self.web_channels:
             config = self.config.bots.get(name)
-            workgroup = self.config.workgroups.get(name)
             if config is not None:
                 out.append({
                     "name": name,
@@ -98,14 +97,6 @@ class TopologyService:
                     "backend": config.ai_backend,
                     "model": config.model,
                     "kind": "bot",
-                })
-            elif workgroup is not None:
-                out.append({
-                    "name": name,
-                    "display_name": workgroup.display_name or name,
-                    "backend": workgroup.ai_backend,
-                    "model": workgroup.model,
-                    "kind": "workgroup",
                 })
         return out
 

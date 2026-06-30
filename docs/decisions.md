@@ -126,3 +126,19 @@ WC 化后每个组件都要肉眼手验，迟早漏。加自动测试，但**不
 覆盖：util escapeHtml/renderMarkdown（含 XSS fallback）、tool-card upsert/幂等/result/synth/subagent/**detached-fragment 连接时渲染时序**、chat-message markdown/user 转义/setText 流式/data-id/时间戳。15 个子测试。
 
 **为什么不 jsdom**：一个个人工具，自写 stub ~140 行覆盖组件实际用到的 DOM 子集，比拉进 npm + node_modules + package.json 这套异质工具链更轻、更符合无 build 的取向。stub 不是通用 DOM，够测这些组件即可。
+
+## 2026-06-30 — 从 web 层移除 workgroup（前端 UI + server + set_main）
+
+延续 route-B（workgroup 可插拔），把 workgroup 从 **web 层**整体拿掉。
+
+**前端**：删 specialist 抽屉 UI（loadSpecialists/renderSpecialistsInto/selectSpecialist/isSpecialistChat + renderMachines specialist 块 + workgroup: platform 分支）；删 **"set as main"**（badge/链接/setMainSession/is_main）—— 它本就是 workgroup 专属（tooltip：heartbeat/peer 消息路由进该会话）。
+
+**server.py**：删 `_handle_web_bots` 的 workgroup 分支、`/api/claude/resume` 的 workgroup backend/model/workspace/pool fallback、`set_workgroup_manager` + `workgroup_manager` 字段、`/api/sessions/set_main` 路由+handler、session 列表的 `is_main`。
+
+**topology**：删 `local_bot_descriptors` 的 workgroup 分支（这才是 web 侧边栏 bot 列表的真实来源）。`build_peer_descriptors`（peer 消息路由）保留——属 workgroup 模块内部，非 web bot 列表。
+
+**wiring**：删 `gateway._web_server.set_workgroup_manager`。
+
+**保留**：`storage.{get,set,get_or_create}_main_chat_id`（workgroup peer/heartbeat/manager 仍用）。
+
+**结果**：web 层零 workgroup（admin bot 不再在 UI 列出/可聊）。**workgroup 模块仍加载运行**（manager/heartbeat/peer），admin web channel 仍创建但不被列出 → 半死状态。clean finish = 删整个 workgroup 模块（另排）。app.js 1357→约 1230。全量 1066 passed。

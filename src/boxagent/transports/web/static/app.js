@@ -262,7 +262,6 @@
       merged.set(s.chat_id, {
         chat_id: s.chat_id,
         platform: s.platform || "unknown",
-        is_main: !!s.is_main,
         title: backendTitle || (local[s.chat_id] && local[s.chat_id].title) || defaultTitle(s),
         custom_title: s.custom_title || "",
         summary: s.summary || "",
@@ -289,7 +288,6 @@
   }
 
   function defaultTitle(s) {
-    if (s.is_main) return `★ Main session`;
     if (s.platform === "claude") return `✦ Resumed Claude session`;
     const tag = ({ telegram: "Telegram", web: "Web", other: "Chat" })[s.platform] || "Chat";
     return `${tag} · ${shortId(s.chat_id)}`;
@@ -312,22 +310,10 @@
       if (meta.chat_id === state.chatId) li.classList.add("active");
       const title = document.createElement("div");
       title.className = "session-title";
-      const mainBadge = meta.is_main ? `<span class="main-badge" title="Main session">★</span> ` : "";
-      title.innerHTML = `${mainBadge}<span class="plat" title="${meta.platform}">${platformIcon(meta.platform)}</span> ${escapeHtml(meta.title)}`;
+      title.innerHTML = `<span class="plat" title="${meta.platform}">${platformIcon(meta.platform)}</span> ${escapeHtml(meta.title)}`;
       const preview = document.createElement("div");
       preview.className = "session-preview";
       preview.textContent = meta.preview || "(no messages yet)";
-      const actions = document.createElement("div");
-      actions.className = "session-actions";
-      if (!meta.is_main) {
-        const setMain = document.createElement("a");
-        setMain.href = "#";
-        setMain.className = "session-action";
-        setMain.textContent = "set as main";
-        setMain.title = "Heartbeat ticks and incoming peer messages will route into this session";
-        setMain.onclick = (e) => { e.stopPropagation(); e.preventDefault(); setMainSession(meta.chat_id); };
-        actions.appendChild(setMain);
-      }
       li.appendChild(title); li.appendChild(preview);
       if (meta.recap) {
         const recap = document.createElement("div");
@@ -336,24 +322,8 @@
         recap.title = meta.recap;
         li.appendChild(recap);
       }
-      if (actions.children.length) li.appendChild(actions);
       li.onclick = () => { switchChat(meta.chat_id); closeSidebar(); };
       sessionList.appendChild(li);
-    }
-  }
-
-  async function setMainSession(chatId) {
-    try {
-      const r = await api("sessions/set_main", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bot: state.bot, machine: state.botMachine, chat_id: chatId }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      state.serverSessions[curKey()] = await fetchServerSessions(state.botMachine, state.bot);
-      refreshSessionList();
-    } catch (e) {
-      alert(`Failed to set main session: ${e.message || e}`);
     }
   }
 
