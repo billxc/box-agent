@@ -21,29 +21,11 @@
 
   // Per-session dismissed-recap memory (browser-local). When user closes the
   // banner we don't show it again for that chat unless the recap text changes.
-  function recapDismissKey(chatId) { return "ba.recap-dismissed." + curKey() + "|" + chatId; }
+  // <recap-banner> (components/recap-banner.js) owns the dismiss / collapse /
+  // persist behaviour; we just supply the recap text + a key scoped to the
+  // current machine|bot|chat (app state).
   function showRecapBanner(recap, chatId) {
-    if (!recapBanner) return;
-    const textEl = recapBanner.querySelector(".recap-text");
-    if (!recap) {
-      recapBanner.classList.add("hidden");
-      textEl.textContent = "";
-      return;
-    }
-    const dismissed = localStorage.getItem(recapDismissKey(chatId));
-    if (dismissed === recap) {
-      recapBanner.classList.add("hidden");
-      return;
-    }
-    textEl.textContent = recap;
-    recapBanner.classList.remove("hidden");
-    recapBanner.classList.add("collapsed");
-    textEl.onclick = () => recapBanner.classList.toggle("collapsed");
-    const closeBtn = recapBanner.querySelector(".recap-close");
-    closeBtn.onclick = () => {
-      localStorage.setItem(recapDismissKey(chatId), recap);
-      recapBanner.classList.add("hidden");
-    };
+    recapBanner.show(recap, "ba.recap-dismissed." + curKey() + "|" + chatId);
   }
 
   const state = {
@@ -458,40 +440,20 @@
 
   // ── Chat lifecycle ──
 
-  function fmtTokens(n) {
-    if (!n) return "0";
-    if (n >= 1000) return Math.floor(n / 1000) + "k";
-    return String(n);
-  }
-
-  function renderSessionInfo(info) {
-    if (!info) {
-      sessionInfoEl.classList.add("hidden");
-      sessionInfoEl.textContent = "";
-      return;
-    }
-    const parts = [];
-    if (info.backend_kind) parts.push(info.backend_kind);
-    if (info.context_window && info.context_used) {
-      const pct = Math.round((info.context_used / info.context_window) * 100);
-      parts.push(`ctx ${fmtTokens(info.context_used)}/${fmtTokens(info.context_window)} (${pct}%)`);
-    }
-    sessionInfoEl.textContent = parts.join(" · ");
-    sessionInfoEl.classList.toggle("hidden", parts.length === 0);
-  }
-
+  // <session-info> (components/session-info.js) owns rendering + token
+  // formatting; refreshSessionInfo just fetches and hands it the info object.
   async function refreshSessionInfo() {
-    if (!state.botMachine) { renderSessionInfo(null); return; }
+    if (!state.botMachine) { sessionInfoEl.setInfo(null); return; }
     const serverList = state.serverSessions[curKey()] || [];
     const serverMeta = serverList.find(s => s.chat_id === state.chatId);
     const sessionId = serverMeta && serverMeta.session_id;
-    if (!sessionId) { renderSessionInfo(null); return; }
+    if (!sessionId) { sessionInfoEl.setInfo(null); return; }
     const botInfo = (state.machines || [])
       .find(m => m.machine_id === state.botMachine)?.bots
       ?.find(b => b.name === state.bot);
     const backendKind = botInfo?.backend || "";
     const model = botInfo?.model || "";
-    if (!backendKind) { renderSessionInfo(null); return; }
+    if (!backendKind) { sessionInfoEl.setInfo(null); return; }
     try {
       const r = await api(
         `session_info?session_id=${encodeURIComponent(sessionId)}` +
@@ -499,11 +461,11 @@
         `&machine=${encodeURIComponent(state.botMachine)}` +
         `&model=${encodeURIComponent(model)}`
       );
-      if (!r.ok) { renderSessionInfo(null); return; }
+      if (!r.ok) { sessionInfoEl.setInfo(null); return; }
       const data = await r.json();
-      renderSessionInfo(data.info || null);
+      sessionInfoEl.setInfo(data.info || null);
     } catch (_) {
-      renderSessionInfo(null);
+      sessionInfoEl.setInfo(null);
     }
   }
 
