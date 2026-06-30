@@ -95,14 +95,8 @@
     }
   }
 
-  function loadSessions(machine, bot) {
-    try {
-      return JSON.parse(localStorage.getItem("ba.sessions." + botKey(machine, bot)) || "{}");
-    } catch { return {}; }
-  }
-  function saveSessions(machine, bot, sessions) {
-    localStorage.setItem("ba.sessions." + botKey(machine, bot), JSON.stringify(sessions));
-  }
+  // loadSessions / saveSessions / buildSessionList / defaultTitle / shortId
+  // live in session-data.js (pure helpers, exposed as globals).
 
   async function fetchServerSessions(machine, bot) {
     try {
@@ -146,51 +140,16 @@
   }
 
   // ── Sessions ──
-  function buildSessionList() {
-    // Merge server sessions (cross-platform) with local ones (web-only, may have user-renamed titles)
-    const local = state.sessions[curKey()] || {};
-    const server = state.serverSessions[curKey()] || [];
-    const merged = new Map(); // chat_id -> entry
-    for (const s of server) {
-      const backendTitle = s.custom_title || s.summary || "";
-      merged.set(s.chat_id, {
-        chat_id: s.chat_id,
-        platform: s.platform || "unknown",
-        title: backendTitle || (local[s.chat_id] && local[s.chat_id].title) || defaultTitle(s),
-        custom_title: s.custom_title || "",
-        summary: s.summary || "",
-        recap: s.recap || "",
-        session_id: s.session_id || "",
-        preview: s.preview || "",
-        ts: (s.last_ts ? s.last_ts * 1000 : 0) || (local[s.chat_id] && local[s.chat_id].ts) || 0,
-        backend: s.backend || "",
-        model: s.model || "",
-      });
-    }
-    // Local-only entries (brand-new web chats with no transcript yet)
-    for (const [cid, meta] of Object.entries(local)) {
-      if (merged.has(cid)) continue;
-      merged.set(cid, {
-        chat_id: cid,
-        platform: cid.startsWith("web-") ? "web" : "unknown",
-        title: meta.title || cid,
-        preview: meta.preview || "",
-        ts: meta.ts || 0,
-      });
-    }
-    return [...merged.values()].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  // buildSessionList(local, server) / defaultTitle / shortId live in
+  // session-data.js. Resolve the current bot's local+server maps into the
+  // merged, sorted entry list.
+  function currentSessionEntries() {
+    return buildSessionList(state.sessions[curKey()] || {}, state.serverSessions[curKey()] || []);
   }
-
-  function defaultTitle(s) {
-    if (s.platform === "claude") return `✦ Resumed Claude session`;
-    const tag = ({ telegram: "Telegram", web: "Web", other: "Chat" })[s.platform] || "Chat";
-    return `${tag} · ${shortId(s.chat_id)}`;
-  }
-  function shortId(cid) { return cid.length > 12 ? cid.slice(0, 6) + "…" + cid.slice(-4) : cid; }
 
   function refreshSessionList() {
     // <sessions-panel> renders; app.js owns the server+local merge.
-    sessionsPanel.render(buildSessionList(), { chatId: state.chatId });
+    sessionsPanel.render(currentSessionEntries(), { chatId: state.chatId });
   }
 
   async function restartMachine(machineId, online) {
@@ -597,85 +556,25 @@
   machinesPanel.addEventListener("restart-machine", (e) => restartMachine(e.detail.machine, e.detail.online));
   sessionsPanel.addEventListener("select-session", (e) => { switchChat(e.detail.chat_id); closeSidebar(); });
   $("recents-clear").onclick = () => recents.clear();
-  const recentsSection = $("recents-section");
-  const recentsToggle = $("recents-toggle");
-  if (localStorage.getItem("ba.recentsCollapsed") === "1") {
-    recentsSection.classList.add("collapsed");
-    recentsToggle.textContent = "▸";
+  // Section collapse (caret + persisted state). Same shape for both sidebar
+  // sections, so share one setup.
+  function setupCollapse(sectionId, toggleId, storageKey) {
+    const section = $(sectionId);
+    const toggle = $(toggleId);
+    if (localStorage.getItem(storageKey) === "1") {
+      section.classList.add("collapsed");
+      toggle.textContent = "▸";
+    }
+    toggle.onclick = () => {
+      const collapsed = section.classList.toggle("collapsed");
+      toggle.textContent = collapsed ? "▸" : "▾";
+      localStorage.setItem(storageKey, collapsed ? "1" : "0");
+    };
   }
-  recentsToggle.onclick = () => {
-    const collapsed = recentsSection.classList.toggle("collapsed");
-    recentsToggle.textContent = collapsed ? "▸" : "▾";
-    localStorage.setItem("ba.recentsCollapsed", collapsed ? "1" : "0");
-  };
-  const machinesSection = $("machines-section");
-  const machinesToggle = $("machines-toggle");
-  if (localStorage.getItem("ba.machinesCollapsed") === "1") {
-    machinesSection.classList.add("collapsed");
-    machinesToggle.textContent = "▸";
-  }
-  machinesToggle.onclick = () => {
-    const collapsed = machinesSection.classList.toggle("collapsed");
-    machinesToggle.textContent = collapsed ? "▸" : "▾";
-    localStorage.setItem("ba.machinesCollapsed", collapsed ? "1" : "0");
-  };
+  setupCollapse("recents-section", "recents-toggle", "ba.recentsCollapsed");
+  setupCollapse("machines-section", "machines-toggle", "ba.machinesCollapsed");
 
-  // ── Sidebar resize ──
-  (function setupResize() {
-    const resizer = $("sidebar-resizer");
-    if (!resizer) return;
-    // Restore persisted width on desktop only
-    const saved = parseInt(localStorage.getItem("ba.sidebarWidth") || "0", 10);
-    if (saved >= 200 && window.innerWidth > 720) {
-      sidebar.style.flex = `0 0 ${saved}px`;
-      sidebar.style.width = `${saved}px`;
-    }
-    let dragging = false;
-    let startX = 0, startW = 0;
-    function onMove(e) {
-      if (!dragging) return;
-      const x = e.touches ? e.touches[0].clientX : e.clientX;
-      const dx = x - startX;
-      let w = startW + dx;
-      // clamp [200, 70vw]
-      w = Math.max(200, Math.min(window.innerWidth * 0.7, w));
-      sidebar.style.flex = `0 0 ${w}px`;
-      sidebar.style.width = `${w}px`;
-    }
-    function onUp() {
-      if (!dragging) return;
-      dragging = false;
-      resizer.classList.remove("dragging");
-      document.body.classList.remove("sidebar-dragging");
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-      document.removeEventListener("touchmove", onMove);
-      document.removeEventListener("touchend", onUp);
-      const w = parseInt(sidebar.style.width, 10);
-      if (w >= 200) localStorage.setItem("ba.sidebarWidth", String(w));
-    }
-    function onDown(e) {
-      if (window.innerWidth <= 720) return;  // mobile uses drawer
-      dragging = true;
-      startX = e.touches ? e.touches[0].clientX : e.clientX;
-      startW = sidebar.getBoundingClientRect().width;
-      resizer.classList.add("dragging");
-      document.body.classList.add("sidebar-dragging");
-      document.addEventListener("mousemove", onMove);
-      document.addEventListener("mouseup", onUp);
-      document.addEventListener("touchmove", onMove, { passive: false });
-      document.addEventListener("touchend", onUp);
-      e.preventDefault();
-    }
-    resizer.addEventListener("mousedown", onDown);
-    resizer.addEventListener("touchstart", onDown, { passive: false });
-    // Double-click resets to default
-    resizer.addEventListener("dblclick", () => {
-      sidebar.style.flex = "";
-      sidebar.style.width = "";
-      localStorage.removeItem("ba.sidebarWidth");
-    });
-  })();
+  // ── Sidebar resize ── component: sidebar-resize.js (self-contained behavior)
 
   $("new-session").onclick = async () => {
     await switchChat(uuid());
@@ -760,7 +659,7 @@
   });
 
   function pickFirstSessionId() {
-    const list = buildSessionList();
+    const list = currentSessionEntries();
     return list.length ? list[0].chat_id : null;
   }
 
