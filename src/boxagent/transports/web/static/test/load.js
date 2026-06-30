@@ -12,7 +12,13 @@ const { install, makeRoot } = require("./dom-stub");
 install(); // sets globalThis.window / document / customElements / CSS / HTMLElement
 
 const staticDir = path.join(__dirname, "..");
-for (const rel of ["util.js", "components/tool-card.js", "components/chat-message.js"]) {
+for (const rel of [
+  "util.js",
+  "components/tool-card.js",
+  "components/chat-message.js",
+  "components/recap-banner.js",
+  "components/session-info.js",
+]) {
   const code = fs.readFileSync(path.join(staticDir, rel), "utf8");
   vm.runInThisContext(code, { filename: rel });
 }
@@ -21,6 +27,8 @@ module.exports = {
   makeRoot,
   get ToolCard() { return globalThis.ToolCard; },
   get ChatMessage() { return globalThis.ChatMessage; },
+  get RecapBanner() { return globalThis.RecapBanner; },
+  get SessionInfo() { return globalThis.SessionInfo; },
   get escapeHtml() { return globalThis.escapeHtml; },
   get renderMarkdown() { return globalThis.renderMarkdown; },
 };

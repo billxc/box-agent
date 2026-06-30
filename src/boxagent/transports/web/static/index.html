@@ -64,16 +64,12 @@
       <button id="menu-open" class="icon-btn" aria-label="Open menu">☰</button>
       <div class="title-stack">
         <div id="chat-title">—</div>
-        <div id="session-info" class="session-info hidden"></div>
+        <session-info id="session-info" class="session-info hidden"></session-info>
       </div>
       <button id="rename-session" class="icon-btn" aria-label="Rename session" title="Rename">✎</button>
     </header>
 
-    <div id="recap-banner" class="hidden">
-      <span class="recap-icon">📌</span>
-      <div class="recap-text"></div>
-      <button class="recap-close icon-btn" aria-label="Dismiss recap" title="Dismiss">✕</button>
-    </div>
+    <recap-banner id="recap-banner" class="hidden"></recap-banner>
     <div id="messages" role="log" aria-live="polite"></div>
     <div id="messages-mask" class="hidden"><div class="spinner"></div></div>
 
@@ -115,6 +111,8 @@
   <script src="util.js"></script>
   <script src="components/tool-card.js"></script>
   <script src="components/chat-message.js"></script>
+  <script src="components/recap-banner.js"></script>
+  <script src="components/session-info.js"></script>
   <script src="app.js"></script>
   <script>BoxAgentTheme.mount(document.getElementById("theme-slot"));</script>
 </body>

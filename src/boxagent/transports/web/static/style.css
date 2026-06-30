@@ -465,7 +465,7 @@ body.sidebar-dragging * { user-select: none !important; }
 }
 #chat-title::before { content: "// "; color: var(--accent); }
 .title-stack { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; line-height: 1.2; }
-.session-info { font-size: 10px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: uppercase; letter-spacing: 0.08em; }
+.session-info { display: block; font-size: 10px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: uppercase; letter-spacing: 0.08em; }
 .session-info.hidden { display: none; }
 
 #recap-banner {

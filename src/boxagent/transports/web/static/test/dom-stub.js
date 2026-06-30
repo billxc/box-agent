@@ -126,6 +126,13 @@ function install() {
   globalThis.document = document;
   globalThis.customElements = customElements;
   globalThis.CSS = { escape: (s) => String(s).replace(/["\\\]]/g, "\\$&") };
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => { store.set(k, String(v)); },
+    removeItem: (k) => { store.delete(k); },
+    clear: () => { store.clear(); },
+  };
   return { El, document, customElements, connectTree, makeRoot };
 }
 
