@@ -38,13 +38,19 @@ class El {
     this.dateTime = "";
     this._className = "";
     this._textContent = "";
-    this.innerHTML = "";
+    this._innerHTML = "";
     this.classList = new ClassList(this);
     this.dataset = new Proxy({}, {
       set: (t, key, value) => { this.attributes["data-" + camelToKebab(key)] = String(value); t[key] = value; return true; },
       get: (t, key) => t[key],
     });
   }
+  // Assigning innerHTML replaces all children (real DOM behavior). We can't
+  // parse the HTML string into nodes, so children are cleared and the raw
+  // string is kept opaque — components that need queryable structure build it
+  // with createElement/append instead.
+  get innerHTML() { return this._innerHTML; }
+  set innerHTML(v) { this._innerHTML = String(v); this.children = []; }
   get className() { return this._className; }
   set className(v) { this._className = v; this.classList.set = new Set(String(v).split(/\s+/).filter(Boolean)); }
   get textContent() { return this._textContent; }

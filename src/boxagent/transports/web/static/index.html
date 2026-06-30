@@ -26,7 +26,7 @@
         <label class="side-label"><button id="recents-toggle" class="text-btn caret-btn" title="Collapse / expand">▾</button> Recent</label>
         <button id="recents-clear" class="text-btn" title="Clear all recents">clear</button>
       </div>
-      <ul id="recents-list"></ul>
+      <recents-panel id="recents"></recents-panel>
     </section>
 
     <section id="machines-section" class="side-section machines">
@@ -37,7 +37,7 @@
           <button id="refresh-machines" class="text-btn" title="Refresh">↻</button>
         </span>
       </div>
-      <ul id="machine-list"></ul>
+      <machines-panel id="machines"></machines-panel>
     </section>
 
     <section class="side-section sessions">
@@ -47,7 +47,7 @@
         </label>
         <button id="new-session" class="text-btn">＋ New</button>
       </div>
-      <ul id="session-list"></ul>
+      <sessions-panel id="sessions"></sessions-panel>
       <button id="open-claude-picker" class="text-btn" style="margin-top:8px;align-self:flex-start;">⏱ Resume Claude session…</button>
     </section>
 
@@ -89,6 +89,9 @@
   <script src="components/recap-banner.js"></script>
   <script src="components/session-info.js"></script>
   <script src="components/session-picker.js"></script>
+  <script src="components/recents-panel.js"></script>
+  <script src="components/machines-panel.js"></script>
+  <script src="components/sessions-panel.js"></script>
   <script src="app.js"></script>
   <script>BoxAgentTheme.mount(document.getElementById("theme-slot"));</script>
 </body>
