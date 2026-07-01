@@ -7,9 +7,9 @@
 // `#recents-list*` rules in style.css apply unchanged.
 //
 // app.js injects the current-selection context (for active/offline marking)
-// and listens for one event:
+// and an onOpen callback:
 //   panel.getContext = () => ({ machines, bot, botMachine, chatId })
-//   "open" {detail: <recent entry>}  → app.js does the navigation
+//   panel.onOpen(entry)  → app.js does the navigation
 //        (selectBot / switchChat / closeSidebar — app state it doesn't touch).
 //
 // Public methods: touch(patch), remove(machine, bot, chatId), clear(), render().
@@ -142,7 +142,7 @@
         li.appendChild(body);
         li.appendChild(time);
         li.appendChild(del);
-        li.onclick = () => this.dispatchEvent(new CustomEvent("open", { detail: r }));
+        li.onclick = () => this.onOpen?.(r);
         ul.appendChild(li);
       }
     }

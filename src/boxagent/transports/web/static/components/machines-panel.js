@@ -6,11 +6,11 @@
 // in style.css apply unchanged. Owns the per-machine collapse state
 // (localStorage["ba.collapsedMachines"]).
 //
-// app.js drives it and handles the side-effects:
+// app.js drives it and handles the side-effects via injected callbacks:
 //   panel.render(machines, { bot, botMachine })   // data lives in app state
-//   "select-bot"     {detail:{bot, machine}}   → app.js selectBot()
-//   "restart-machine"{detail:{machine, online}}→ app.js restartMachine()
-// (the offline-guard alert is handled here; select-bot only fires when online).
+//   panel.onSelectBot(bot, machine)      → app.js selectBot()
+//   panel.onRestartMachine(machine, online) → app.js restartMachine()
+// (the offline-guard alert is handled here; onSelectBot only fires when online).
 (function () {
   "use strict";
 
@@ -79,7 +79,7 @@
         head.onclick = (e) => {
           if (e.target.classList.contains("machine-restart")) {
             e.stopPropagation();
-            this.dispatchEvent(new CustomEvent("restart-machine", { detail: { machine: m.machine_id, online: m.online } }));
+            this.onRestartMachine?.(m.machine_id, m.online);
             return;
           }
           this._toggle(m.machine_id);
@@ -97,7 +97,7 @@
           botLi.onclick = (e) => {
             e.stopPropagation();
             if (!m.online) { alert(`Machine ${m.machine_id} is offline`); return; }
-            this.dispatchEvent(new CustomEvent("select-bot", { detail: { bot: b.name, machine: m.machine_id } }));
+            this.onSelectBot?.(b.name, m.machine_id);
           };
           bots.appendChild(botLi);
         }

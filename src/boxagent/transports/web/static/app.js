@@ -64,7 +64,7 @@
   // ── Recents (cross-bot, browser-local) — component: components/recents-panel.js
   // The <recents-panel> element owns the localStorage data + list render. We
   // inject the current selection (for active/offline marking) and handle its
-  // "open" event with the navigation below.
+  // "open" via the navigation below.
   const recents = $("recents");
   recents.getContext = () => ({
     machines: state.machines,
@@ -72,7 +72,7 @@
     botMachine: state.botMachine,
     chatId: state.chatId,
   });
-  recents.addEventListener("open", (e) => openRecent(e.detail));
+  recents.onOpen = openRecent;
 
   // Open a recent: switch bot+machine if needed, then open the chat.
   // Falls back to a friendly alert if the target machine is offline.
@@ -551,10 +551,10 @@
   // ── UI events ──
   $("refresh-machines").onclick = () => loadMachines().catch(() => {});
   $("restart-all").onclick = () => restartCluster();
-  // Panel components emit intent; app.js owns the navigation + actions.
-  machinesPanel.addEventListener("select-bot", (e) => selectBot(e.detail.bot, e.detail.machine));
-  machinesPanel.addEventListener("restart-machine", (e) => restartMachine(e.detail.machine, e.detail.online));
-  sessionsPanel.addEventListener("select-session", (e) => { switchChat(e.detail.chat_id); closeSidebar(); });
+  // Panels signal intent via injected callbacks; app.js owns navigation + actions.
+  machinesPanel.onSelectBot = selectBot;
+  machinesPanel.onRestartMachine = restartMachine;
+  sessionsPanel.onSelectSession = (chatId) => { switchChat(chatId); closeSidebar(); };
   $("recents-clear").onclick = () => recents.clear();
   // Section collapse (caret + persisted state). Same shape for both sidebar
   // sections, so share one setup.
@@ -687,8 +687,8 @@
   const picker = $("claude-picker");
   picker.api = api;
   picker.getContext = () => ({ machine: state.botMachine, bot: state.bot });
-  picker.addEventListener("resumed", async (e) => {
-    const { chat_id, machine, bot, raw, project, session } = e.detail;
+  picker.onResumed = async (info) => {
+    const { chat_id, machine, bot, raw, project, session } = info;
     const sessions = loadSessions(machine, bot);
     sessions[chat_id] = {
       title: `${raw ? "Raw" : "Claude"} · ${project.label}`,
@@ -701,6 +701,6 @@
     state.sessions[key] = sessions;
     state.serverSessions[key] = await fetchServerSessions(machine, bot);
     await switchChat(chat_id);
-  });
+  };
   $("open-claude-picker").onclick = () => picker.open();
 })();

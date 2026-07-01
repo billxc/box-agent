@@ -6,14 +6,14 @@
 // all Claude-resume HTTP (projects / sessions / transcript / resume POST), and
 // the projects→sessions pagination.
 //
-// app.js injects two collaborators after grabbing the element:
+// app.js injects three collaborators after grabbing the element:
 //   picker.api        = (path, opts) => fetch(...)   // the app's HTTP wrapper
 //   picker.getContext = () => ({ machine, bot })     // current bot selection
-// and listens for one event:
-//   "resumed" {detail:{chat_id, machine, bot, raw, project, session}}
-//     dispatched after a successful resume POST. The picker has already closed
-//     itself; app.js updates its local session caches and navigates
-//     (switchChat) — those touch app state the component deliberately doesn't.
+//   picker.onResumed  = (info) => {...}              // resume result callback
+//     onResumed({chat_id, machine, bot, raw, project, session}) fires after a
+//     successful resume POST. The picker has already closed itself; app.js
+//     updates its local session caches and navigates (switchChat) — those touch
+//     app state the component deliberately doesn't.
 //
 // Public methods: open(), close(). Built lazily in connectedCallback.
 (function () {
@@ -292,7 +292,7 @@
 
     // ── Resume ──
     // The picker owns the resume POST; the resulting chat_id + selection go out
-    // via the "resumed" event so app.js can update its local caches + navigate.
+    // via the onResumed callback so app.js can update its local caches + navigate.
 
     async _doResume() {
       const ctx = this.getContext();
@@ -315,16 +315,14 @@
         });
         if (!r.ok) throw new Error(await r.text());
         const { chat_id } = await r.json();
-        this.dispatchEvent(new CustomEvent("resumed", {
-          detail: {
-            chat_id,
-            machine: resumeMachine,
-            bot: resumeBot,
-            raw,
-            project: this._state.project,
-            session: this._state.session,
-          },
-        }));
+        this.onResumed?.({
+          chat_id,
+          machine: resumeMachine,
+          bot: resumeBot,
+          raw,
+          project: this._state.project,
+          session: this._state.session,
+        });
         this.close();
       } catch (e) {
         alert("Resume failed: " + e.message);

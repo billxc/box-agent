@@ -8,7 +8,7 @@
 //
 //   panel.render(entries, { chatId })   // entries = merged session list
 //   panel.showLoading()                 // placeholder during a bot switch
-//   "select-session" {detail:{chat_id}} → app.js switchChat() + closeSidebar()
+//   panel.onSelectSession(chat_id)      → app.js switchChat() + closeSidebar()
 (function () {
   "use strict";
 
@@ -60,7 +60,7 @@
           recap.title = meta.recap;
           li.appendChild(recap);
         }
-        li.onclick = () => this.dispatchEvent(new CustomEvent("select-session", { detail: { chat_id: meta.chat_id } }));
+        li.onclick = () => this.onSelectSession?.(meta.chat_id);
         list.appendChild(li);
       }
     }
