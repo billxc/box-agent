@@ -85,7 +85,7 @@
       // selectBot will load sessions and open last-opened chat; we override
       // by setting ba.last so it lands on the recent chat instead.
       localStorage.setItem("ba.last." + botKey(r.machine, r.bot), r.chat_id);
-      await selectBot(r.bot, r.machine);
+      await app.selectBot(r.bot, r.machine);
     } else if (state.chatId !== r.chat_id) {
       await app.switchChat(r.chat_id);
       closeSidebar();
@@ -124,137 +124,37 @@
     sessionsPanel.render(currentSessionEntries(), { chatId: state.chatId });
   }
 
-  async function restartMachine(machineId, online) {
-    if (!online) { alert(`${machineId} is offline; nothing to restart`); return; }
-    if (!confirm(`Restart ${machineId}? Supervisor (easy-service) will relaunch.`)) return;
-    try {
-      const r = await api("admin/cluster_restart", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ machines: [machineId], include_self: true }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const data = await r.json();
-      const info = (data.results || {})[machineId];
-      alert(`${machineId}: ${JSON.stringify(info || data)}`);
-    } catch (e) {
-      alert(`Restart failed: ${e.message || e}`);
-    }
-  }
-
-  async function restartCluster() {
-    if (!confirm("Restart all guest nodes? Host stays up.\n(Add include_self=1 manually to also restart host.)")) return;
-    try {
-      const r = await api("admin/cluster_restart", { method: "POST" });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const data = await r.json();
-      const lines = ["Cluster restart scheduled:"];
-      for (const [machine_id, info] of Object.entries(data.results || {})) {
-        lines.push(`  ${machine_id}: ${JSON.stringify(info)}`);
-      }
-      alert(lines.join("\n"));
-    } catch (e) {
-      alert(`Cluster restart failed: ${e.message || e}`);
-    }
-  }
-
   // touchSession / refreshSessionInfo / loadOlderHistory / switchChat /
   // renderToolCall·renderToolResult / sendText + the message delegators live
   // in chat-controller.js (ChatController(app), built below). app.js calls
   // app.switchChat / app.sendText / app.addMessage.
 
-  // ── Machines + bot grouping ──
-  async function loadMachines() {
-    const r = await api("machines");
-    if (!r.ok) {
-      if (r.status === 401) {
-        const t = prompt("Enter access token:");
-        if (t) { localStorage.setItem("ba.token", t); location.reload(); }
-        return;
-      }
-      throw new Error("machines fetch " + r.status);
-    }
-    const { machines } = await r.json();
-    state.machines = machines;
-    renderMachines();
-    recents.render();
-    // Auto-pick a default bot on first load
-    if (!state.bot) {
-      const lastBot = localStorage.getItem("ba.lastBot");
-      const lastMachine = localStorage.getItem("ba.lastBotMachine");
-      let pick = null;
-      for (const m of machines) {
-        for (const b of (m.bots || [])) {
-          if (b.name === lastBot && m.machine_id === lastMachine && m.online) {
-            pick = { bot: b.name, machine: m.machine_id }; break;
-          }
-        }
-        if (pick) break;
-      }
-      if (!pick) {
-        for (const m of machines) {
-          if (!m.online) continue;
-          if ((m.bots || []).length) { pick = { bot: m.bots[0].name, machine: m.machine_id }; break; }
-        }
-      }
-      if (pick) {
-        await selectBot(pick.bot, pick.machine);
-      }
-    } else {
-      // Mark current bot as stale if its machine went offline
-      const m = state.machines.find(m => m.machine_id === state.botMachine);
-      if (m && !m.online) {
-        chatTitle.textContent = `${state.bot} @ ${state.botMachine} · offline`;
-      }
-    }
-  }
-
-  function renderMachines() {
-    // <machines-panel> renders the tree + owns collapse; app.js owns the data.
-    machinesPanel.render(state.machines, { bot: state.bot, botMachine: state.botMachine });
-  }
-
-  async function selectBot(botName, machineId) {
-    // Mask the chat panel for the whole switch so the user doesn't see
-    // empty/stale content while we fetch the new bot's session list and
-    // history. switchChat() will keep the mask up through its own swap.
-    $("messages-mask").classList.remove("hidden");
-    // Also show a loading placeholder in the sidebar's session list so the
-    // old bot's sessions don't sit there stale during the fetch.
-    sessionsPanel.showLoading();
-    state.bot = botName;
-    state.botMachine = machineId;
-    localStorage.setItem("ba.lastBot", botName);
-    localStorage.setItem("ba.lastBotMachine", machineId);
-    sessionsOf.textContent = `· ${botName} @ ${machineId}`;
-    const key = botKey(machineId, botName);
-    state.sessions[key] = loadSessions(machineId, botName);
-    state.serverSessions[key] = await fetchServerSessions(machineId, botName);
-    renderMachines();
-    const lastChat = localStorage.getItem("ba.last." + key);
-    await app.switchChat(lastChat || pickFirstSessionId() || uuid());
-    closeSidebar();
-  }
+  // Machine/bot controller — loadMachines / selectBot / renderMachines /
+  // restartMachine / restartCluster / startMachinePoll — lives in
+  // machines-controller.js (MachinesController(app), built below). app.js
+  // calls app.loadMachines / app.selectBot / app.restartMachine /
+  // app.restartCluster / app.startMachinePoll.
 
   // ── App context ──
-  // Shared bag the split-out controller reads from + attaches to (no build
-  // step). chat-controller.js (ChatController) owns the whole live-conversation
-  // controller; it reads these and attaches app.switchChat / app.sendText /
-  // app.addMessage / app.openStream / app.handleEvent + wires chatLog.onLoadOlder.
+  // Shared bag the split-out controllers read from + attach to (no build step).
+  // chat-controller.js owns the live conversation; machines-controller.js owns
+  // machine/bot selection + polling. Each attaches its public functions back
+  // onto `app` (app.switchChat/sendText/…, app.loadMachines/selectBot/…).
   const app = {
     state, api, $, TOKEN, HISTORY_PAGE_SIZE,
-    curKey, setConn, showRecapBanner,
-    chatTitle, sessionInfoEl, sendBtn, chatLog, recents,
-    refreshSessionList, fetchServerSessions, loadMachines,
+    curKey, botKey, uuid, setConn, showRecapBanner, closeSidebar, pickFirstSessionId,
+    chatTitle, sessionInfoEl, sendBtn, chatLog, recents, machinesPanel, sessionsPanel, sessionsOf,
+    refreshSessionList, fetchServerSessions,
   };
   ChatController(app);
+  MachinesController(app);
 
   // ── UI events ──
-  $("refresh-machines").onclick = () => loadMachines().catch(() => {});
-  $("restart-all").onclick = () => restartCluster();
+  $("refresh-machines").onclick = () => app.loadMachines().catch(() => {});
+  $("restart-all").onclick = () => app.restartCluster();
   // Panels signal intent via injected callbacks; app.js owns navigation + actions.
-  machinesPanel.onSelectBot = selectBot;
-  machinesPanel.onRestartMachine = restartMachine;
+  machinesPanel.onSelectBot = app.selectBot;
+  machinesPanel.onRestartMachine = app.restartMachine;
   sessionsPanel.onSelectSession = (chatId) => { app.switchChat(chatId); closeSidebar(); };
   $("recents-clear").onclick = () => recents.clear();
   // Section collapse (caret + persisted state). Same shape for both sidebar
@@ -364,17 +264,9 @@
     return list.length ? list[0].chat_id : null;
   }
 
-  // ── Periodic refresh ──
-  function startMachinePoll() {
-    if (state.refreshTimer) clearInterval(state.refreshTimer);
-    state.refreshTimer = setInterval(() => {
-      loadMachines().catch(() => { /* network blip; UI stays as-is */ });
-    }, 15000);
-  }
-
   // ── Boot ──
   recents.render();  // populate from localStorage before machines come back
-  loadMachines().then(startMachinePoll).catch((e) => {
+  app.loadMachines().then(app.startMachinePoll).catch((e) => {
     console.error(e);
     setConn("offline");
     app.addMessage("assistant", "_Failed to connect: " + e.message + "_");
