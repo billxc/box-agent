@@ -87,7 +87,7 @@
       localStorage.setItem("ba.last." + botKey(r.machine, r.bot), r.chat_id);
       await selectBot(r.bot, r.machine);
     } else if (state.chatId !== r.chat_id) {
-      await switchChat(r.chat_id);
+      await app.switchChat(r.chat_id);
       closeSidebar();
     } else {
       closeSidebar();
@@ -110,14 +110,6 @@
     connDot.className = "dot " + state_;
     connLabel.textContent = state_;
   }
-
-  // Message area is the <chat-log> custom element (components/chat-log.js).
-  // These stay as thin delegators so the controller's call sites don't move;
-  // addMessage returns the bubble element so the stream can write deltas into it.
-  function scrollDown() { chatLog.scrollToBottom(); }
-  function addMessage(role, text, opts = {}) { return chatLog.addMessage(role, text, opts); }
-  function showTyping() { chatLog.showTyping(); }
-  function removeTyping() { chatLog.removeTyping(); }
 
   // ── Sessions ──
   // buildSessionList(local, server) / defaultTitle / shortId live in
@@ -166,194 +158,10 @@
     }
   }
 
-  function touchSession(preview) {
-    const key = curKey();
-    const sessions = state.sessions[key] || {};
-    const current = sessions[state.chatId] || { title: "Chat " + new Date().toLocaleString() };
-    current.preview = preview.slice(0, 60);
-    current.ts = Date.now();
-    sessions[state.chatId] = current;
-    state.sessions[key] = sessions;
-    saveSessions(state.botMachine, state.bot, sessions);
-    refreshSessionList();
-    chatTitle.textContent = current.title;
-    // Bump global recents too — keeps the cross-bot Recent panel fresh.
-    const botInfo = (state.machines || [])
-      .find(m => m.machine_id === state.botMachine)?.bots
-      ?.find(b => b.name === state.bot);
-    recents.touch({
-      machine: state.botMachine,
-      bot: state.bot,
-      chat_id: state.chatId,
-      title: current.title,
-      preview: current.preview,
-      platform: state.chatId.startsWith("web-") ? "web" : "other",
-      display_name: botInfo?.display_name || state.bot,
-    });
-  }
-
-  // ── Chat lifecycle ──
-
-  // <session-info> (components/session-info.js) owns rendering + token
-  // formatting; refreshSessionInfo just fetches and hands it the info object.
-  async function refreshSessionInfo() {
-    if (!state.botMachine) { sessionInfoEl.setInfo(null); return; }
-    const serverList = state.serverSessions[curKey()] || [];
-    const serverMeta = serverList.find(s => s.chat_id === state.chatId);
-    const sessionId = serverMeta && serverMeta.session_id;
-    if (!sessionId) { sessionInfoEl.setInfo(null); return; }
-    const botInfo = (state.machines || [])
-      .find(m => m.machine_id === state.botMachine)?.bots
-      ?.find(b => b.name === state.bot);
-    const backendKind = botInfo?.backend || "";
-    const model = botInfo?.model || "";
-    if (!backendKind) { sessionInfoEl.setInfo(null); return; }
-    try {
-      const r = await api(
-        `session_info?session_id=${encodeURIComponent(sessionId)}` +
-        `&backend_kind=${encodeURIComponent(backendKind)}` +
-        `&machine=${encodeURIComponent(state.botMachine)}` +
-        `&model=${encodeURIComponent(model)}`
-      );
-      if (!r.ok) { sessionInfoEl.setInfo(null); return; }
-      const data = await r.json();
-      sessionInfoEl.setInfo(data.info || null);
-    } catch (_) {
-      sessionInfoEl.setInfo(null);
-    }
-  }
-
-  async function loadOlderHistory() {
-    if (state.historyLoading || state.historyExhausted) return;
-    if (!state.chatId || !state.bot) return;
-    state.historyLoading = true;
-    try {
-      const url = `history?bot=${encodeURIComponent(state.bot)}&machine=${encodeURIComponent(state.botMachine)}&chat_id=${encodeURIComponent(state.chatId)}&limit=${HISTORY_PAGE_SIZE}&offset=${state.historyOffset}`;
-      const r = await api(url);
-      if (!r.ok) return;
-      const j = await r.json();
-      const items = j.history || [];
-      state.historyTotal = j.total || state.historyTotal;
-      if (!items.length) { state.historyExhausted = true; return; }
-      chatLog.prependHistory(items); // builds bubbles + preserves scroll position
-      state.historyOffset += items.length;
-      if (state.historyOffset >= state.historyTotal) state.historyExhausted = true;
-    } catch (e) {
-      console.warn("history load-more failed", e);
-    } finally {
-      state.historyLoading = false;
-    }
-  }
-
-  // <chat-log> calls this when the user scrolls near the top; we fetch more.
-  chatLog.onLoadOlder = loadOlderHistory;
-
-  async function switchChat(chatId) {
-    if (state.es) { state.es.close(); state.es = null; }
-    state.chatId = chatId;
-    state.streamMsgs = {};
-    refreshSessionList();
-    const meta = (state.sessions[curKey()] || {})[chatId] || {};
-    const serverList = state.serverSessions[curKey()] || [];
-    const serverMeta = serverList.find(s => s.chat_id === chatId);
-    const backendTitle = serverMeta && (serverMeta.custom_title || serverMeta.summary);
-    const resolvedTitle = backendTitle || meta.title || (serverMeta ? defaultTitle(serverMeta) : chatId);
-    chatTitle.textContent = resolvedTitle;
-    refreshSessionInfo();
-    localStorage.setItem("ba.last." + curKey(), chatId);
-
-    // Record this open in the cross-bot recents so the next visit can find
-    // it from the top-level Recent panel.
-    const botInfo = (state.machines || [])
-      .find(m => m.machine_id === state.botMachine)?.bots
-      ?.find(b => b.name === state.bot);
-    recents.touch({
-      machine: state.botMachine,
-      bot: state.bot,
-      chat_id: chatId,
-      title: resolvedTitle,
-      preview: serverMeta?.preview || meta.preview || "",
-      recap: serverMeta?.recap || "",
-      platform: serverMeta?.platform
-        || (chatId.startsWith("web-") ? "web" : "other"),
-      display_name: botInfo?.display_name || state.bot,
-      ts: serverMeta?.last_ts || Math.floor(Date.now() / 1000),
-    });
-
-    showRecapBanner(serverMeta?.recap || "", chatId);
-
-    // Cover the chat panel with a mask so the fetch + swap + scroll-to-bottom
-    // all happen invisibly. Old content stays in the DOM behind the mask.
-    const mask = $("messages-mask");
-    mask.classList.remove("hidden");
-
-    setConn("connecting");
-    state.historyOffset = 0;
-    state.historyTotal = 0;
-    state.historyExhausted = false;
-    state.historyLoading = false;
-    let history = [];
-    try {
-      const r = await api(`history?bot=${encodeURIComponent(state.bot)}&machine=${encodeURIComponent(state.botMachine)}&chat_id=${encodeURIComponent(chatId)}&limit=${HISTORY_PAGE_SIZE}&offset=0`);
-      if (r.ok) {
-        const j = await r.json();
-        history = j.history || [];
-        state.historyTotal = j.total || history.length;
-        state.historyOffset = history.length;
-        if (state.historyOffset >= state.historyTotal) state.historyExhausted = true;
-      }
-    } catch (e) { console.warn("history load failed", e); }
-
-    chatLog.setHistory(history); // replace bubbles + jump to bottom (no smooth)
-
-    requestAnimationFrame(() => mask.classList.add("hidden"));
-
-    app.openStream();
-  }
-
-  // openStream + handleEvent live in chat-controller.js (ChatController(app),
-  // wired near the bottom of this file). switchChat calls app.openStream().
-
-  // ── Tool call rendering ──
-  // <chat-log> wraps <tool-card>'s find / create / dedup / result over the live
-  // message container.
-  function renderToolCall(toolId, name, args, parentToolId = "") {
-    chatLog.upsertToolCall(toolId, name, args, parentToolId);
-  }
-
-  function renderToolResult(toolId, ok, summary, error) {
-    chatLog.applyToolResult(toolId, ok, summary, error);
-  }
-
-  // ── Send ──
-  async function sendText(text) {
-    if (!text.trim()) return;
-    if (!state.bot || !state.chatId) return;
-    const m = state.machines.find(m => m.machine_id === state.botMachine);
-    if (m && !m.online) {
-      addMessage("assistant", `_Machine **${state.botMachine}** is offline; can't send._`);
-      return;
-    }
-    sendBtn.disabled = true;
-    try {
-      const r = await api("send", {
-        method: "POST",
-        body: JSON.stringify({ bot: state.bot, machine: state.botMachine, chat_id: state.chatId, text }),
-      });
-      if (!r.ok) {
-        const err = await r.text();
-        addMessage("assistant", `_Error (${r.status}): ${err}_`);
-        if (r.status === 502 || r.status === 504) {
-          // Likely the guest dropped — refresh machines so UI reflects it.
-          loadMachines().catch(() => {});
-        }
-      }
-    } catch (e) {
-      addMessage("assistant", "_Network error: " + e.message + "_");
-    } finally {
-      sendBtn.disabled = false;
-    }
-  }
+  // touchSession / refreshSessionInfo / loadOlderHistory / switchChat /
+  // renderToolCall·renderToolResult / sendText + the message delegators live
+  // in chat-controller.js (ChatController(app), built below). app.js calls
+  // app.switchChat / app.sendText / app.addMessage.
 
   // ── Machines + bot grouping ──
   async function loadMachines() {
@@ -424,20 +232,20 @@
     state.serverSessions[key] = await fetchServerSessions(machineId, botName);
     renderMachines();
     const lastChat = localStorage.getItem("ba.last." + key);
-    await switchChat(lastChat || pickFirstSessionId() || uuid());
+    await app.switchChat(lastChat || pickFirstSessionId() || uuid());
     closeSidebar();
   }
 
   // ── App context ──
-  // Shared bag the split-out controllers read/attach to (no build step). First
-  // slice: chat-controller.js owns the SSE stream + event router; it reads these
-  // and attaches app.openStream / app.handleEvent.
+  // Shared bag the split-out controller reads from + attaches to (no build
+  // step). chat-controller.js (ChatController) owns the whole live-conversation
+  // controller; it reads these and attaches app.switchChat / app.sendText /
+  // app.addMessage / app.openStream / app.handleEvent + wires chatLog.onLoadOlder.
   const app = {
-    state, TOKEN,
-    curKey, setConn,
-    addMessage, showTyping, removeTyping, scrollDown,
-    renderToolCall, renderToolResult,
-    touchSession, fetchServerSessions, refreshSessionList, refreshSessionInfo,
+    state, api, $, TOKEN, HISTORY_PAGE_SIZE,
+    curKey, setConn, showRecapBanner,
+    chatTitle, sessionInfoEl, sendBtn, chatLog, recents,
+    refreshSessionList, fetchServerSessions, loadMachines,
   };
   ChatController(app);
 
@@ -447,7 +255,7 @@
   // Panels signal intent via injected callbacks; app.js owns navigation + actions.
   machinesPanel.onSelectBot = selectBot;
   machinesPanel.onRestartMachine = restartMachine;
-  sessionsPanel.onSelectSession = (chatId) => { switchChat(chatId); closeSidebar(); };
+  sessionsPanel.onSelectSession = (chatId) => { app.switchChat(chatId); closeSidebar(); };
   $("recents-clear").onclick = () => recents.clear();
   // Section collapse (caret + persisted state). Same shape for both sidebar
   // sections, so share one setup.
@@ -470,7 +278,7 @@
   // ── Sidebar resize ── component: sidebar-resize.js (self-contained behavior)
 
   $("new-session").onclick = async () => {
-    await switchChat(uuid());
+    await app.switchChat(uuid());
     closeSidebar();
     input.focus();
   };
@@ -536,7 +344,7 @@
     if (!text.trim()) return;
     input.value = "";
     autoResize();
-    sendText(text);
+    app.sendText(text);
   });
 
   function autoResize() {
@@ -569,7 +377,7 @@
   loadMachines().then(startMachinePoll).catch((e) => {
     console.error(e);
     setConn("offline");
-    addMessage("assistant", "_Failed to connect: " + e.message + "_");
+    app.addMessage("assistant", "_Failed to connect: " + e.message + "_");
   });
 
   // ── Claude session picker (component: components/session-picker.js) ──
@@ -593,7 +401,7 @@
     const key = curKey();
     state.sessions[key] = sessions;
     state.serverSessions[key] = await fetchServerSessions(machine, bot);
-    await switchChat(chat_id);
+    await app.switchChat(chat_id);
   };
   $("open-claude-picker").onclick = () => picker.open();
 })();

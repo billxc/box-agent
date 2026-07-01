@@ -141,6 +141,12 @@ function install() {
   // Run rAF callbacks synchronously — tests don't paint, they just need the
   // scroll-to-bottom logic to execute.
   globalThis.requestAnimationFrame = (fn) => { fn(); return 0; };
+  // Inert EventSource so openStream() can run in tests without a real connection
+  // (no events are ever delivered; the message handler just isn't exercised).
+  globalThis.EventSource = class EventSource {
+    constructor(url) { this.url = url; this.onopen = null; this.onerror = null; this.onmessage = null; }
+    close() { this.closed = true; }
+  };
   const store = new Map();
   globalThis.localStorage = {
     getItem: (k) => (store.has(k) ? store.get(k) : null),
