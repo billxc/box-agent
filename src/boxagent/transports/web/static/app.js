@@ -308,76 +308,11 @@
 
     requestAnimationFrame(() => mask.classList.add("hidden"));
 
-    openStream();
+    app.openStream();
   }
 
-  function openStream() {
-    const url = `api/stream?bot=${encodeURIComponent(state.bot)}&machine=${encodeURIComponent(state.botMachine)}&chat_id=${encodeURIComponent(state.chatId)}` + (TOKEN ? `&token=${encodeURIComponent(TOKEN)}` : "");
-    const es = new EventSource(url);
-    state.es = es;
-    es.onopen = () => setConn("online");
-    es.onerror = () => {
-      setConn("offline");
-      // EventSource auto-reconnects; don't fight it.
-    };
-    es.onmessage = (e) => {
-      let ev;
-      try { ev = JSON.parse(e.data); } catch { return; }
-      handleEvent(ev);
-    };
-  }
-
-  function handleEvent(ev) {
-    switch (ev.type) {
-      case "message": {
-        addMessage(ev.role || "assistant", ev.text || "", { id: ev.message_id, ts: ev.ts });
-        if (ev.role === "assistant") touchSession(ev.text || "");
-        else touchSession(ev.text || "");
-        break;
-      }
-      case "typing": showTyping(); break;
-      case "stream_start": {
-        removeTyping();
-        const el = addMessage("assistant", "", { id: ev.message_id, ts: ev.ts });
-        state.streamMsgs[ev.message_id] = { el, text: "" };
-        break;
-      }
-      case "stream_delta": {
-        const s = state.streamMsgs[ev.message_id];
-        if (!s) return;
-        s.text = ev.text != null ? ev.text : s.text + (ev.delta || "");
-        s.el.setText(s.text);
-        scrollDown();
-        break;
-      }
-      case "stream_end": {
-        const s = state.streamMsgs[ev.message_id];
-        if (s) {
-          if (ev.text) s.el.setText(ev.text);
-          touchSession(ev.text || s.text);
-          delete state.streamMsgs[ev.message_id];
-        }
-        // Refresh server-side session list (other platforms may have new turns).
-        fetchServerSessions(state.botMachine, state.bot).then((list) => {
-          state.serverSessions[curKey()] = list;
-          refreshSessionList();
-          refreshSessionInfo();
-        });
-        break;
-      }
-      case "tool_call": {
-        renderToolCall(ev.tool_id, ev.name || "tool", ev.args || {}, ev.parent_tool_id || "");
-        scrollDown();
-        break;
-      }
-      case "tool_result": {
-        renderToolResult(ev.tool_id, !!ev.ok, ev.summary || "", ev.error || "");
-        scrollDown();
-        break;
-      }
-      case "_close": setConn("offline"); break;
-    }
-  }
+  // openStream + handleEvent live in chat-controller.js (ChatController(app),
+  // wired near the bottom of this file). switchChat calls app.openStream().
 
   // ── Tool call rendering ──
   // <chat-log> wraps <tool-card>'s find / create / dedup / result over the live
@@ -492,6 +427,19 @@
     await switchChat(lastChat || pickFirstSessionId() || uuid());
     closeSidebar();
   }
+
+  // ── App context ──
+  // Shared bag the split-out controllers read/attach to (no build step). First
+  // slice: chat-controller.js owns the SSE stream + event router; it reads these
+  // and attaches app.openStream / app.handleEvent.
+  const app = {
+    state, TOKEN,
+    curKey, setConn,
+    addMessage, showTyping, removeTyping, scrollDown,
+    renderToolCall, renderToolResult,
+    touchSession, fetchServerSessions, refreshSessionList, refreshSessionInfo,
+  };
+  ChatController(app);
 
   // ── UI events ──
   $("refresh-machines").onclick = () => loadMachines().catch(() => {});
