@@ -7,7 +7,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Awaitable, Callable
+from typing import Awaitable, Callable
 
 import aiohttp
 from aiohttp import ClientSession, WSMsgType
@@ -111,35 +111,6 @@ class GuestClient:
                 "path": path, "query": query or {}, "body": body,
             })
             return await asyncio.wait_for(pending.result, timeout=timeout)
-        finally:
-            self._pending.pop(rpc_id, None)
-
-    async def call_stream(
-        self,
-        method: str,
-        path: str,
-        *,
-        query: dict | None = None,
-        body: dict | None = None,
-    ) -> AsyncIterator[str]:
-        """Reverse RPC streaming variant for SSE endpoints."""
-        ws = self._ws
-        if ws is None or ws.closed:
-            raise RuntimeError("guest: not connected to host")
-        rpc_id = uuid.uuid4().hex
-        pending = _PendingResponse()
-        pending.is_stream = True
-        self._pending[rpc_id] = pending
-        try:
-            await ws.send_json({
-                "type": "rpc", "id": rpc_id, "method": method,
-                "path": path, "query": query or {}, "body": body,
-            })
-            while True:
-                frame = await pending.stream_queue.get()
-                if frame is None:
-                    return
-                yield frame
         finally:
             self._pending.pop(rpc_id, None)
 
@@ -286,8 +257,6 @@ class GuestClient:
                 for p in list(self._pending.values()):
                     if not p.result.done():
                         p.result.set_exception(RuntimeError("guest: ws disconnected"))
-                    if p.is_stream:
-                        p.stream_queue.put_nowait(None)
                 self._pending.clear()
             if self._stop:
                 break
@@ -323,14 +292,6 @@ class GuestClient:
                             "status": int(payload.get("status") or 0),
                             "body": payload.get("body") or {},
                         })
-                elif payload.get("type") == "rpc_stream":
-                    p = self._pending.get(str(payload.get("id") or ""))
-                    if p:
-                        p.stream_queue.put_nowait(str(payload.get("data") or ""))
-                elif payload.get("type") == "rpc_end":
-                    p = self._pending.get(str(payload.get("id") or ""))
-                    if p:
-                        p.stream_queue.put_nowait(None)
                 elif payload.get("type") == "machines_snapshot":
                     raw = payload.get("machines") or []
                     self.remote_machines = [
@@ -363,32 +324,13 @@ class GuestClient:
         if self.local_web_token:
             headers["Authorization"] = f"Bearer {self.local_web_token}"
 
-        # SSE endpoints stream chunks — forward as rpc_stream frames
-        is_sse = path.endswith("/api/stream")
         try:
             assert self._session is not None
             kwargs = {"params": query, "headers": headers}
             if method != "GET" and body is not None:
                 kwargs["json"] = body
             async with self._session.request(method, url, **kwargs) as response:
-                if is_sse and response.status == 200:
-                    # Forward SSE frames as rpc_stream messages
-                    buf = b""
-                    async for chunk in response.content.iter_any():
-                        buf += chunk
-                        # Split on \n\n SSE event boundaries
-                        while b"\n\n" in buf:
-                            event, buf = buf.split(b"\n\n", 1)
-                            for line in event.splitlines():
-                                if line.startswith(b"data: "):
-                                    data = line[6:].decode("utf-8", errors="replace")
-                                    await ws.send_json({
-                                        "type": "rpc_stream", "id": rpc_id, "data": data,
-                                    })
-                    await ws.send_json({"type": "rpc_end", "id": rpc_id})
-                    return
-
-                # Non-streaming: parse JSON (or wrap raw)
+                # Parse JSON (or wrap raw)
                 try:
                     body_out = await response.json(content_type=None)
                 except Exception:

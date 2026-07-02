@@ -15,16 +15,16 @@ Wire protocol::
   {"type": "rpc", "id": "<uuid>", "method": "GET",
    "path": "/api/history", "query": {"bot": "x", "chat_id": "y"}, "body": null}
 
-  # Guest → Host (non-streaming response)
+  # Guest → Host (response)
   {"type": "rpc_resp", "id": "<uuid>", "status": 200, "body": {...}}
-
-  # Guest → Host (streaming response, e.g. SSE)
-  {"type": "rpc_stream", "id": "<uuid>", "data": "<sse data line>"}
-  ...
-  {"type": "rpc_end",    "id": "<uuid>"}
 
   # Either direction
   {"type": "ping"}  /  {"type": "pong"}
+
+Frames the registry doesn't recognize (``event_batch`` / ``event_resync`` from
+the EventSyncer, ``chat_subscribe`` / ``chat_event`` from the ChatSyncer) fall
+through to ``on_unknown_frame``. Live chat SSE used to ride ``rpc_stream`` /
+``rpc_end`` here; it now rides the ChatSyncer's ``chat_*`` frames instead.
 """
 
 from __future__ import annotations
@@ -36,7 +36,6 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import AsyncIterator
 
 from aiohttp import ClientSession, web
 from aiohttp.web import WebSocketResponse
@@ -58,19 +57,15 @@ class RemoteBot:
 
 
 class _PendingResponse:
-    """Future-like aggregator for a single RPC awaiting reply.
+    """Future-like holder for a single RPC awaiting its reply.
 
-    Non-streaming RPCs resolve `result` once with a JSON dict.
-    Streaming RPCs (used for SSE) push frames into `stream_queue` instead;
-    callers iterate via :meth:`iter_stream` until ``rpc_end`` arrives.
+    Resolves ``result`` once with a JSON dict (``{"status": int, "body": dict}``).
     """
 
-    __slots__ = ("result", "stream_queue", "is_stream")
+    __slots__ = ("result",)
 
     def __init__(self) -> None:
         self.result: asyncio.Future[dict] = asyncio.get_event_loop().create_future()
-        self.stream_queue: asyncio.Queue = asyncio.Queue()
-        self.is_stream: bool = False
 
 
 @dataclass
@@ -109,50 +104,10 @@ class GuestSession:
         finally:
             self._pending.pop(rpc_id, None)
 
-    async def call_stream(
-        self,
-        method: str,
-        path: str,
-        *,
-        query: dict | None = None,
-        body: dict | None = None,
-    ) -> AsyncIterator[str]:
-        """RPC: send request, async-iterate stream frames until rpc_end."""
-        rpc_id = uuid.uuid4().hex
-        pending = _PendingResponse()
-        pending.is_stream = True
-        self._pending[rpc_id] = pending
-        try:
-            await self.ws.send_json({
-                "type": "rpc",
-                "id": rpc_id,
-                "method": method,
-                "path": path,
-                "query": query or {},
-                "body": body,
-            })
-            while True:
-                frame = await pending.stream_queue.get()
-                if frame is None:  # sentinel = rpc_end
-                    return
-                yield frame
-        finally:
-            self._pending.pop(rpc_id, None)
-
     def _resolve(self, rpc_id: str, status: int, body: dict) -> None:
         p = self._pending.get(rpc_id)
         if p and not p.result.done():
             p.result.set_result({"status": status, "body": body})
-
-    def _push_stream(self, rpc_id: str, data: str) -> None:
-        p = self._pending.get(rpc_id)
-        if p:
-            p.stream_queue.put_nowait(data)
-
-    def _end_stream(self, rpc_id: str) -> None:
-        p = self._pending.get(rpc_id)
-        if p:
-            p.stream_queue.put_nowait(None)
 
 
 @dataclass
@@ -257,10 +212,10 @@ class GuestRegistry:
         """Handle an `rpc` frame coming *from* a guest.
 
         Mirrors `GuestClient._handle_rpc`: re-issue the request against the
-        host's own web port over loopback, then stream the response back to the
-        guest as `rpc_resp` (or `rpc_stream` + `rpc_end` for SSE). Reusing the
-        loopback HTTP path means the host's full `_handle_web_*` logic — which
-        already includes host→guest proxying — handles routing for free.
+        host's own web port over loopback, then send the response back to the
+        guest as `rpc_resp`. Reusing the loopback HTTP path means the host's full
+        `_handle_web_*` logic — which already includes host→guest proxying —
+        handles routing for free.
         """
         rpc_id = str(request.get("id") or "")
         method = str(request.get("method") or "GET").upper()
@@ -285,26 +240,11 @@ class GuestRegistry:
         if self.local_web_token:
             headers["Authorization"] = f"Bearer {self.local_web_token}"
 
-        is_sse = path.endswith("/api/stream")
         try:
             kwargs: dict = {"params": query, "headers": headers}
             if method != "GET" and body is not None:
                 kwargs["json"] = body
             async with self._http_session.request(method, url, **kwargs) as response:
-                if is_sse and response.status == 200:
-                    buf = b""
-                    async for chunk in response.content.iter_any():
-                        buf += chunk
-                        while b"\n\n" in buf:
-                            event, buf = buf.split(b"\n\n", 1)
-                            for line in event.splitlines():
-                                if line.startswith(b"data: "):
-                                    data = line[6:].decode("utf-8", errors="replace")
-                                    await session.ws.send_json({
-                                        "type": "rpc_stream", "id": rpc_id, "data": data,
-                                    })
-                    await session.ws.send_json({"type": "rpc_end", "id": rpc_id})
-                    return
                 try:
                     body_out = await response.json(content_type=None)
                 except Exception:
@@ -423,13 +363,6 @@ class GuestRegistry:
                         int(payload.get("status") or 0),
                         payload.get("body") or {},
                     )
-                elif t == "rpc_stream":
-                    session._push_stream(
-                        str(payload.get("id") or ""),
-                        str(payload.get("data") or ""),
-                    )
-                elif t == "rpc_end":
-                    session._end_stream(str(payload.get("id") or ""))
                 elif t == "bots_update":
                     # Guest re-announces its bot list (e.g. after dynamic create)
                     bots_raw = payload.get("bots") or []

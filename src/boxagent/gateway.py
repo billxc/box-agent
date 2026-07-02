@@ -136,6 +136,8 @@ class Gateway:
     _telegram_notifier: "object | None" = field(default=None, repr=False)
     _retention_sweeper: "object | None" = field(default=None, repr=False)
     _event_syncer: "object | None" = field(default=None, repr=False)
+    _chat_syncer: "object | None" = field(default=None, repr=False)
+    _chat_bus: "object | None" = field(default=None, repr=False)
 
     async def start(self) -> None:
         self._start_time = time.time()
@@ -200,6 +202,36 @@ class Gateway:
         self._cluster_routes = ClusterHttpRoutes(
             cluster_rpc=self._cluster_rpc,
         )
+
+        # ChatBus: location-transparent chat pub/sub. ChatSyncer carries the
+        # cross-machine case over the cluster WS as structured frames (no SSE
+        # re-framing); ChatBus fronts it so /api/stream reads one queue shape
+        # for local + remote alike. Wired into HostElection below (same as the
+        # event syncer) so peers attach as the registry/guest_client appear.
+        from boxagent.cluster.chat_sync import ChatSyncer
+        from boxagent.cluster.chat_bus import ChatBus
+        topology = self._topology
+
+        def route_chat(target_machine):
+            # Which peer a subscribe travels toward. Guest → always the host;
+            # host → the target guest's session (peer_key == machine_id).
+            if topology.local_role() == "guest":
+                return "host"
+            registry = topology.guest_registry
+            if registry is not None and target_machine in registry.sessions:
+                return target_machine
+            return None
+
+        self._chat_syncer = ChatSyncer(
+            local_machine=self._topology.local_machine_id(),
+            route=route_chat,
+        )
+        self._chat_bus = ChatBus(
+            local_machine=self._topology.local_machine_id(),
+            syncer=self._chat_syncer,
+            channel_for=self._bots.web_channels.get,
+        )
+
         self._web_server = WebHttpServer(
             config=self.config,
             local_dir=self.local_dir,
@@ -210,6 +242,7 @@ class Gateway:
             topology=self._topology,
             cluster_rpc=self._cluster_rpc,
             cluster_routes=self._cluster_routes,
+            chat_bus=self._chat_bus,
         )
         self._web_server.set_event_bus(self._event_bus)
         logger.info("Gateway starting (node=%s)", self.config.node_id or "(any)")
@@ -243,16 +276,33 @@ class Gateway:
         # vs guest at runtime, with failover when primary disappears.
         if self.config.cluster_tunnel:
             from boxagent.events.sync_wiring import (
-                install_guest_client_hooks,
-                install_registry_hooks,
+                install_guest_client_hooks as install_event_guest_hooks,
+                install_registry_hooks as install_event_registry_hooks,
             )
-            syncer = self._event_syncer
+            from boxagent.cluster.chat_sync_wiring import (
+                install_guest_client_hooks as install_chat_guest_hooks,
+                install_registry_hooks as install_chat_registry_hooks,
+            )
+            event_syncer = self._event_syncer
+            chat_syncer = self._chat_syncer
+
+            # Event hooks first (they assign the registry callbacks); chat hooks
+            # second (they chain onto whatever is already set). Order matters —
+            # see chat_sync_wiring module docstring.
+            def on_registry_ready(registry):
+                install_event_registry_hooks(event_syncer, registry)
+                install_chat_registry_hooks(chat_syncer, registry)
+
+            def on_guest_client_ready(client):
+                install_event_guest_hooks(event_syncer, client)
+                install_chat_guest_hooks(chat_syncer, client)
+
             self._host_election = HostElection(
                 config=self.config,
                 on_topology_change=self._topology.on_topology_change,
                 bot_provider=self._topology.local_bot_descriptors,
-                on_registry_ready=lambda registry: install_registry_hooks(syncer, registry),
-                on_guest_client_ready=lambda client: install_guest_client_hooks(syncer, client),
+                on_registry_ready=on_registry_ready,
+                on_guest_client_ready=on_guest_client_ready,
             )
             # Phase 2: topology can now resolve guest_registry / guest_client.
             self._topology.set_host_election(self._host_election)
@@ -318,6 +368,10 @@ class Gateway:
 
         # AgentManager owns channels, web_channels, backends, pools, watchdogs.
         if self._bots is not None:
+            # Cancel owner-side chat pumps first — they hold WebChannel
+            # subscriptions the manager is about to tear down.
+            if self._chat_bus is not None:
+                await self._chat_bus.aclose()
             await self._bots.stop()
 
         # Event log: emit shutdown event then unbind + close.

@@ -92,7 +92,10 @@ src/boxagent/
 │   ├── guest_client.py      guest: GuestClient（拨向 host）
 │   ├── host_election.py     主备投票 + failover
 │   ├── topology_service.py  本机标识 / machine 描述符 / machine snapshot
-│   ├── rpc.py               ClusterRpc（host↔guest 双向 HTTP/SSE 转发；guest 经 host 两跳到其他 guest）
+│   ├── rpc.py               ClusterRpc（host↔guest HTTP 请求转发；guest 经 host 两跳到其他 guest）
+│   ├── chat_sync.py         ChatSyncer：跨机 chat pub/sub（chat_subscribe/chat_event 帧，替代旧 SSE re-framing）
+│   ├── chat_bus.py          ChatBus：location-transparent 订阅门面（local→WebChannel / remote→ChatSyncer）+ owner pump
+│   ├── chat_sync_wiring.py  把 ChatSyncer 链式接入 registry/guest_client hook（不覆盖 EventSyncer）
 │   ├── http_routes.py       cluster 路由挂载（/api/guest/ws）
 │   ├── tunnel.py            host 端 devtunnel 生命周期（spawn / 重启）
 │   └── devtunnel.py         devtunnel CLI 包装（resolve url、auth）
