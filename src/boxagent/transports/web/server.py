@@ -87,6 +87,7 @@ class WebHttpServer:
         topology,
         cluster_rpc,
         cluster_routes,
+        chat_bus=None,
     ) -> None:
         self.config = config
         self.local_dir = local_dir
@@ -97,6 +98,7 @@ class WebHttpServer:
         self.topology = topology
         self.cluster_rpc = cluster_rpc
         self.cluster_routes = cluster_routes
+        self.chat_bus = chat_bus
         self.event_bus = None
         # Internal state — process-local preview cache (sid → {mtime, ...})
         # used by /api/sessions to avoid re-reading transcript JSONL every poll.
@@ -729,12 +731,16 @@ class WebHttpServer:
         machine = request.query.get("machine", "")
         if not bot or not chat_id or not machine:
             return web.json_response({"ok": False, "error": "missing bot/chat_id/machine"}, status=400)
-        if machine != self.topology.local_machine_id():
-            response = await self.cluster_rpc.dispatch_machine_stream(machine, "/api/stream", request)
-            if response is not None:
-                return response
-        channel = self.web_channels.get(bot)
-        if channel is None:
+        if self.chat_bus is None:
+            return web.json_response({"ok": False, "error": "chat bus unavailable"}, status=503)
+
+        # One queue shape for local + remote: ChatBus hands back the bot's
+        # in-process WebChannel queue when the bot is local, or a ChatSyncer
+        # queue (events arriving as structured frames over the cluster WS) when
+        # it lives on another machine. Either way the SSE loop below is identical
+        # — no per-hop re-framing.
+        queue = await self.chat_bus.subscribe(bot, chat_id, machine)
+        if queue is None:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
 
         response = web.StreamResponse(
@@ -747,7 +753,6 @@ class WebHttpServer:
             },
         )
         await response.prepare(request)
-        queue = channel.subscribe(chat_id)
         await response.write(b": connected\n\n")
         import json as _json
         try:
@@ -764,7 +769,7 @@ class WebHttpServer:
         except (ConnectionResetError, asyncio.CancelledError):
             pass
         finally:
-            channel.unsubscribe(chat_id, queue)
+            await self.chat_bus.unsubscribe(bot, chat_id, machine, queue)
         return response
 
     # ── Claude native session picker ──
