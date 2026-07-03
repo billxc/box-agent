@@ -13,6 +13,7 @@ from typing import Callable
 
 from .models import Event
 from .storage import EventStore
+from .store_subscriber import StoreSubscriber
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,10 @@ class EventBus:
     def __init__(self, store: EventStore, machine_id: str) -> None:
         self._store = store
         self._machine_id = machine_id
+        # The durable subscriber owns the local store write. It runs first and
+        # synchronously (see publish); the enriched Event it returns is what the
+        # remaining subscribers receive.
+        self._store_subscriber = StoreSubscriber(store, machine_id)
         self._subscribers: list[EventCallback] = []
 
     @property
@@ -41,13 +46,14 @@ class EventBus:
     def publish(self, level: str, category: str, message: str, **meta) -> None:
         """LogSink protocol entry point.
 
-        `bot` is pulled out of meta because it is a top-level column.
+        The durable subscriber (StoreSubscriber) performs the local store write
+        first and synchronously, minting the event's id + origin_seq. The
+        enriched Event is then fanned out to the remaining subscribers unchanged.
+        `bot` is a top-level column, extracted from meta by the store write.
         """
-        bot = meta.pop("bot", None)
         try:
-            event = self._store.insert_local(
-                self._machine_id, level, category, message,
-                bot=bot, meta=meta or None,
+            event = self._store_subscriber.write_local(
+                level, category, message, meta,
             )
         except Exception:
             logger.exception("EventBus: failed to persist event")
