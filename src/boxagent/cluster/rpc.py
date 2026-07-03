@@ -50,50 +50,39 @@ class ClusterRpc:
             session = guest_registry.get(machine)
             if session is None:
                 return web.json_response({"ok": False, "error": "unknown machine"}, status=404)
-            return await self._proxy_to_remote(session, method, path, request, body=body)
+            return await self._proxy(session, method, path, request, body=body, label="remote")
         guest_client = self.topology.guest_client
         if guest_client is not None:
-            return await self._proxy_via_host(guest_client, method, path, request, body=body)
+            return await self._proxy(guest_client, method, path, request, body=body, label="host")
         return web.json_response({"ok": False, "error": "no cluster routing available"}, status=503)
 
-    async def _proxy_via_host(
+    async def _proxy(
         self,
-        guest_client,
+        peer,
         method: str,
         path: str,
         request: web.Request,
         body: dict | None = None,
+        *,
+        label: str,
     ) -> web.Response:
-        """Guest-side: forward an HTTP request to the host over the existing WS."""
-        try:
-            result = await guest_client.call(
-                method, path, query=dict(request.query), body=body,
-            )
-        except asyncio.TimeoutError:
-            return web.json_response({"ok": False, "error": "host timeout"}, status=504)
-        except Exception as e:
-            return web.json_response({"ok": False, "error": f"host error: {e}"}, status=502)
-        return web.json_response(result.get("body") or {}, status=int(result.get("status") or 200))
+        """Forward an HTTP request to a peer over WS RPC and return its response.
 
-    async def _proxy_to_remote(
-        self,
-        session,
-        method: str,
-        path: str,
-        request: web.Request,
-        body: dict | None = None,
-    ) -> web.Response:
-        """Forward an HTTP request to a guest over WS RPC and return its response."""
+        ``peer`` is either a host-side ``GuestSession`` (forward to a guest) or a
+        guest-side ``GuestClient`` (forward to the host, which dispatches locally
+        or proxies onward). Both expose the same ``call(method, path, query, body)``
+        request/reply surface; ``label`` distinguishes the two error strings.
+        """
         try:
-            result = await session.call(
+            result = await peer.call(
                 method, path,
                 query=dict(request.query),
                 body=body,
             )
         except asyncio.TimeoutError:
-            return web.json_response({"ok": False, "error": "remote timeout"}, status=504)
+            return web.json_response({"ok": False, "error": f"{label} timeout"}, status=504)
         except Exception as e:
-            return web.json_response({"ok": False, "error": f"remote error: {e}"}, status=502)
+            return web.json_response({"ok": False, "error": f"{label} error: {e}"}, status=502)
         return web.json_response(result.get("body") or {}, status=int(result.get("status") or 200))
 
     async def handle_guest_ws(self, request: web.Request) -> web.StreamResponse:

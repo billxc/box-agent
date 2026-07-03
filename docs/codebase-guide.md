@@ -93,6 +93,8 @@ src/boxagent/
 │   ├── host_election.py     主备投票 + failover
 │   ├── topology_service.py  本机标识 / machine 描述符 / machine snapshot
 │   ├── rpc.py               ClusterRpc（host↔guest HTTP 请求转发；guest 经 host 两跳到其他 guest）
+│   ├── rpc_over_bus.py      RpcChannel（role-agnostic call + per-link _pending）+ InboundRequestExecutor（唯一 loopback 回环）——塌掉 host/guest RPC 镜像
+│   ├── peer_transport.py    PeerTransport：syncer 共享的 peer 注册表 + send-and-swallow
 │   ├── chat_sync.py         ChatSyncer：跨机 chat pub/sub（chat_subscribe/chat_event 帧，替代旧 SSE re-framing）
 │   ├── chat_bus.py          ChatBus：location-transparent 订阅门面（local→WebChannel / remote→ChatSyncer）+ owner pump
 │   ├── chat_sync_wiring.py  把 ChatSyncer 链式接入 registry/guest_client hook（不覆盖 EventSyncer）

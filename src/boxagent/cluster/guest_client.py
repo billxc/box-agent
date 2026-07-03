@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import uuid
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
@@ -13,7 +12,7 @@ import aiohttp
 from aiohttp import ClientSession, WSMsgType
 
 from . import devtunnel
-from .registry import _PendingResponse
+from .rpc_over_bus import InboundRequestExecutor, RpcChannel, _PendingResponse
 from boxagent.log import Category, log
 
 logger = logging.getLogger(__name__)
@@ -57,8 +56,16 @@ class GuestClient:
     # _handle_web_machines / _handle_web_bots so the local webui can render
     # the full cluster sidebar.
     remote_machines: list[dict] = field(default_factory=list)
-    # Pending reverse RPCs we (guest) initiated against host.
-    _pending: dict[str, _PendingResponse] = field(default_factory=dict, repr=False)
+    # Reverse RPC caller side (guest → host). Per-link correlation, shared with
+    # the host's GuestSession via RpcChannel.
+    _channel: RpcChannel = field(default_factory=RpcChannel, repr=False)
+    # Inbound RPC loopback re-issuer (host → guest, and the second hop of a
+    # guest→host→guest relay). Built lazily on first inbound frame.
+    _inbound_executor: "InboundRequestExecutor | None" = field(default=None, repr=False)
+
+    @property
+    def _pending(self) -> dict[str, _PendingResponse]:
+        return self._channel.pending
 
     def start(self) -> None:
         if self._task is not None:
@@ -95,24 +102,18 @@ class GuestClient:
     ) -> dict:
         """Reverse RPC: guest → host. Returns ``{"status": int, "body": dict}``.
 
-        Mirrors :meth:`GuestSession.call` on the host side. Used by the
+        Same request/reply mechanism as :meth:`GuestSession.call` on the host
+        side (both delegate to the shared :class:`RpcChannel`). Used by the
         guest-side webui to forward "remote machine" requests through the host,
         which then dispatches locally or proxies to another guest.
         """
         ws = self._ws
         if ws is None or ws.closed:
             raise RuntimeError("guest: not connected to host")
-        rpc_id = uuid.uuid4().hex
-        pending = _PendingResponse()
-        self._pending[rpc_id] = pending
-        try:
-            await ws.send_json({
-                "type": "rpc", "id": rpc_id, "method": method,
-                "path": path, "query": query or {}, "body": body,
-            })
-            return await asyncio.wait_for(pending.result, timeout=timeout)
-        finally:
-            self._pending.pop(rpc_id, None)
+        return await self._channel.call(
+            ws.send_json, method, path,
+            query=query, body=body, timeout=timeout,
+        )
 
     async def announce_bots(self) -> None:
         ws = self._ws
@@ -254,10 +255,7 @@ class GuestClient:
                 self._ws = None
                 # Reject any in-flight reverse RPCs so callers see a clean
                 # error instead of hanging until timeout.
-                for p in list(self._pending.values()):
-                    if not p.result.done():
-                        p.result.set_exception(RuntimeError("guest: ws disconnected"))
-                self._pending.clear()
+                self._channel.reject_all(RuntimeError("guest: ws disconnected"))
             if self._stop:
                 break
             await asyncio.sleep(min(backoff, 60.0))
@@ -286,12 +284,11 @@ class GuestClient:
                 elif payload.get("type") == "welcome":
                     pass
                 elif payload.get("type") == "rpc_resp":
-                    p = self._pending.get(str(payload.get("id") or ""))
-                    if p and not p.result.done():
-                        p.result.set_result({
-                            "status": int(payload.get("status") or 0),
-                            "body": payload.get("body") or {},
-                        })
+                    self._channel.resolve(
+                        str(payload.get("id") or ""),
+                        int(payload.get("status") or 0),
+                        payload.get("body") or {},
+                    )
                 elif payload.get("type") == "machines_snapshot":
                     raw = payload.get("machines") or []
                     self.remote_machines = [
@@ -313,43 +310,21 @@ class GuestClient:
                 break
 
     async def _handle_rpc(self, ws: aiohttp.ClientWebSocketResponse, request: dict) -> None:
-        rpc_id = str(request.get("id") or "")
-        method = str(request.get("method") or "GET").upper()
-        path = str(request.get("path") or "")
-        query: dict = request.get("query") or {}
-        body = request.get("body")
-
-        url = f"http://127.0.0.1:{self.local_web_port}{path}"
-        headers = {}
-        if self.local_web_token:
-            headers["Authorization"] = f"Bearer {self.local_web_token}"
-
-        try:
-            assert self._session is not None
-            kwargs = {"params": query, "headers": headers}
-            if method != "GET" and body is not None:
-                kwargs["json"] = body
-            async with self._session.request(method, url, **kwargs) as response:
-                # Parse JSON (or wrap raw)
-                try:
-                    body_out = await response.json(content_type=None)
-                except Exception:
-                    body_out = {"raw": (await response.text())[:4096]}
-                await ws.send_json({
-                    "type": "rpc_resp", "id": rpc_id,
-                    "status": response.status, "body": body_out,
-                })
-        except Exception as e:
-            logger.warning("guest: rpc %s %s failed: %s", method, path, e)
-            log.warning(
-                Category.CLUSTER_GUEST_RPC_FAIL,
-                f"guest: rpc {method} {path} failed",
-                machine_id=self.machine_id, method=method, path=path, error=repr(e),
+        """Re-issue an inbound host→guest RPC over local loopback via the shared
+        :class:`InboundRequestExecutor`, then reply ``rpc_resp`` over ``ws``."""
+        assert self._session is not None
+        executor = self._inbound_executor
+        if executor is None or executor.local_web_port != self.local_web_port:
+            executor = InboundRequestExecutor(
+                local_web_port=self.local_web_port,
+                local_web_token=self.local_web_token,
+                http_session_provider=lambda: self._session,
+                logger_message="guest: rpc %s %s failed: %s",
+                event_message_prefix="guest: rpc ",
+                fail_category=Category.CLUSTER_GUEST_RPC_FAIL,
+                not_configured_error="guest loopback not configured",
+                machine_id=self.machine_id,
+                require_web_port=False,
             )
-            try:
-                await ws.send_json({
-                    "type": "rpc_resp", "id": rpc_id, "status": 502,
-                    "body": {"ok": False, "error": str(e)},
-                })
-            except Exception:
-                pass
+            self._inbound_executor = executor
+        await executor.serve(ws.send_json, request)
