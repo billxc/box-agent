@@ -77,20 +77,6 @@ class TestRpcRoundtrip:
         with pytest.raises(asyncio.TimeoutError):
             await session.call("GET", "/api/bots", timeout=0.05)
 
-    async def test_call_stream_yields_then_ends(self, session):
-        async def stream_later():
-            await asyncio.sleep(0.01)
-            sent = session.ws.sent[-1]
-            session._push_stream(sent["id"], "chunk1")
-            session._push_stream(sent["id"], "chunk2")
-            session._end_stream(sent["id"])
-
-        asyncio.create_task(stream_later())
-        chunks = []
-        async for c in session.call_stream("GET", "/api/stream"):
-            chunks.append(c)
-        assert chunks == ["chunk1", "chunk2"]
-
 
 class TestHelloHandshake:
     async def test_rejects_bad_token(self):

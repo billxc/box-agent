@@ -8,6 +8,22 @@
 
 > 📦 **2026-03 ~ 2026-05 的历史条目已归档**到 [archive/decisions-2026-03-to-05.md](archive/decisions-2026-03-to-05.md)。本文件保留 2026-06 起的决策。
 
+## 2026-07-02 — 跨机 chat 流统一到 ChatBus/ChatSyncer（干掉 SSE re-framing）
+
+**背景**：同机器的 chat stream 走 `WebChannel` per-chat `asyncio.Queue` fan-out，浏览器 SSE 订阅 `/api/stream`。跨机器则完全另一套：`_handle_web_stream` 里 `if machine != local: dispatch_machine_stream` → guest/host 把 SSE 逐帧 `data:` 行拆开、经 WS `rpc_stream`/`rpc_end` 帧重发、对端再拼回 `data:`。事件因此被 **序列化→拆行→重发→拼回→再序列化** 每一跳一次，脆且和同机器完全不同架构。Owner 要求同机器/跨机器同架构。
+
+**方案（直接 C）**：新增 message-bus 层，location-transparent：
+- `cluster/chat_sync.py` `ChatSyncer` —— role-agnostic 跨机 pub/sub，仿 `events/sync.py`。三种帧 `chat_subscribe` / `chat_unsubscribe` / `chat_event`（event 是**原始 dict**，不再序列化成 SSE），走既有 cluster WS。订阅式（非全量复制）：只订阅浏览器正在看的 `(bot, chat_id)`。host 用 `_relay` 表做 guest↔guest 两跳转发；上游 `_upstream` refcount 保证每个 key 只发一条上游订阅。
+- `cluster/chat_bus.py` `ChatBus` —— `subscribe(bot, chat_id, machine)`：local 返回 WebChannel 队列，remote 返回 ChatSyncer 队列，**同一 queue 形状**。owner 侧用 `on_local_demand` 回调驱动 per-`(bot,chat_id)` **pump**：订阅本地 WebChannel、单任务顺序 `await on_local_publish` 转发给远端订阅者 —— 复用同一份 in-process fan-out、天然保序，**不用 create_task-per-event**（避开踩过的乱序坑）。
+- `cluster/chat_sync_wiring.py` —— **链式**接上 registry/guest_client 的 `on_unknown_frame`/`on_guest_attached`/`on_guest_detached`（EventSyncer 已占用且是直接赋值，chat 必须在其后安装并捕获旧值 fallthrough）。同步 attach/detach callback 用 `create_task` 桥接到 async 方法。
+- `server.py::_handle_web_stream` —— 删掉 `dispatch_machine_stream` 分叉，改 `queue = await chat_bus.subscribe(...)`，SSE 循环对 local/remote **完全一致**。`/api/send`（POST）仍走 `dispatch_machine_request` 代理，不动。
+
+**删除的死代码**（ChatBus 接线后第二套架构整体死掉）：`rpc.py` 的 `dispatch_machine_stream`/`_proxy_stream_to_remote`/`_proxy_via_host_stream`；`registry.py` 的 `GuestSession.call_stream`/`_push_stream`/`_end_stream` + `_serve_inbound_rpc` 的 `is_sse` 分支 + `rpc_stream`/`rpc_end` 入站；`guest_client.py` 同类。`_PendingResponse` 砍到只剩 `result`。（这也让 decisions.md 里 2026-06 那条"回复走 `_proxy_via_host_stream` 无超时"的机制过时 —— `/api/send` 立即返回不阻塞的结论仍成立，只是回复流现在由 ChatBus 承载。）
+
+**测试**：`test_chat_sync.py`（15 例：owner/subscriber/host-relay/refcount/detach/reconnect/demand）、`test_chat_bus.py`（11 例：local/remote 分派 + pump 保序 + aclose）、`test_chat_sync_wiring.py`（6 例：链式不覆盖 event sync）。删 `test_cluster_registry.py::test_call_stream_yields_then_ends`（测已删的 call_stream）。全量 918 passed。
+
+**为什么这样**：ChatSyncer 抄了已在生产验证的 `EventSyncer` 骨架（attach_peer/detach_peer/handle_frame/refcount）去风险；owner pump 复用 WebChannel 队列而非改 `WebChannel._publish`，把 transport 改动降到零。
+
 ## 2026-06-28 — 物理删除 ClaudeProcess（claude CLI subprocess backend）
 
 接 2026 早期"`claude-cli` 静默重定向到 `AgentSDKClaude`"的迁移，本次把 CLI 子进程实现 `claude_process.py` 物理删除（之前只是占位不实例化）。
