@@ -734,11 +734,9 @@ class WebHttpServer:
         if self.chat_bus is None:
             return web.json_response({"ok": False, "error": "chat bus unavailable"}, status=503)
 
-        # One queue shape for local + remote: ChatBus hands back the bot's
-        # in-process WebChannel queue when the bot is local, or a ChatSyncer
-        # queue (events arriving as structured frames over the cluster WS) when
-        # it lives on another machine. Either way the SSE loop below is identical
-        # — no per-hop re-framing.
+        # local + remote 同一 queue 形状：bot 在本机时 ChatBus 返回它的进程内
+        # WebChannel queue，在别的机器时返回 ChatSyncer queue（事件以结构化帧走
+        # cluster WS 过来）。两种情况下面的 SSE 循环完全一致 —— 不再逐跳 re-framing。
         queue = await self.chat_bus.subscribe(bot, chat_id, machine)
         if queue is None:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)

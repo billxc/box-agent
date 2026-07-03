@@ -1,31 +1,17 @@
-"""Cross-machine chat pub/sub over the cluster WebSocket.
+"""跨机 chat pub/sub，走 cluster WebSocket。
 
-The chat *message stream* (browser ← bot: message / stream_delta / tool_call /
-…) is delivered same-machine by an in-process fan-out (WebChannel's per-chat
-queues). This module carries the *cross-machine* case with the same shape the
-EventStore already uses (see ``events/sync.py``): structured event dicts over
-the existing cluster WS — NOT re-serialized SSE.
-
-Unlike the EventStore (full replication), chat is **subscription-based**: a node
-only receives events for the ``(bot, chat_id)`` that one of its browsers is
-actively viewing. Wire frames (alongside the RPC envelope + event_* frames):
+同机 chat 由 WebChannel 的 per-chat queue 在进程内 fan-out；本模块负责跨机那半，
+把事件当结构化 dict 走既有 cluster WS（同 events/sync.py）—— 不再序列化成 SSE。
+订阅式：一个节点只收浏览器正在看的 (bot, chat_id) 的事件。
 
     {"type":"chat_subscribe",   "target_machine": M, "bot": b, "chat_id": c}
     {"type":"chat_unsubscribe", "target_machine": M, "bot": b, "chat_id": c}
     {"type":"chat_event",       "origin_machine": M, "bot": b, "chat_id": c, "event": {...}}
 
-Topology is hub-and-spoke, so routing is at most two hops:
-
-    guest A ──▶ host ──▶ guest B        (A watches B's bot)
-    guest A ──▶ host                    (A watches host's bot)
-    host    ──▶ guest B                 (host watches B's bot)
-
-`ChatSyncer` is role-agnostic. The host attaches one peer per connected guest
-(peer_key = machine_id); a guest attaches a single peer ("host"). Which peer a
-subscribe travels toward is decided by the injected ``route(target)`` (guest →
-"host"; host → the target's session key). All outbound sends go through the
-injected per-peer ``send_frame`` coroutine, so the syncer is unit-testable with
-fake peers (see test_chat_sync.py).
+一根 location-transparent 总线：每个订阅按 ``(owner_machine, bot, chat_id)`` 做 key，
+"本机拥有"只是 ``machine == self`` 的特例。所以 owner 和 host-relay 共用 `_deliver`，
+pump-local 和 subscribe-upstream 共用 `_toggle_source`。hub-and-spoke 拓扑 → 最多两跳，
+由注入的 ``route(owner_machine)`` 决定走向。
 """
 from __future__ import annotations
 
@@ -36,9 +22,11 @@ from typing import Awaitable, Callable
 logger = logging.getLogger(__name__)
 
 SendFrame = Callable[[dict], Awaitable[None]]
-Route = Callable[[str], "str | None"]  # target_machine -> peer_key that reaches it
+Route = Callable[[str], "str | None"]  # owner machine -> 能到达它的 peer_key
 
 QUEUE_MAXSIZE = 1024
+
+Key = tuple[str, str, str]  # (owner_machine, bot, chat_id)
 
 
 class ChatSyncer:
@@ -47,183 +35,128 @@ class ChatSyncer:
         self._route = route
         self._peers: dict[str, SendFrame] = {}
 
-        # Owner-side demand edge: fired (bot, chat_id, active) when the first
-        # remote peer starts watching a locally-owned chat (active=True) and
-        # when the last one leaves (active=False). The wiring turns this into a
-        # WebChannel subscription + ordered pump feeding on_local_publish, so
-        # remote delivery reuses the same in-process fan-out (and stays ordered)
-        # rather than a create_task per event. Settable hook; None = no-op.
+        # 一个 key 的事件发给谁：下游 peer（host 中继 / owner 给远端 watcher）
+        # + 本机浏览器 queue。
+        self._downstream: dict[Key, set[str]] = {}
+        self._queues: dict[Key, set[asyncio.Queue]] = {}
+        # 每个 key 一个 source —— machine==self 时 pump 本地 WebChannel，否则往
+        # 上游发 chat_subscribe —— 由 _downstream ∪ _queues refcount。
+        self._sources: set[Key] = set()
+
+        # 本机拥有的 chat 的 demand 边沿 → wiring 去 pump 该 bot 的 WebChannel
+        # 喂给 on_local_publish。可设 hook；None = no-op。
         self.on_local_demand: "Callable[[str, str, bool], None] | None" = None
 
-        # Owner side: peers that want events for a LOCALLY-owned (bot, chat_id).
-        self._local_subs: dict[tuple[str, str], set[str]] = {}
-        # Subscriber side: my browser queues waiting on (origin_machine, bot, chat_id).
-        self._queues: dict[tuple[str, str, str], set[asyncio.Queue]] = {}
-        # Host relay: downstream peers that want (target_machine, bot, chat_id).
-        self._relay: dict[tuple[str, str, str], set[str]] = {}
-        # Keys we've sent a chat_subscribe upstream for (dedup + reconnect resend).
-        self._upstream: set[tuple[str, str, str]] = set()
-
-    # ── peer lifecycle ──
+    # ── peer 生命周期 ──
 
     def attach_peer(self, peer_key: str, send_frame: SendFrame) -> None:
         self._peers[peer_key] = send_frame
 
     async def resubscribe(self, peer_key: str) -> None:
-        """(Re)connect: resend chat_subscribe for every upstream key that routes
-        through this peer (mirrors EventSyncer's resync-on-attach)."""
-        for target, bot, chat_id in list(self._upstream):
-            if self._route(target) == peer_key:
-                await self._send_to(peer_key, {
-                    "type": "chat_subscribe", "target_machine": target,
-                    "bot": bot, "chat_id": chat_id,
-                })
+        """重连：把经此 peer 路由的 remote source 重发 chat_subscribe。"""
+        for machine, bot, chat_id in list(self._sources):
+            if machine != self._local and self._route(machine) == peer_key:
+                await self._send_to(peer_key, _subscribe(machine, bot, chat_id))
 
     async def detach_peer(self, peer_key: str) -> None:
         self._peers.pop(peer_key, None)
-        # Drop the peer from owner-side subs (it can't receive anymore); a
-        # now-empty (bot, chat_id) releases the local feed.
-        emptied: list[tuple[str, str]] = []
-        for key, peers in list(self._local_subs.items()):
+        # 把 peer 从它订的每个 key 摘掉；空了的 source 一并释放。
+        emptied = []
+        for key, peers in list(self._downstream.items()):
             if peer_key in peers:
                 peers.discard(peer_key)
                 if not peers:
-                    del self._local_subs[key]
-                    emptied.append(key)
-        for bot, chat_id in emptied:
-            self._fire_demand(bot, chat_id, False)
-        # Drop from relay; a now-empty relay may release an upstream sub.
-        affected = [key for key, peers in self._relay.items() if peer_key in peers]
-        for key in affected:
-            self._relay[key].discard(peer_key)
-            if not self._relay[key]:
-                del self._relay[key]
-            await self._refresh_upstream(*key)
+                    del self._downstream[key]
+                emptied.append(key)
+        for key in emptied:
+            await self._refresh_source(key)
 
-    # ── subscriber side (called by ChatBus for a local browser watching a
-    #    remote bot) ──
+    # ── 本机浏览器订阅一个（可能是远端的）chat ──
 
     async def remote_subscribe(self, machine: str, bot: str, chat_id: str) -> asyncio.Queue:
         key = (machine, bot, chat_id)
-        q: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
-        self._queues.setdefault(key, set()).add(q)
-        await self._refresh_upstream(*key)
-        return q
+        queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
+        self._queues.setdefault(key, set()).add(queue)
+        await self._refresh_source(key)
+        return queue
 
-    async def remote_unsubscribe(self, machine: str, bot: str, chat_id: str, q: asyncio.Queue) -> None:
+    async def remote_unsubscribe(self, machine: str, bot: str, chat_id: str, queue: asyncio.Queue) -> None:
         key = (machine, bot, chat_id)
         queues = self._queues.get(key)
         if queues:
-            queues.discard(q)
+            queues.discard(queue)
             if not queues:
                 del self._queues[key]
-        await self._refresh_upstream(*key)
+        await self._refresh_source(key)
 
-    # ── owner side (called when a locally-owned bot publishes an event) ──
+    # ── 本机拥有的 bot 发出事件 ──
 
     async def on_local_publish(self, bot: str, chat_id: str, event: dict) -> None:
-        peers = self._local_subs.get((bot, chat_id))
-        if not peers:
-            return
-        frame = {
-            "type": "chat_event", "origin_machine": self._local,
-            "bot": bot, "chat_id": chat_id, "event": event,
-        }
-        for peer_key in list(peers):
-            await self._send_to(peer_key, frame)
+        await self._deliver((self._local, bot, chat_id), event)
 
-    # ── inbound frames ──
+    # ── 入站帧 ──
 
     async def handle_frame(self, peer_key: str, payload: dict) -> bool:
         kind = payload.get("type")
         if kind == "chat_subscribe":
-            await self._on_subscribe(peer_key, payload)
+            await self._on_subscribe(peer_key, payload, subscribed=True)
             return True
         if kind == "chat_unsubscribe":
-            await self._on_unsubscribe(peer_key, payload)
+            await self._on_subscribe(peer_key, payload, subscribed=False)
             return True
         if kind == "chat_event":
-            await self._on_event(peer_key, payload)
+            key = _key(payload, "origin_machine")
+            if key is not None:
+                await self._deliver(key, payload.get("event") or {})
             return True
         return False
 
-    async def _on_subscribe(self, peer_key: str, payload: dict) -> None:
-        target = str(payload.get("target_machine") or "")
-        bot = str(payload.get("bot") or "")
-        chat_id = str(payload.get("chat_id") or "")
-        if not target or not bot or not chat_id:
+    async def _on_subscribe(self, peer_key: str, payload: dict, *, subscribed: bool) -> None:
+        key = _key(payload, "target_machine")
+        if key is None:
             return
-        if target == self._local:
-            peers = self._local_subs.setdefault((bot, chat_id), set())  # I own it
-            was_empty = not peers
-            peers.add(peer_key)
-            if was_empty:
-                self._fire_demand(bot, chat_id, True)
+        if subscribed:
+            self._downstream.setdefault(key, set()).add(peer_key)
         else:
-            self._relay.setdefault((target, bot, chat_id), set()).add(peer_key)  # host relay
-            await self._refresh_upstream(target, bot, chat_id)
-
-    async def _on_unsubscribe(self, peer_key: str, payload: dict) -> None:
-        target = str(payload.get("target_machine") or "")
-        bot = str(payload.get("bot") or "")
-        chat_id = str(payload.get("chat_id") or "")
-        if target == self._local:
-            peers = self._local_subs.get((bot, chat_id))
+            peers = self._downstream.get(key)
             if peers:
                 peers.discard(peer_key)
                 if not peers:
-                    del self._local_subs[(bot, chat_id)]
-                    self._fire_demand(bot, chat_id, False)
-        else:
-            key = (target, bot, chat_id)
-            peers = self._relay.get(key)
-            if peers:
-                peers.discard(peer_key)
-                if not peers:
-                    del self._relay[key]
-                await self._refresh_upstream(*key)
+                    del self._downstream[key]
+        await self._refresh_source(key)
 
-    async def _on_event(self, peer_key: str, payload: dict) -> None:
-        origin = str(payload.get("origin_machine") or "")
-        bot = str(payload.get("bot") or "")
-        chat_id = str(payload.get("chat_id") or "")
-        event = payload.get("event") or {}
-        key = (origin, bot, chat_id)
-        # Deliver to my own browser queues.
-        for q in self._queues.get(key, ()):  # copy not needed: no mutation here
+    # ── 分发：把一个事件 fan 给某 key 的订阅者 ──
+
+    async def _deliver(self, key: Key, event: dict) -> None:
+        for queue in self._queues.get(key, ()):  # 本机浏览器
             try:
-                q.put_nowait(event)
+                queue.put_nowait(event)
             except asyncio.QueueFull:
                 logger.warning("chat: subscriber queue full (%s); dropping event", key)
-        # Relay to downstream peers (host forwarding back toward guests).
-        for peer in list(self._relay.get(key, ())):
-            await self._send_to(peer, {
-                "type": "chat_event", "origin_machine": origin,
-                "bot": bot, "chat_id": chat_id, "event": event,
-            })
+        if self._downstream.get(key):  # 中继给下游 peer
+            frame = _event(key, event)
+            for peer_key in list(self._downstream[key]):
+                await self._send_to(peer_key, frame)
 
-    # ── upstream refcount ──
-    # We hold at most one upstream subscription per (target, bot, chat_id),
-    # shared by all local browser queues + all relayed downstream peers. When
-    # the last of those goes away, we release it.
+    # ── source：喂某 key 的上游，每 key 一个，refcount ──
 
-    async def _refresh_upstream(self, target: str, bot: str, chat_id: str) -> None:
-        key = (target, bot, chat_id)
-        want = bool(self._queues.get(key)) or bool(self._relay.get(key))
-        if want and key not in self._upstream:
-            self._upstream.add(key)
-            await self._send_toward(target, {
-                "type": "chat_subscribe", "target_machine": target,
-                "bot": bot, "chat_id": chat_id,
-            })
-        elif not want and key in self._upstream:
-            self._upstream.discard(key)
-            await self._send_toward(target, {
-                "type": "chat_unsubscribe", "target_machine": target,
-                "bot": bot, "chat_id": chat_id,
-            })
+    async def _refresh_source(self, key: Key) -> None:
+        want = bool(self._queues.get(key)) or bool(self._downstream.get(key))
+        active = key in self._sources
+        if want and not active:
+            self._sources.add(key)
+            await self._toggle_source(key, active=True)
+        elif not want and active:
+            self._sources.discard(key)
+            await self._toggle_source(key, active=False)
 
-    # ── send helpers ──
+    async def _toggle_source(self, key: Key, *, active: bool) -> None:
+        machine, bot, chat_id = key
+        if machine == self._local:
+            self._fire_demand(bot, chat_id, active)  # 我拥有 → pump 本地 channel
+        else:
+            frame = _subscribe(machine, bot, chat_id) if active else _unsubscribe(machine, bot, chat_id)
+            await self._send_toward(machine, frame)  # 否则 → 往上游 (un)subscribe
 
     def _fire_demand(self, bot: str, chat_id: str, active: bool) -> None:
         callback = self.on_local_demand
@@ -235,8 +168,10 @@ class ChatSyncer:
             logger.warning("chat: on_local_demand(%s, %s, %s) failed: %r",
                            bot, chat_id, active, exception)
 
-    async def _send_toward(self, target: str, frame: dict) -> None:
-        peer_key = self._route(target)
+    # ── 发送 helper ──
+
+    async def _send_toward(self, machine: str, frame: dict) -> None:
+        peer_key = self._route(machine)
         if peer_key is not None:
             await self._send_to(peer_key, frame)
 
@@ -248,3 +183,27 @@ class ChatSyncer:
             await send(frame)
         except Exception as exception:
             logger.warning("chat: send to %s failed: %r", peer_key, exception)
+
+
+# ── 帧构造 / 解析 ──
+
+def _key(payload: dict, machine_field: str) -> Key | None:
+    machine = str(payload.get(machine_field) or "")
+    bot = str(payload.get("bot") or "")
+    chat_id = str(payload.get("chat_id") or "")
+    if not machine or not bot or not chat_id:
+        return None
+    return (machine, bot, chat_id)
+
+
+def _subscribe(machine: str, bot: str, chat_id: str) -> dict:
+    return {"type": "chat_subscribe", "target_machine": machine, "bot": bot, "chat_id": chat_id}
+
+
+def _unsubscribe(machine: str, bot: str, chat_id: str) -> dict:
+    return {"type": "chat_unsubscribe", "target_machine": machine, "bot": bot, "chat_id": chat_id}
+
+
+def _event(key: Key, event: dict) -> dict:
+    machine, bot, chat_id = key
+    return {"type": "chat_event", "origin_machine": machine, "bot": bot, "chat_id": chat_id, "event": event}

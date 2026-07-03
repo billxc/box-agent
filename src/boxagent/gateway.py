@@ -203,18 +203,17 @@ class Gateway:
             cluster_rpc=self._cluster_rpc,
         )
 
-        # ChatBus: location-transparent chat pub/sub. ChatSyncer carries the
-        # cross-machine case over the cluster WS as structured frames (no SSE
-        # re-framing); ChatBus fronts it so /api/stream reads one queue shape
-        # for local + remote alike. Wired into HostElection below (same as the
-        # event syncer) so peers attach as the registry/guest_client appear.
+        # ChatBus：location-transparent chat pub/sub。ChatSyncer 用结构化帧走
+        # cluster WS 承载跨机（不再 SSE re-framing）；ChatBus 把它包起来，让
+        # /api/stream 对 local + remote 读同一 queue 形状。下面挂进 HostElection
+        # （和 event syncer 一样），peer 随 registry/guest_client 出现而 attach。
         from boxagent.cluster.chat_sync import ChatSyncer
         from boxagent.cluster.chat_bus import ChatBus
         topology = self._topology
 
         def route_chat(target_machine):
-            # Which peer a subscribe travels toward. Guest → always the host;
-            # host → the target guest's session (peer_key == machine_id).
+            # 一个 subscribe 往哪个 peer 走。guest → 永远走 host；
+            # host → 目标 guest 的 session（peer_key == machine_id）。
             if topology.local_role() == "guest":
                 return "host"
             registry = topology.guest_registry
@@ -286,9 +285,8 @@ class Gateway:
             event_syncer = self._event_syncer
             chat_syncer = self._chat_syncer
 
-            # Event hooks first (they assign the registry callbacks); chat hooks
-            # second (they chain onto whatever is already set). Order matters —
-            # see chat_sync_wiring module docstring.
+            # event hook 先装（直接赋值 registry callback）；chat hook 后装
+            # （链式接上已有的）。顺序重要 —— 见 chat_sync_wiring 模块 docstring。
             def on_registry_ready(registry):
                 install_event_registry_hooks(event_syncer, registry)
                 install_chat_registry_hooks(chat_syncer, registry)
@@ -368,8 +366,8 @@ class Gateway:
 
         # AgentManager owns channels, web_channels, backends, pools, watchdogs.
         if self._bots is not None:
-            # Cancel owner-side chat pumps first — they hold WebChannel
-            # subscriptions the manager is about to tear down.
+            # 先取消 owner 侧 chat pump —— 它们持有 manager 即将拆掉的
+            # WebChannel 订阅。
             if self._chat_bus is not None:
                 await self._chat_bus.aclose()
             await self._bots.stop()

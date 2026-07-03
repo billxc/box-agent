@@ -419,3 +419,7 @@ yait -P box-agent close <ID>
 - 大需求拆成主 issue + 子 issue，用 `blocks` / `depends-on` 串起来
 - 标签建议：`workgroup` / `cluster` / `config` / `docs` / `refactor` 等按模块走
 - 调研类 issue 在标题前加 `调研：`
+
+### 代码注释
+- 代码注释写太长，对读代码的人是一种负担，所以要言简意赅
+- 注释用中文写

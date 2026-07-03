@@ -1,15 +1,11 @@
-"""Hooks bridging cluster registry / guest_client into ChatSyncer.
+"""把 cluster registry / guest_client 桥接进 ChatSyncer 的 hook。
 
-Mirrors ``events/sync_wiring.py`` but **chains** onto the existing hooks instead
-of overwriting them: the EventSyncer already owns
-``on_guest_attached`` / ``on_guest_detached`` / ``on_unknown_frame``, so these
-installers capture the current callbacks and fall through to them. This means
-chat hooks MUST be installed *after* the event hooks (the event wiring assigns,
-it does not chain). Gateway guarantees that order.
-
-``attach_peer`` / ``resubscribe`` / ``detach_peer`` bridge the sync
-attach/detach callbacks to ChatSyncer's async methods via ``create_task`` (the
-callbacks run inside the WS-serving coroutine, so a loop is always present).
+类似 ``events/sync_wiring.py``，但**链式**接上既有 hook：EventSyncer 已经占了
+``on_guest_attached`` / ``on_guest_detached`` / ``on_unknown_frame``，所以这些
+installer 会捕获当前 callback 并 fall through 过去 —— 因此 chat hook 必须在
+event hook **之后**安装（event 那套是直接赋值、不链式的）。gateway 保证这个顺序。
+同步的 attach/detach callback 经 ``create_task`` 桥到 ChatSyncer 的 async 方法
+（它们跑在 WS coroutine 里，一定有 running loop）。
 """
 from __future__ import annotations
 
@@ -19,7 +15,7 @@ from .chat_sync import ChatSyncer
 
 
 def install_registry_hooks(syncer: ChatSyncer, registry) -> None:
-    """Wire host-side GuestRegistry into the chat syncer (peer key = machine_id)."""
+    """host 侧 GuestRegistry 接入 chat syncer（peer key = machine_id）。"""
     previous_attached = registry.on_guest_attached
     previous_detached = registry.on_guest_detached
     previous_unknown = registry.on_unknown_frame
@@ -51,7 +47,7 @@ def install_registry_hooks(syncer: ChatSyncer, registry) -> None:
 
 
 def install_guest_client_hooks(syncer: ChatSyncer, client) -> None:
-    """Wire guest-side GuestClient into the chat syncer (peer key = 'host')."""
+    """guest 侧 GuestClient 接入 chat syncer（peer key = 'host'）。"""
     HOST_KEY = "host"
     previous_connect = client.on_connect
     previous_disconnect = client.on_disconnect
