@@ -4,15 +4,14 @@ Internal — do not import from business code; use `boxagent.log` instead.
 
 This object performs the SQLite write for a locally published event and returns
 the enriched `Event` (with `id` + `origin_seq` minted by `EventStore`). It is the
-privileged first-slot subscriber: `EventBus.publish` calls `write_local(...)`
-synchronously and FIRST, then fans the returned `Event` out to the remaining
-subscribers unchanged.
+privileged first-slot subscriber on the MessageBus: `bus.core._StoreBusSubscriber`
+(owned by `EventBus`) wraps `write_local` in a `deliver(Message)` adapter and is
+registered FIRST, so it runs first and synchronously; the enriched `Event` it
+returns is stashed into the message payload and the remaining bus subscribers
+receive that same object unchanged.
 
-Forward-looking: in a later phase this becomes the first synchronous subscriber
-on the MessageBus, at which point it grows a bus-`deliver` adapter around
-`write_local`. Today it is called directly by `EventBus.publish`; it is NOT wired
-to any bus yet. `EventStore` remains the sole SQLite writer — this class does not
-open a second write path.
+`EventStore` remains the sole SQLite writer — this class does not open a second
+write path.
 """
 from __future__ import annotations
 

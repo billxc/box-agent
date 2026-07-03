@@ -20,7 +20,7 @@ Phases are from `.harness/nodes/discuss/run_1/decision.md §4`:
 |-------|-----------|
 | P1 | Extract `PeerTransport` (both syncers delegate) |
 | P3 | `StoreSubscriber` behind `EventBus` (store path) |
-| P4 | `EventBus` → thin adapter over `MessageBus` |
+| P4 | `EventBus` → thin adapter over `MessageBus` (LANDED: `EventBus` owns a `MessageBus`; `StoreSubscriber` is the first bus subscriber and stashes the enriched `Event` into `payload["event"]`; `subscribe(callback)` is a compat shim over the bus; `publish` fans out synchronously via `bus.publish("events.<category>", ...)`) |
 | P5 | Chat rides the bus (`chat.*` ephemeral topics) |
 | P6 | Merge syncers → `EventReplicator` + `ChatReplicator`, one `bus_wiring.py` |
 | P8 | Drop `EventBus` shim; rewrite white-box tests |
