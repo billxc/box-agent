@@ -1,20 +1,15 @@
-"""Location-transparent chat subscription façade.
+"""location-transparent chat 订阅门面。
 
-Before ChatBus, the web server special-cased every handler: `if machine ==
-local: use the in-process WebChannel; else: proxy an SSE request over the
-cluster WS and re-frame the `data:` lines by hand`. ChatBus removes that fork.
-A caller asks to subscribe to ``(bot, chat_id)`` on some ``machine`` and gets
-back a plain ``asyncio.Queue`` of event dicts — identical shape whether the bot
-lives here or three hops away. Under the hood:
+调用方订阅某 ``machine`` 上的 ``(bot, chat_id)``，拿回一个普通 ``asyncio.Queue``
+（元素是 event dict）—— 本地还是远端形状一致，于是 web server 的 SSE handler
+不再按 machine 分叉：
 
-    local  machine → the bot's in-process WebChannel queue (unchanged)
-    remote machine → ChatSyncer.remote_subscribe (structured frames over the WS)
+    local  machine → 该 bot 的进程内 WebChannel queue（不变）
+    remote machine → ChatSyncer.remote_subscribe（结构化帧走 cluster WS）
 
-The owner side is bridged by a **pump**: when a remote peer starts watching one
-of our local bots, ChatSyncer fires ``on_local_demand(bot, chat_id, True)``,
-which subscribes to that bot's WebChannel and runs a single per-chat task
-forwarding each event through ``ChatSyncer.on_local_publish`` — in order, reusing
-the same in-process fan-out browsers use, with no create_task-per-event race.
+owner 侧：远端 peer 开始看我本机 bot 时，ChatSyncer fire ``on_local_demand``；
+我们跑一个 per-chat pump，把该 bot 的 WebChannel 事件经 ``on_local_publish`` 转发 ——
+顺序、复用同一份进程内 fan-out，不用 create_task-per-event（避免乱序）。
 """
 from __future__ import annotations
 
@@ -26,9 +21,8 @@ from .chat_sync import ChatSyncer
 
 logger = logging.getLogger(__name__)
 
-# bot_name -> the local WebChannel for that bot (or None if not hosted here).
-# WebChannel is duck-typed here (subscribe/unsubscribe/inject) to avoid importing
-# the transport layer into cluster/.
+# bot_name -> 本机 WebChannel（duck-typed subscribe/unsubscribe）或 None，
+# 这样 cluster/ 不必 import transport 层。
 ChannelFor = Callable[[str], "object | None"]
 
 
@@ -43,7 +37,7 @@ class ChatBus:
     def _is_local(self, machine: str | None) -> bool:
         return machine is None or machine == self._local
 
-    # ── subscription (browser ← bot stream) ──
+    # ── 订阅（browser ← bot stream）──
 
     async def subscribe(self, bot: str, chat_id: str, machine: str | None = None) -> asyncio.Queue | None:
         if self._is_local(machine):
@@ -59,7 +53,7 @@ class ChatBus:
             return
         await self._syncer.remote_unsubscribe(machine, bot, chat_id, queue)
 
-    # ── owner-side pump: feed a locally-owned bot's events to remote peers ──
+    # ── owner 侧 pump：把本机拥有的 bot 的事件喂给远端 peer ──
 
     def _on_local_demand(self, bot: str, chat_id: str, active: bool) -> None:
         key = (bot, chat_id)
@@ -91,17 +85,3 @@ class ChatBus:
         for task in list(self._pumps.values()):
             task.cancel()
         self._pumps.clear()
-
-    # ── send path (browser → bot) ──
-    # Local injection reuses the WebChannel echo+dispatch path. Cross-machine
-    # send still rides the existing POST proxy (dispatch_machine_request), so the
-    # bus only owns the local case here.
-
-    async def inject(self, bot: str, chat_id: str, text: str, machine: str | None = None) -> bool:
-        if not self._is_local(machine):
-            raise NotImplementedError("cross-machine inject rides the POST proxy, not ChatBus")
-        channel = self._channel_for(bot)
-        if channel is None:
-            return False
-        await channel.inject(chat_id, text)
-        return True

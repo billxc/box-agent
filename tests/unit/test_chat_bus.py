@@ -9,19 +9,16 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 from boxagent.cluster.chat_bus import ChatBus
 from boxagent.cluster.chat_sync import ChatSyncer
 
 
 class FakeChannel:
-    """Minimal WebChannel stand-in: subscribe/unsubscribe/inject + publish."""
+    """Minimal WebChannel stand-in: subscribe/unsubscribe + publish."""
 
     def __init__(self) -> None:
         self.subs: dict[str, list[asyncio.Queue]] = {}
         self.unsubscribed: list[tuple[str, asyncio.Queue]] = []
-        self.injected: list[tuple[str, str]] = []
 
     def subscribe(self, chat_id: str) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=1024)
@@ -37,9 +34,6 @@ class FakeChannel:
     def publish(self, chat_id: str, event: dict) -> None:
         for q in self.subs.get(chat_id, []):
             q.put_nowait(event)
-
-    async def inject(self, chat_id: str, text: str) -> None:
-        self.injected.append((chat_id, text))
 
 
 def _make_bus(local: str, route, channels: dict):
@@ -145,18 +139,3 @@ async def test_aclose_cancels_pumps():
     await asyncio.sleep(0.02)
     assert (("c", q)) in channel.unsubscribed
     assert not bus._pumps
-
-
-# ── send path ──
-
-async def test_inject_local_delegates_to_channel():
-    channel = FakeChannel()
-    bus, _syncer, _sent, _attach = _make_bus("host", lambda t: None, {"b": channel})
-    assert await bus.inject("b", "c", "hello", "host") is True
-    assert channel.injected == [("c", "hello")]
-
-
-async def test_inject_remote_raises():
-    bus, _syncer, _sent, _attach = _make_bus("host", lambda t: None, {})
-    with pytest.raises(NotImplementedError):
-        await bus.inject("b", "c", "hi", "other_machine")
