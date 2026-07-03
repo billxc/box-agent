@@ -17,11 +17,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Awaitable, Callable
+from typing import Callable
+
+from .peer_transport import PeerTransport, SendFrame
 
 logger = logging.getLogger(__name__)
 
-SendFrame = Callable[[dict], Awaitable[None]]
 Route = Callable[[str], "str | None"]  # owner machine -> 能到达它的 peer_key
 
 QUEUE_MAXSIZE = 1024
@@ -33,7 +34,7 @@ class ChatSyncer:
     def __init__(self, *, local_machine: str, route: Route) -> None:
         self._local = local_machine
         self._route = route
-        self._peers: dict[str, SendFrame] = {}
+        self._transport = PeerTransport(log_prefix="chat")
 
         # 一个 key 的事件发给谁：下游 peer（host 中继 / owner 给远端 watcher）
         # + 本机浏览器 queue。
@@ -47,10 +48,15 @@ class ChatSyncer:
         # 喂给 on_local_publish。可设 hook；None = no-op。
         self.on_local_demand: "Callable[[str, str, bool], None] | None" = None
 
+    # peer 注册表在 shared transport 里；暴露 live dict 让 test harness 读到同一对象。
+    @property
+    def _peers(self) -> dict[str, SendFrame]:
+        return self._transport._peers
+
     # ── peer 生命周期 ──
 
     def attach_peer(self, peer_key: str, send_frame: SendFrame) -> None:
-        self._peers[peer_key] = send_frame
+        self._transport.attach_peer(peer_key, send_frame)
 
     async def resubscribe(self, peer_key: str) -> None:
         """重连：把经此 peer 路由的 remote source 重发 chat_subscribe。"""
@@ -59,7 +65,7 @@ class ChatSyncer:
                 await self._send_to(peer_key, _subscribe(machine, bot, chat_id))
 
     async def detach_peer(self, peer_key: str) -> None:
-        self._peers.pop(peer_key, None)
+        self._transport.detach_peer(peer_key)
         # 把 peer 从它订的每个 key 摘掉；空了的 source 一并释放。
         emptied = []
         for key, peers in list(self._downstream.items()):
@@ -176,13 +182,7 @@ class ChatSyncer:
             await self._send_to(peer_key, frame)
 
     async def _send_to(self, peer_key: str, frame: dict) -> None:
-        send = self._peers.get(peer_key)
-        if send is None:
-            return
-        try:
-            await send(frame)
-        except Exception as exception:
-            logger.warning("chat: send to %s failed: %r", peer_key, exception)
+        await self._transport.send_to(peer_key, frame)
 
 
 # ── 帧构造 / 解析 ──
