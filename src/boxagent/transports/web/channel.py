@@ -7,9 +7,30 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
 from boxagent.agent_env import ChannelInfo
+from boxagent.bus.core import MessageBus, Subscription
+from boxagent.bus.message import Message
 from boxagent.transports.base import Attachment, Channel, IncomingMessage, StreamHandle
 
 logger = logging.getLogger(__name__)
+
+
+class _ChatQueueSubscriber:
+    """Bus subscriber forwarding one chat topic's events to a browser queue.
+
+    Delivers the raw event dict (``message.payload``): the SSE handler and the
+    ChatBus owner pump both read event dicts off this queue, unchanged from when
+    WebChannel owned the fan-out directly.
+    """
+
+    def __init__(self, queue: asyncio.Queue, chat_id: str) -> None:
+        self._queue = queue
+        self._chat_id = chat_id
+
+    def deliver(self, message: Message) -> None:
+        try:
+            self._queue.put_nowait(message.payload)
+        except asyncio.QueueFull:
+            logger.warning("web subscriber queue full (chat_id=%s); dropping event", self._chat_id)
 
 
 @dataclass
@@ -30,7 +51,16 @@ class WebChannel(Channel):
     bot_name: str
     on_message: Callable[[IncomingMessage], Awaitable[None]] | None = None
     tool_calls_display: str = "summary"
-    _subscribers: dict[str, list[asyncio.Queue]] = field(default_factory=dict)
+    machine_id: str = ""
+    # Local chat fan-out rides a MessageBus on "chat.<machine>.<bot>.<chat_id>"
+    # topics. Defaults to a private bus (tests / harness construct
+    # WebChannel(bot_name=...)); production injects the shared bus so events and
+    # chat share one instance.
+    message_bus: MessageBus = field(default_factory=MessageBus)
+    # Active subscriptions keyed by chat_id — kept as a dict so "is anyone
+    # watching this chat" checks and stop() work as before; each entry is
+    # (queue, bus_subscription). Fan-out goes through message_bus.
+    _subscribers: dict[str, list[tuple[asyncio.Queue, Subscription]]] = field(default_factory=dict)
     _stream_buffers: dict[str, str] = field(default_factory=dict)
     _next_msg_id: int = 0
 
@@ -38,36 +68,40 @@ class WebChannel(Channel):
         return
 
     async def stop(self) -> None:
-        for queues in self._subscribers.values():
-            for q in queues:
-                q.put_nowait({"type": "_close"})
+        for entries in self._subscribers.values():
+            for queue, subscription in entries:
+                queue.put_nowait({"type": "_close"})
+                subscription.close()
         self._subscribers.clear()
 
     # --- subscription management ---
 
+    def _topic(self, chat_id: str) -> str:
+        return f"chat.{self.machine_id}.{self.bot_name}.{chat_id}"
+
     def subscribe(self, chat_id: str) -> asyncio.Queue:
-        q: asyncio.Queue = asyncio.Queue(maxsize=1024)
-        self._subscribers.setdefault(chat_id, []).append(q)
-        return q
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1024)
+        subscription = self.message_bus.subscribe(
+            self._topic(chat_id), _ChatQueueSubscriber(queue, chat_id),
+        )
+        self._subscribers.setdefault(chat_id, []).append((queue, subscription))
+        return queue
 
     def unsubscribe(self, chat_id: str, q: asyncio.Queue) -> None:
-        queues = self._subscribers.get(chat_id)
-        if not queues:
+        entries = self._subscribers.get(chat_id)
+        if not entries:
             return
-        try:
-            queues.remove(q)
-        except ValueError:
-            pass
-        if not queues:
+        for index, (queue, subscription) in enumerate(entries):
+            if queue is q:
+                subscription.close()
+                del entries[index]
+                break
+        if not entries:
             self._subscribers.pop(chat_id, None)
 
     def _publish(self, chat_id: str, event: dict) -> None:
         event.setdefault("ts", time.time())
-        for q in self._subscribers.get(chat_id, ()):
-            try:
-                q.put_nowait(event)
-            except asyncio.QueueFull:
-                logger.warning("web subscriber queue full (chat_id=%s); dropping event", chat_id)
+        self.message_bus.publish(self._topic(chat_id), event, event["ts"])
 
     # --- Channel protocol ---
 
