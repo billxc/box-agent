@@ -162,7 +162,7 @@ class Gateway:
         # instance carries both (the owner's "one bus"). Injected into EventBus
         # here and into every WebChannel via AgentManager.
         from boxagent.bus.core import MessageBus
-        self._message_bus = MessageBus()
+        self._message_bus = MessageBus(machine_id=machine_id)
         self._event_bus = EventBus(store=event_store, machine_id=machine_id, bus=self._message_bus)
         log.bind(self._event_bus)
 

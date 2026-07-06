@@ -20,9 +20,10 @@ This module is a neutral leaf: it imports nothing project-internal.
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import TYPE_CHECKING, Callable
 
-from boxagent.bus.message import Message
+from boxagent.bus.message import Packet
 
 if TYPE_CHECKING:
     from boxagent.bus.subscriber import Subscriber
@@ -67,7 +68,20 @@ class Subscription:
 class MessageBus:
     """Synchronous, ordered, content-agnostic publish/subscribe."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        machine_id: str = "",
+        id_factory: "Callable[[], str] | None" = None,
+    ) -> None:
+        # machine_id stamps every packet's `sender`; id_factory mints `message_id`
+        # at the send() seam (injectable so tests get deterministic ids — never
+        # uuid4() deep in the fan-out, which would break the clock-free/testable
+        # contract, same reasoning as caller-supplied ts).
+        self._machine_id = machine_id
+        self._id_factory: "Callable[[], str]" = (
+            id_factory if id_factory is not None else (lambda: uuid.uuid4().hex)
+        )
         # Indexed by topic so a publish touches only the relevant subscriptions,
         # not every subscription in the process (the whole node shares one bus,
         # so a chat stream_delta must not scan unrelated event/chat subs):
@@ -114,15 +128,41 @@ class MessageBus:
             self._notify_watchers(topic_pattern, added=True)
         return subscription
 
+    def send(self, *, receiver: str, topic: str, payload: dict, ts: float) -> str:
+        """Location-unified send. Stamp `message_id` (UUID) + `sender` (this
+        machine), then deliver to local subscribers when the packet is addressed
+        here — `receiver == ""` (broadcast) or `receiver ==` this machine. Return
+        the stamped `message_id`.
+
+        A LocalBus reaches only this machine: a packet addressed to a *different*
+        machine is stamped and its id returned, but has nowhere to go here — the
+        ClusterBus is what ships it over a link.
+        """
+        packet = Packet(
+            message_id=self._id_factory(),
+            sender=self._machine_id,
+            receiver=receiver,
+            topic=topic,
+            payload=payload,
+            ts=ts,
+        )
+        if receiver == "" or receiver == self._machine_id:
+            self._deliver_local(packet)
+        return packet.message_id
+
     def publish(self, topic: str, payload: dict, ts: float) -> None:
-        """Fan a message out to every matching subscriber, in order.
+        """Broadcast shim over `send()` — retained until callers migrate to send."""
+        self.send(receiver="", topic=topic, payload=payload, ts=ts)
+
+    def _deliver_local(self, packet: Packet) -> None:
+        """Fan a packet out to every matching local subscriber, in order.
 
         SYNCHRONOUS and ordered: the store-subscriber-first / first-subscribed
         ordering is preserved by sorting the matched subscriptions by `order`.
         One subscriber's `deliver` raising is caught, logged, and MUST NOT stop
         the others (subscriber-exception isolation).
         """
-        message = Message(topic=topic, payload=payload, ts=ts)
+        topic = packet.topic
         # Gather matches: O(1) exact bucket + a scan of the (small) prefix list.
         matched = list(self._exact.get(topic, ()))
         for subscription in self._prefix:
@@ -134,7 +174,7 @@ class MessageBus:
             matched.sort(key=lambda subscription: subscription.order)
         for subscription in matched:
             try:
-                subscription.subscriber.deliver(message)
+                subscription.subscriber.deliver(packet)
             except Exception:
                 logger.warning(
                     "subscriber for pattern %s raised on topic %s; continuing",

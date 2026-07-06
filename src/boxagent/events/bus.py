@@ -28,7 +28,7 @@ import time
 from typing import Callable
 
 from boxagent.bus.core import MessageBus, Subscription
-from boxagent.bus.message import Message
+from boxagent.bus.message import Packet
 
 from .models import Event
 from .storage import EventStore
@@ -60,8 +60,8 @@ class _StoreBusSubscriber:
     def __init__(self, store_subscriber: StoreSubscriber) -> None:
         self._store_subscriber = store_subscriber
 
-    def deliver(self, message: Message) -> None:
-        payload = message.payload
+    def deliver(self, packet: Packet) -> None:
+        payload = packet.payload
         event = self._store_subscriber.write_local(
             payload["level"],
             payload["category"],
@@ -69,7 +69,7 @@ class _StoreBusSubscriber:
             payload.get("meta"),
         )
         # Stash the enriched Event so the remaining subscribers receive the
-        # exact same object. Message is frozen but its payload dict is mutable.
+        # exact same object. Packet is frozen but its payload dict is mutable.
         payload[ENRICHED_EVENT_KEY] = event
 
 
@@ -84,8 +84,8 @@ class _CallbackBusSubscriber:
     def __init__(self, callback: EventCallback) -> None:
         self.callback = callback
 
-    def deliver(self, message: Message) -> None:
-        event = message.payload.get(ENRICHED_EVENT_KEY)
+    def deliver(self, packet: Packet) -> None:
+        event = packet.payload.get(ENRICHED_EVENT_KEY)
         if event is None:
             # Store write failed (or was skipped); nothing enriched to hand on.
             return

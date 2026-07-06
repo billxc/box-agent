@@ -1,60 +1,67 @@
-"""Unit tests for the neutral bus/ core (Phase 2).
+"""Unit tests for the neutral bus/ core.
 
-Covers the whole package: Message envelope, MessageBus topic matching + ordered
-fan-out + subscriber-exception isolation + Subscription.close, and both
-LocalSubscriber (drop-on-full) and RemoteSubscriber (single-pump ORDER
-preservation, drop-on-full, aclose cancels the pump).
+Covers: Packet envelope, MessageBus topic matching + ordered fan-out +
+subscriber-exception isolation + Subscription.close, and the send() seam
+(message_id + sender stamping, receiver-based local delivery).
 
 asyncio_mode=auto — async tests need no decorator.
 """
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 
 import pytest
 
 from boxagent.bus import (
-    Message,
+    Packet,
     MessageBus,
     Subscriber,
 )
 
 
 class RecordingSubscriber:
-    """Minimal sync subscriber that records every Message it receives."""
+    """Minimal sync subscriber that records every Packet it receives."""
 
     def __init__(self) -> None:
-        self.received: list[Message] = []
+        self.received: list[Packet] = []
 
-    def deliver(self, message: Message) -> None:
-        self.received.append(message)
+    def deliver(self, packet: Packet) -> None:
+        self.received.append(packet)
 
 
 class RaisingSubscriber:
     """A subscriber whose deliver always raises (exception-isolation test)."""
 
-    def deliver(self, message: Message) -> None:
+    def deliver(self, packet: Packet) -> None:
         raise RuntimeError("boom")
 
 
 # --------------------------------------------------------------------------- #
-# Message                                                                      #
+# Packet                                                                       #
 # --------------------------------------------------------------------------- #
 
 
-def test_message_is_frozen():
-    message = Message(topic="events.x", payload={"a": 1}, ts=1.0)
+def test_packet_is_frozen():
+    packet = Packet(
+        message_id="id1", sender="m1", receiver="", topic="events.x",
+        payload={"a": 1}, ts=1.0,
+    )
     with pytest.raises(dataclasses.FrozenInstanceError):
-        message.topic = "other"  # type: ignore[misc]
+        packet.topic = "other"  # type: ignore[misc]
 
 
-def test_message_roundtrip_fields():
+def test_packet_roundtrip_fields():
     payload = {"level": "info", "message": "hi"}
-    message = Message(topic="chat.m.b.c", payload=payload, ts=12.5)
-    assert message.topic == "chat.m.b.c"
-    assert message.payload is payload
-    assert message.ts == 12.5
+    packet = Packet(
+        message_id="id2", sender="m1", receiver="m2", topic="chat.m.b.c",
+        payload=payload, ts=12.5,
+    )
+    assert packet.message_id == "id2"
+    assert packet.sender == "m1"
+    assert packet.receiver == "m2"
+    assert packet.topic == "chat.m.b.c"
+    assert packet.payload is payload
+    assert packet.ts == 12.5
 
 
 def test_recording_subscriber_satisfies_protocol():
@@ -63,7 +70,72 @@ def test_recording_subscriber_satisfies_protocol():
 
 
 # --------------------------------------------------------------------------- #
-# MessageBus — topic matching                                                  #
+# send() — message_id + sender stamping, receiver-based local delivery         #
+# --------------------------------------------------------------------------- #
+
+
+def _counter_factory():
+    """Deterministic id factory for tests — 'id0', 'id1', … ."""
+    state = {"n": 0}
+
+    def factory() -> str:
+        value = f"id{state['n']}"
+        state["n"] += 1
+        return value
+
+    return factory
+
+
+def test_send_stamps_message_id_and_sender():
+    bus = MessageBus(machine_id="m1", id_factory=_counter_factory())
+    subscriber = RecordingSubscriber()
+    bus.subscribe("events.x", subscriber)
+
+    returned = bus.send(receiver="", topic="events.x", payload={"n": 1}, ts=1.0)
+
+    assert returned == "id0"
+    assert len(subscriber.received) == 1
+    packet = subscriber.received[0]
+    assert packet.message_id == "id0"
+    assert packet.sender == "m1"
+    assert packet.receiver == ""
+
+
+def test_send_broadcast_delivers_locally():
+    bus = MessageBus(machine_id="m1")
+    subscriber = RecordingSubscriber()
+    bus.subscribe("events.x", subscriber)
+
+    bus.send(receiver="", topic="events.x", payload={"n": 1}, ts=1.0)
+
+    assert len(subscriber.received) == 1
+
+
+def test_send_to_self_delivers_locally():
+    bus = MessageBus(machine_id="m1")
+    subscriber = RecordingSubscriber()
+    bus.subscribe("events.x", subscriber)
+
+    bus.send(receiver="m1", topic="events.x", payload={"n": 1}, ts=1.0)
+
+    assert len(subscriber.received) == 1
+
+
+def test_send_to_other_machine_not_delivered_locally():
+    # A LocalBus reaches only this machine: a packet addressed to another
+    # machine is stamped (and its id returned) but has nowhere to go here.
+    bus = MessageBus(machine_id="m1", id_factory=_counter_factory())
+    subscriber = RecordingSubscriber()
+    bus.subscribe("events.x", subscriber)
+
+    returned = bus.send(receiver="m2", topic="events.x", payload={"n": 1}, ts=1.0)
+
+    assert returned == "id0"          # still stamped + returned
+    assert subscriber.received == []  # but not delivered locally
+
+
+# --------------------------------------------------------------------------- #
+# MessageBus — topic matching (via the publish() broadcast shim)               #
 # --------------------------------------------------------------------------- #
 
 
@@ -97,7 +169,7 @@ def test_prefix_topic_delivery():
     bus.publish("events.scheduler.run", {"n": 1}, ts=1.0)
     bus.publish("events.cluster.host.rpc_fail", {"n": 2}, ts=2.0)
 
-    topics = [message.topic for message in subscriber.received]
+    topics = [packet.topic for packet in subscriber.received]
     assert topics == ["events.scheduler.run", "events.cluster.host.rpc_fail"]
 
 
@@ -111,7 +183,7 @@ def test_prefix_subtree_matches_only_its_subtree():
     # Sibling subtree: must NOT match.
     bus.publish("events.cluster.x", {"n": 2}, ts=2.0)
 
-    topics = [message.topic for message in subscriber.received]
+    topics = [packet.topic for packet in subscriber.received]
     assert topics == ["events.scheduler.run"]
 
 
@@ -149,7 +221,7 @@ def test_ordered_fanout_first_subscribed_first_delivered():
         def __init__(self, name: str) -> None:
             self.name = name
 
-        def deliver(self, message: Message) -> None:
+        def deliver(self, packet: Packet) -> None:
             order.append(self.name)
 
     bus.subscribe("events.", OrderedSubscriber("first"))
@@ -230,7 +302,7 @@ def test_close_during_delivery_does_not_disturb_others():
             self.subscription = None
             self.count = 0
 
-        def deliver(self, message: Message) -> None:
+        def deliver(self, packet: Packet) -> None:
             self.count += 1
             self.subscription.close()
 

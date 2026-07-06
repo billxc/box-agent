@@ -29,7 +29,7 @@ import logging
 from typing import Callable
 
 from boxagent.bus.core import MessageBus
-from boxagent.bus.message import Message
+from boxagent.bus.message import Packet
 
 from .peer_transport import PeerTransport, SendFrame
 
@@ -50,8 +50,8 @@ class _OutboundBridge:
     def __init__(self, syncer: "ChatSyncer") -> None:
         self._syncer = syncer
 
-    def deliver(self, message: Message) -> None:
-        self._syncer._forward_downstream(message.topic, message.payload)
+    def deliver(self, packet: Packet) -> None:
+        self._syncer._forward_downstream(packet.topic, packet.payload)
 
 
 class ChatSyncer:
