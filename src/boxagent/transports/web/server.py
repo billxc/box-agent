@@ -468,7 +468,7 @@ class WebHttpServer:
             sats: dict[str, object] = {}
             for machine_id, session in list(self.topology.guest_registry.sessions.items()):
                 try:
-                    result = await session.call("GET", "/api/version", timeout=5.0)
+                    result = await self.cluster_rpc.request(machine_id, "GET", "/api/version", timeout=5.0)
                     sats[machine_id] = result.get("body") or {"error": "no body"}
                 except Exception as e:
                     sats[machine_id] = {"error": str(e)}
@@ -534,7 +534,7 @@ class WebHttpServer:
             if target_filter is not None and machine_id not in target_filter:
                 continue
             try:
-                rpc = await session.call("POST", "/api/admin/restart", timeout=5.0)
+                rpc = await self.cluster_rpc.request(machine_id, "POST", "/api/admin/restart", timeout=5.0)
                 results[machine_id] = rpc.get("body") or {"status": rpc.get("status")}
             except Exception as e:
                 results[machine_id] = {"error": str(e)}

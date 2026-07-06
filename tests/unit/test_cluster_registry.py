@@ -55,29 +55,6 @@ class TestGuestRegistry:
         assert {(m, b.name) for (m, b) in rows} == {("a", "x"), ("a", "y"), ("b", "z")}
 
 
-class TestRpcRoundtrip:
-    async def test_call_resolves_on_rpc_resp(self, session):
-        # Fire the RPC, inject the response via _resolve, await the result
-        async def respond_later():
-            await asyncio.sleep(0.01)
-            # find the rpc id from the sent frame
-            sent = session.ws.sent[-1]
-            session._resolve(sent["id"], 200, {"ok": True, "answer": 42})
-
-        asyncio.create_task(respond_later())
-        result = await session.call("GET", "/api/bots", timeout=1.0)
-        assert result == {"status": 200, "body": {"ok": True, "answer": 42}}
-        # Verify the RPC frame on the wire
-        sent = session.ws.sent[0]
-        assert sent["type"] == "rpc"
-        assert sent["method"] == "GET"
-        assert sent["path"] == "/api/bots"
-
-    async def test_call_timeout(self, session):
-        with pytest.raises(asyncio.TimeoutError):
-            await session.call("GET", "/api/bots", timeout=0.05)
-
-
 class TestHelloHandshake:
     async def test_rejects_bad_token(self):
         reg = GuestRegistry(expected_token="secret")

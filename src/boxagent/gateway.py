@@ -31,7 +31,7 @@ from aiohttp import web
 
 from boxagent.agent.agent_manager import AgentManager
 from boxagent.cluster.http_routes import ClusterHttpRoutes
-from boxagent.cluster.rpc import ClusterRpc
+from boxagent.cluster.request_reply import RequestReply
 from boxagent.cluster.host_election import HostElection
 from boxagent.cluster.topology_service import TopologyService
 from boxagent.scheduler.http_routes import SchedulerHttpRoutes
@@ -126,7 +126,7 @@ class Gateway:
     _start_time: float = 0.0
     _bots: AgentManager | None = field(default=None, repr=False)
     _topology: TopologyService | None = field(default=None, repr=False)
-    _cluster_rpc: ClusterRpc | None = field(default=None, repr=False)
+    _cluster_rpc: RequestReply | None = field(default=None, repr=False)
     _cluster_routes: ClusterHttpRoutes | None = field(default=None, repr=False)
     _scheduler_routes: SchedulerHttpRoutes | None = field(default=None, repr=False)
     _internal_api: InternalApiServer | None = field(default=None, repr=False)
@@ -216,7 +216,12 @@ class Gateway:
             config=self.config,
             web_channels=self._bots.web_channels,
         )
-        self._cluster_rpc = ClusterRpc(topology=self._topology)
+        self._cluster_rpc = RequestReply(
+            bus=self._message_bus,
+            topology=self._topology,
+            local_web_port=self.config.web_port or 9292,
+            local_web_token=self.config.web_token or "",
+        )
         self._cluster_routes = ClusterHttpRoutes(
             cluster_rpc=self._cluster_rpc,
         )
@@ -308,9 +313,10 @@ class Gateway:
         return None
 
     def _on_machine_unreachable(self, machine: str) -> None:
-        # Phase 4 wires this to the request/reply helper so pending requests to
-        # `machine` fail fast instead of hanging. No-op until then.
-        pass
+        # The bus reports a point-to-point target is unreachable (no link / down /
+        # version-incompatible) → fail pending request/reply to it fast.
+        if self._cluster_rpc is not None:
+            self._cluster_rpc.fail_unreachable(machine)
 
     def _start_scheduler(self) -> None:
         """Create and start the Scheduler after all active bots are online."""

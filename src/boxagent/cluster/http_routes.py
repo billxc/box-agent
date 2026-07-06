@@ -11,14 +11,14 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 if TYPE_CHECKING:
-    from boxagent.cluster.rpc import ClusterRpc
+    from boxagent.cluster.request_reply import RequestReply
 
 
 class ClusterHttpRoutes:
     def __init__(
         self,
         *,
-        cluster_rpc: "ClusterRpc",
+        cluster_rpc: "RequestReply",
     ) -> None:
         self.cluster_rpc = cluster_rpc
 

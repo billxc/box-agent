@@ -76,7 +76,7 @@ def test_topology_push_failure_emits_topology_push_fail(sink):
 def test_registry_invalid_json_emits_protocol_error(sink):
     from boxagent.cluster.registry import GuestRegistry
 
-    registry = GuestRegistry(expected_token="", local_web_port=9292, local_web_token="")
+    registry = GuestRegistry(expected_token="")
 
     # Build a fake aiohttp-style ws that yields one bad frame, then closes.
     bad_msg = SimpleNamespace(type=__import__("aiohttp").web.WSMsgType.TEXT, data="not-json{")
