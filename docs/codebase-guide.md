@@ -27,9 +27,9 @@ src/boxagent/
 │   │                         cluster.guest.* / cluster.protocol.* / cluster.topology.*）
 │   └── null.py              NullLogger（未 bind 时的空实现）
 ├── bus/                     content-agnostic 消息总线（中立 leaf：不 import 任何项目内模块；events/ 与 cluster/ 都依赖它、彼此不依赖）
-│   ├── message.py           Message envelope {topic, payload, ts}（core 从不读 payload）
-│   ├── core.py              MessageBus：同步保序 publish fan-out（按 topic 索引：_exact 精确 topic O(1) + _prefix 前缀扫描；order 保全局注册序）+ subscribe→Subscription.close()
-│   └── subscriber.py        Subscriber protocol（sync deliver(message)）
+│   ├── message.py           Packet envelope {message_id, sender, receiver, topic, payload, ts}（core 从不读 payload；message_id UUID 发送端盖，receiver "" = 广播）
+│   ├── core.py              MessageBus(=LocalBus)：同步保序 fan-out（_exact O(1) + _prefix 扫描）+ send(*,receiver,topic,payload,ts)→message_id（缝盖 message_id/sender，按 receiver 决定本机投递）+ subscribe→Subscription.close()。ClusterBus 继承它加跨机转发
+│   └── subscriber.py        Subscriber protocol（sync deliver(packet)）
 ├── events/                  事件日志：EventBus 作为 log facade sink 路由经 MessageBus（业务代码禁止 import）
 │   ├── models.py            Event dataclass + Level
 │   ├── storage.py           SQLite-backed EventStore（唯一 SQLite writer）
@@ -92,16 +92,14 @@ src/boxagent/
 │       ├── claude_sdk.py    registry → SdkMcpServer（agent-sdk-claude）
 │       └── copilot_sdk.py   registry → 原生 Tool 对象（agent-sdk-copilot）
 ├── cluster/                 多机互联（host ↔ guest WS RPC）
-│   ├── registry.py          host: GuestRegistry + GuestSession（含 wire protocol 文档）
-│   ├── guest_client.py      guest: GuestClient（拨向 host）
+│   ├── registry.py          host: GuestRegistry + GuestSession（guest WS 接入；packet 帧路由到 ClusterBus）
+│   ├── guest_client.py      guest: GuestClient（拨向 host；packet 帧路由到 ClusterBus）
 │   ├── host_election.py     主备投票 + failover
 │   ├── topology_service.py  本机标识 / machine 描述符 / machine snapshot
-│   ├── rpc.py               ClusterRpc（host↔guest HTTP 请求转发；guest 经 host 两跳到其他 guest）
-│   ├── rpc_over_bus.py      RpcChannel（role-agnostic call + per-link _pending）+ InboundRequestExecutor（唯一 loopback 回环）——塌掉 host/guest RPC 镜像
-│   ├── peer_transport.py    PeerTransport：syncer 共享的 peer 注册表 + send-and-swallow（发帧时盖 wire-version v）
-│   ├── chat_sync.py         ChatSyncer：MessageBus 上的跨机 chat bridge —— 订 chat. 前缀转发给下游 peer / watch 订阅传播 demand / 入站 chat_event 帧 bus.publish 重注入；出站走单条有序 drain（sync bus→async WS，坑#1）
-│   ├── chat_bus.py          ChatBus：location-transparent 订阅门面 —— local/remote 同一句 bus.subscribe(chat.<owner>.<bot>.<chat_id>)，无分叉无 pump
-│   ├── bus_wiring.py        一个 wiring 把 EventSyncer + ChatSyncer 都接入 registry/guest_client hook；on_unknown_frame 按 v 版本门 + 帧类型 dispatch（取代旧的两条 install-order 链）
+│   ├── cluster_bus.py       ClusterBus = LocalBus + 跨机转发。一个 _forward（本机投递/广播扇链路/点对点路由）+ 版本门(v3 硬切 drop) + on_unreachable 信号 + sync→async 发送队列。chat 广播 + rpc 请求都骑它
+│   ├── request_reply.py     RequestReply：request/reply 架在 bus 上的薄壳（send 到 request.<机> + 订 reply topic + correlation + timeout + 接 on_unreachable fast-fail；responder 127.0.0.1 loopback 跑真 handler）。旧 ClusterRpc 的 drop-in
+│   ├── peer_transport.py    PeerTransport：EventSyncer 的 peer 注册表 + send-and-swallow（events 帧盖 wire-version v2）
+│   ├── bus_wiring.py        把 EventSyncer 接入 registry/guest_client hook（events-only；chat/rpc 已走 ClusterBus）
 │   ├── http_routes.py       cluster 路由挂载（/api/guest/ws）
 │   ├── tunnel.py            host 端 devtunnel 生命周期（spawn / 重启）
 │   └── devtunnel.py         devtunnel CLI 包装（resolve url、auth）
@@ -116,7 +114,7 @@ src/boxagent/
 ## 想读懂的话，按顺序读
 
 **核心 dispatch 链路**：
-1. `gateway.py` —— Gateway 装配 manager 们（AgentManager / TopologyService / ClusterRpc / ClusterHttpRoutes / WebHttpServer / Scheduler / InternalApiServer / McpHttpServer / HostElection；建一根共享 MessageBus 注入 EventBus + 每个 WebChannel，log.bind(EventBus)）；看 `start()` 知道启动顺序
+1. `gateway.py` —— Gateway 装配 manager 们（AgentManager / TopologyService / RequestReply / ClusterHttpRoutes / WebHttpServer / Scheduler / InternalApiServer / McpHttpServer / HostElection；建一根共享 MessageBus 注入 EventBus + 每个 WebChannel，log.bind(EventBus)）；看 `start()` 知道启动顺序
 2. `transports/base.py` —— Channel Protocol、IncomingMessage 数据类（这是核心契约）
 3. `agent_env.py` —— 每条消息生成的 AgentEnv 快照
 4. `router/core.py` —— `handle_message` → `_dispatch_one`，主流程
@@ -136,7 +134,7 @@ src/boxagent/
 Gateway ──┬─ AgentManager ──── per-bot Router + Backend + Pool
           │
           ├─ TopologyService  ─┐
-          ├─ ClusterRpc       ─┤ cluster 状态 + host↔guest RPC
+          ├─ RequestReply       ─┤ cluster 状态 + host↔guest RPC
           ├─ ClusterHttpRoutes ┤
           ├─ HostElection     ─┘
           │

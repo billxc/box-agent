@@ -187,11 +187,30 @@ def _forward(packet, from_link=None):
 - `message_id` 生成缝：UUID 由发送端在 `send()` seam 盖，工厂可注入（测试塞确定性 id），
   不埋进 core `uuid4()`（会破坏 core 确定性/可测）。
 
-## Open（最后两项）
+## 落地状态（已实现）
 
-- **掉线 fast-fail**：`request()` 在等某机的回复时，若「去那机的链路断了 / 不可达」，要快失败而非
-  干等超时。挂在链路生命周期上（见下节设计）。
-- **版本门**：单一 `version_ok`，落在 ClusterBus `on_inbound`；硬切 drop（缺失/异版本一律 drop）
-  + 发端不往版本不符的 peer 发（也走 fast-fail）。
-- **127.0.0.1 loopback 去留**：packet 显式路由已取代两跳 hack → 倾向整删；只保「responder 进程内
-  直调真实 handler + auth 在 ingress 一次」。
+分支 `user/xiaocw/unify-message-bus`，big-bang（代码可测小步，最后 fleet 一起重启）。
+
+| 件 | 落地 |
+|---|---|
+| Packet（6 字段，message_id UUID 发送端盖） | ✅ `bus/message.py` |
+| LocalBus.send + deliver(Packet) | ✅ `bus/core.py`（MessageBus） |
+| ClusterBus（`_forward` 3 规则 + 版本门 + on_unreachable + 发送队列） | ✅ `cluster/cluster_bus.py`，WIRE_VERSION=3 |
+| WS 读循环路由 packet 帧 + attach/detach 链路 | ✅ `guest_client.py` / `registry.py` |
+| **chat → ClusterBus 广播** | ✅ WebChannel.publish→send(receiver="")；SSE 直接 `bus.subscribe`。删 `chat_sync.py`/`chat_bus.py` |
+| **rpc → request/reply 薄壳** | ✅ `cluster/request_reply.py`（ClusterRpc drop-in）。删 `rpc.py`/`rpc_over_bus.py` |
+| 127.0.0.1 loopback | ✅ **保留**在 request_reply responder（跑真 handler+auth）；两跳交给 bus receiver 路由，删掉旧 reissue-for-two-hop hack |
+| 掉线 fast-fail | ✅ ClusterBus.on_unreachable → RequestReply.fail_unreachable |
+| **events** | ⏸ **保留 EventSyncer**（可靠复制需 dedup by (origin_machine,origin_seq) + resync-on-reconnect，非 naive broadcast 能给；这是 pub/sub 之外 legitimately 不同的可靠性关切，不是冗余）。仍走 `events/sync.py` + `bus_wiring.py`(events-only) + `peer_transport.py`(WIRE_VERSION=2 帧) |
+
+净删（源码）：`rpc.py`(97) + `rpc_over_bus.py`(221) + `chat_sync.py`(262) + `chat_bus.py`(62)
+= 642 行整删，加 registry/guest_client 的 rpc 瘦身；新增 `cluster_bus.py` + `request_reply.py`。
+测试：删 rpc harness + R1–R6 + chat 不变量 + test_chat_*，加 test_cluster_bus/test_request_reply。
+
+## Open（未排期）
+
+- **events 上 ClusterBus**：若将来想让 events 也走一根 bus，需在广播 packet 里带
+  `(origin_machine, origin_seq)` + 收端 `insert_remote` 去重，并决定是否放弃 resync-on-reconnect
+  （变 best-effort）。当前判断：EventSyncer 的可靠复制值这个复杂度，不迁。
+- **peer_transport / bus_wiring 消亡**：events 迁走后这俩（events 专用）才能删，届时 WIRE_VERSION
+  只剩 ClusterBus 一份。

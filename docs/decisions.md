@@ -244,3 +244,26 @@ WC 化后每个组件都要肉眼手验，迟早漏。加自动测试，但**不
 **为什么物理删而不是继续留着**：route-B 隔离做完后，workgroup 模块虽可插拔但仍**加载运行**（半死状态：admin channel 创建但 UI 不列、heartbeat/peer 仍跑）。owner 决定一步到位删掉，避免长期养一个无 UI、无文档、无人用的子系统。隔离工作（PRs #15/#17）的价值正是让这次删除变成"删目录 + 摘调用点"而非大手术。
 
 **测试**：workgroup 专属测试（`tests/unit/workgroup/`、`test_cluster_peer*`、`test_peer_conditional_wiring`、`test_prompt_tool_names`）随模块一并删除；共享测试里的 workgroup case 摘掉。基线 1066 → **886 passed**（降幅即被删的 workgroup/peer 测试）。`uv run boxagent --help` + 全量 import OK。
+
+## 2026-07-06 — 跨机传输统一到一根 bus：chat + rpc 溶进 ClusterBus（分支 unify-message-bus）
+
+**背景**：跨机 WS 上原有 **3 套并行机制**（chat sync / event sync / rpc）+ 9 种帧 + 3 份重复版本门。owner 要「一根 location-transparent 的抽象 bus：调用者只管把数据发给目标，local/remote 由 bus 内部决定」。设计详见 `docs/bus-protocol.md`。
+
+**核心决策**：
+- **一个原语 = pub/sub bus。request/reply 是架在其上的一层薄壳**，不是平级传输——「共用管道，不共用模式」。否掉了「把 RPC 塞进 MessageBus.publish topic」（会在有序 fan-out 上重建 correlation/超时/并发，退化 bus 不变量）。
+- **哑管**：bus 只按 `topic` 投递 `(sender, receiver, payload, ts, message_id)`，payload 不拆。correlation_id/reply_to 等语义在 payload（业务层）。
+- **Packet**：`message_id`(UUID，发送端 send 缝盖) + `sender` + `receiver`("" = 广播 / 有值 = 点对点) + `topic` + `payload` + `ts`。cluster 实现外层包 `{v, packet}`，`v` 不进 packet。
+- **location-unified ≠ transparent**：调用方给目标地址、不写 `if local/else remote`，但失败仍可见（request 返回真 web.Response 502/504/409）。
+- **硬切版本门**：ClusterBus WIRE_VERSION 2→3，缺失/异版本一律 drop（不再默认放行）+ 发端 fast-fail（on_unreachable → 失败 pending，不干等 30s）。
+- **两跳中继**：host 按 `receiver` 转发 packet，删掉旧「loopback-reissue-for-two-hop」hack；127.0.0.1 真 HTTP loopback 只保留在 responder 跑本机真 handler（auth）。
+
+**删了什么**（净删 ~642 源码行 + 大量测试）：
+- `cluster/rpc.py`(ClusterRpc)、`cluster/rpc_over_bus.py`(RpcChannel/InboundRequestExecutor)、`cluster/chat_sync.py`(ChatSyncer)、`cluster/chat_bus.py`(ChatBus)。
+- registry/guest_client 的 `GuestSession.call`/`_serve_inbound_rpc`/`_handle_rpc`/`RpcChannel`/rpc·rpc_resp 帧。
+- 测试：`test_cluster_rpc`、`_rpc_bus_harness`、`test_rpc_bus_harness`、R1–R6 invariants、`test_chat_sync`、`test_chat_bus` + invariants 的 chat 段(A2/A3/C/D1/D3/E2/F1)。
+
+**新增**：`cluster/cluster_bus.py`(ClusterBus，一个 `_forward` 3 规则)、`cluster/request_reply.py`(RequestReply，旧 ClusterRpc 的 drop-in：dispatch_machine_request + handle_guest_ws)。测试 `test_cluster_bus`、`test_request_reply`；`bus/core.py` 加 `send()`。
+
+**刻意保留 events 走 EventSyncer**：events 跨机复制需要 `(origin_machine, origin_seq)` 去重 + resync-on-reconnect，naive broadcast 给不了；这是 pub/sub 之外 legitimately 不同的**可靠复制**关切，不是冗余。`events/sync.py` + `bus_wiring.py`(收成 events-only) + `peer_transport.py`(events 帧 WIRE_VERSION=2) 保留。若将来迁 events，见 `docs/bus-protocol.md` 的 Open。
+
+**部署**：big-bang——代码在分支上按可测小步走（每步跑测试），最后全 fleet 一起重启（新旧 bus 不互通，无灰度窗口，3-4 台个人机可接受）。基线 984 → 迁移后 952 passed（降幅=删的 rpc/chat 测试 − 新增 bus 测试）。
