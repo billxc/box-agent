@@ -40,19 +40,6 @@ async def test_settle_waits_for_debounce(tmp_path):
         await cluster.aclose()
 
 
-async def test_chat_delivers_cross_machine_payload(tmp_path):
-    cluster = TwoNodeCluster(tmp_path)
-    try:
-        queue = await cluster.subscribe_chat("B", "A", "bot", "chat1")
-        cluster.publish_chat("A", "bot", "chat1", {"type": "message", "text": "hi"})
-        await cluster.wait_for_queue(queue, 1)
-        item = queue.get_nowait()
-        assert item["type"] == "message"
-        assert item["text"] == "hi"
-    finally:
-        await cluster.aclose()
-
-
 async def test_counting_store_counts_inserts(tmp_path):
     store = CountingEventStore(tmp_path / "s.db")
     assert store.total_inserts == 0

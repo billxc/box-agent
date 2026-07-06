@@ -7,11 +7,11 @@ only and never inspects `payload`.
 from __future__ import annotations
 
 from boxagent.bus.core import MessageBus, Subscription
-from boxagent.bus.message import Message
+from boxagent.bus.message import Packet
 from boxagent.bus.subscriber import Subscriber
 
 __all__ = [
-    "Message",
+    "Packet",
     "MessageBus",
     "Subscription",
     "Subscriber",

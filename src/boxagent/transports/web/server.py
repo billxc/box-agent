@@ -87,7 +87,7 @@ class WebHttpServer:
         topology,
         cluster_rpc,
         cluster_routes,
-        chat_bus=None,
+        message_bus=None,
     ) -> None:
         self.config = config
         self.local_dir = local_dir
@@ -98,7 +98,7 @@ class WebHttpServer:
         self.topology = topology
         self.cluster_rpc = cluster_rpc
         self.cluster_routes = cluster_routes
-        self.chat_bus = chat_bus
+        self.message_bus = message_bus
         self.event_bus = None
         # Internal state — process-local preview cache (sid → {mtime, ...})
         # used by /api/sessions to avoid re-reading transcript JSONL every poll.
@@ -468,7 +468,7 @@ class WebHttpServer:
             sats: dict[str, object] = {}
             for machine_id, session in list(self.topology.guest_registry.sessions.items()):
                 try:
-                    result = await session.call("GET", "/api/version", timeout=5.0)
+                    result = await self.cluster_rpc.request(machine_id, "GET", "/api/version", timeout=5.0)
                     sats[machine_id] = result.get("body") or {"error": "no body"}
                 except Exception as e:
                     sats[machine_id] = {"error": str(e)}
@@ -534,7 +534,7 @@ class WebHttpServer:
             if target_filter is not None and machine_id not in target_filter:
                 continue
             try:
-                rpc = await session.call("POST", "/api/admin/restart", timeout=5.0)
+                rpc = await self.cluster_rpc.request(machine_id, "POST", "/api/admin/restart", timeout=5.0)
                 results[machine_id] = rpc.get("body") or {"status": rpc.get("status")}
             except Exception as e:
                 results[machine_id] = {"error": str(e)}
@@ -731,15 +731,21 @@ class WebHttpServer:
         machine = request.query.get("machine", "")
         if not bot or not chat_id or not machine:
             return web.json_response({"ok": False, "error": "missing bot/chat_id/machine"}, status=400)
-        if self.chat_bus is None:
-            return web.json_response({"ok": False, "error": "chat bus unavailable"}, status=503)
+        if self.message_bus is None:
+            return web.json_response({"ok": False, "error": "bus unavailable"}, status=503)
 
-        # local + remote 同一 queue 形状：bot 在本机时 ChatBus 返回它的进程内
-        # WebChannel queue，在别的机器时返回 ChatSyncer queue（事件以结构化帧走
-        # cluster WS 过来）。两种情况下面的 SSE 循环完全一致 —— 不再逐跳 re-framing。
-        queue = await self.chat_bus.subscribe(bot, chat_id, machine)
-        if queue is None:
+        # Location-transparent: a browser subscribes to chat.<owner>.<bot>.<chat_id>
+        # and the bus delivers, whether the owning bot is on this machine (its
+        # WebChannel publishes locally) or a remote one (the ClusterBus forwards
+        # its broadcast packet here). Same SSE loop either way.
+        from boxagent.bus.subscriber import QueueSubscriber
+        local_machine = self.topology.local_machine_id()
+        owner = machine or local_machine
+        if owner == local_machine and self.web_channels.get(bot) is None:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
+        topic = f"chat.{owner}.{bot}.{chat_id}"
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1024)
+        subscription = self.message_bus.subscribe(topic, QueueSubscriber(queue, topic))
 
         response = web.StreamResponse(
             status=200,
@@ -767,7 +773,7 @@ class WebHttpServer:
         except (ConnectionResetError, asyncio.CancelledError):
             pass
         finally:
-            await self.chat_bus.unsubscribe(bot, chat_id, machine, queue)
+            subscription.close()
         return response
 
     # ── Claude native session picker ──

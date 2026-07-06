@@ -3,15 +3,23 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
+from boxagent.bus.subscriber import QueueSubscriber
 from boxagent.transports.web import WebChannel
 from boxagent.router.callback import ChannelCallback
+
+
+def _observe(wc, chat_id: str = "c1"):
+    """Subscribe to a chat topic on the channel's bus (WebChannel is publish-only)."""
+    queue: asyncio.Queue = asyncio.Queue(maxsize=1024)
+    wc.message_bus.subscribe(wc._topic(chat_id), QueueSubscriber(queue, chat_id))
+    return queue
 
 
 # ─── WebChannel.on_tool_call publishes structured events ────────────────────
 
 def test_on_tool_call_publishes_structured_event():
     wc = WebChannel(bot_name="b")
-    q = wc.subscribe("c1")
+    q = _observe(wc, "c1")
     asyncio.run(wc.on_tool_call("c1", "t-1", "Bash", {"command": "ls"}, ""))
     ev = q.get_nowait()
     assert ev["type"] == "tool_call"
@@ -22,7 +30,7 @@ def test_on_tool_call_publishes_structured_event():
 
 def test_on_tool_call_allocates_id_when_missing():
     wc = WebChannel(bot_name="b")
-    q = wc.subscribe("c1")
+    q = _observe(wc, "c1")
     asyncio.run(wc.on_tool_call("c1", "", "Read", {"path": "/x"}, ""))
     assert q.get_nowait()["tool_id"]  # auto-allocated, non-empty
 
@@ -30,7 +38,7 @@ def test_on_tool_call_allocates_id_when_missing():
 def test_on_tool_call_codex_single_shot_publishes_call_then_result():
     """When `result` is non-empty (Codex), WebChannel publishes both events."""
     wc = WebChannel(bot_name="b")
-    q = wc.subscribe("c1")
+    q = _observe(wc, "c1")
     asyncio.run(wc.on_tool_call("c1", "t-2", "shell", {"command": "ls"}, "exit=0\nfile"))
     call = q.get_nowait()
     assert call["type"] == "tool_call"
@@ -51,7 +59,7 @@ def test_on_tool_call_returns_false_so_callback_skips_paragraph_break():
 
 def test_on_tool_update_completed_publishes_ok_result():
     wc = WebChannel(bot_name="b")
-    q = wc.subscribe("c1")
+    q = _observe(wc, "c1")
     asyncio.run(wc.on_tool_update(
         "c1", "t-3", "$ ls", status="completed", output="done\n",
     ))
@@ -64,7 +72,7 @@ def test_on_tool_update_completed_publishes_ok_result():
 
 def test_on_tool_update_failed_publishes_failed_result():
     wc = WebChannel(bot_name="b")
-    q = wc.subscribe("c1")
+    q = _observe(wc, "c1")
     asyncio.run(wc.on_tool_update(
         "c1", "t-4", "$ x", status="failed", output="boom",
     ))
@@ -75,7 +83,7 @@ def test_on_tool_update_failed_publishes_failed_result():
 
 def test_on_tool_update_in_progress_publishes_nothing():
     wc = WebChannel(bot_name="b")
-    q = wc.subscribe("c1")
+    q = _observe(wc, "c1")
     asyncio.run(wc.on_tool_update("c1", "t-5", "$ x", status="in_progress"))
     assert q.empty()
 

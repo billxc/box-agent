@@ -31,7 +31,7 @@ from aiohttp import web
 
 from boxagent.agent.agent_manager import AgentManager
 from boxagent.cluster.http_routes import ClusterHttpRoutes
-from boxagent.cluster.rpc import ClusterRpc
+from boxagent.cluster.request_reply import RequestReply
 from boxagent.cluster.host_election import HostElection
 from boxagent.cluster.topology_service import TopologyService
 from boxagent.scheduler.http_routes import SchedulerHttpRoutes
@@ -126,7 +126,7 @@ class Gateway:
     _start_time: float = 0.0
     _bots: AgentManager | None = field(default=None, repr=False)
     _topology: TopologyService | None = field(default=None, repr=False)
-    _cluster_rpc: ClusterRpc | None = field(default=None, repr=False)
+    _cluster_rpc: RequestReply | None = field(default=None, repr=False)
     _cluster_routes: ClusterHttpRoutes | None = field(default=None, repr=False)
     _scheduler_routes: SchedulerHttpRoutes | None = field(default=None, repr=False)
     _internal_api: InternalApiServer | None = field(default=None, repr=False)
@@ -136,8 +136,7 @@ class Gateway:
     _telegram_notifier: "object | None" = field(default=None, repr=False)
     _retention_sweeper: "object | None" = field(default=None, repr=False)
     _event_syncer: "object | None" = field(default=None, repr=False)
-    _chat_syncer: "object | None" = field(default=None, repr=False)
-    _chat_bus: "object | None" = field(default=None, repr=False)
+
 
     async def start(self) -> None:
         self._start_time = time.time()
@@ -162,7 +161,18 @@ class Gateway:
         # instance carries both (the owner's "one bus"). Injected into EventBus
         # here and into every WebChannel via AgentManager.
         from boxagent.bus.core import MessageBus
-        self._message_bus = MessageBus()
+        if self.config.cluster_tunnel:
+            # Clustered node: the shared bus is a ClusterBus (events + chat + rpc
+            # all ride it, local or remote transparently). Single-machine nodes
+            # stay on the plain in-process MessageBus.
+            from boxagent.cluster.cluster_bus import ClusterBus
+            self._message_bus = ClusterBus(
+                machine_id=machine_id,
+                route=self._route_packet,
+                on_unreachable=self._on_machine_unreachable,
+            )
+        else:
+            self._message_bus = MessageBus(machine_id=machine_id)
         self._event_bus = EventBus(store=event_store, machine_id=machine_id, bus=self._message_bus)
         log.bind(self._event_bus)
 
@@ -206,37 +216,14 @@ class Gateway:
             config=self.config,
             web_channels=self._bots.web_channels,
         )
-        self._cluster_rpc = ClusterRpc(topology=self._topology)
+        self._cluster_rpc = RequestReply(
+            bus=self._message_bus,
+            topology=self._topology,
+            local_web_port=self.config.web_port or 9292,
+            local_web_token=self.config.web_token or "",
+        )
         self._cluster_routes = ClusterHttpRoutes(
             cluster_rpc=self._cluster_rpc,
-        )
-
-        # ChatBus：location-transparent chat pub/sub。ChatSyncer 用结构化帧走
-        # cluster WS 承载跨机（不再 SSE re-framing）；ChatBus 把它包起来，让
-        # /api/stream 对 local + remote 读同一 queue 形状。下面挂进 HostElection
-        # （和 event syncer 一样），peer 随 registry/guest_client 出现而 attach。
-        from boxagent.cluster.chat_sync import ChatSyncer
-        from boxagent.cluster.chat_bus import ChatBus
-        topology = self._topology
-
-        def route_chat(target_machine):
-            # 一个 subscribe 往哪个 peer 走。guest → 永远走 host；
-            # host → 目标 guest 的 session（peer_key == machine_id）。
-            if topology.local_role() == "guest":
-                return "host"
-            registry = topology.guest_registry
-            if registry is not None and target_machine in registry.sessions:
-                return target_machine
-            return None
-
-        self._chat_syncer = ChatSyncer(
-            local_machine=self._topology.local_machine_id(),
-            route=route_chat,
-        )
-        self._chat_bus = ChatBus(
-            local_machine=self._topology.local_machine_id(),
-            syncer=self._chat_syncer,
-            channel_for=self._bots.web_channels.get,
         )
 
         self._web_server = WebHttpServer(
@@ -249,7 +236,7 @@ class Gateway:
             topology=self._topology,
             cluster_rpc=self._cluster_rpc,
             cluster_routes=self._cluster_routes,
-            chat_bus=self._chat_bus,
+            message_bus=self._message_bus,
         )
         self._web_server.set_event_bus(self._event_bus)
         logger.info("Gateway starting (node=%s)", self.config.node_id or "(any)")
@@ -287,15 +274,16 @@ class Gateway:
                 install_registry_hooks,
             )
             event_syncer = self._event_syncer
-            chat_syncer = self._chat_syncer
 
             # One wiring owns the registry/guest_client callbacks and dispatches
-            # both event_* and chat_* frames — no install-order chain.
+            # event_* frames (chat now rides the ClusterBus packet path).
             def on_registry_ready(registry):
-                install_registry_hooks(event_syncer, chat_syncer, registry)
+                install_registry_hooks(event_syncer, registry)
+                registry.cluster_bus = self._message_bus
 
             def on_guest_client_ready(client):
-                install_guest_client_hooks(event_syncer, chat_syncer, client)
+                install_guest_client_hooks(event_syncer, client)
+                client.cluster_bus = self._message_bus
 
             self._host_election = HostElection(
                 config=self.config,
@@ -309,6 +297,26 @@ class Gateway:
             await self._host_election.start()
 
         logger.info("Gateway ready: %d bot(s) active", len(self.config.bots))
+
+    def _route_packet(self, target_machine: str) -> "str | None":
+        """ClusterBus route: which link key reaches `target_machine`. Guest →
+        always the host uplink; host → the target guest's session (link key ==
+        machine_id). None when unreachable → the bus signals on_unreachable."""
+        topology = self._topology
+        if topology is None:
+            return None
+        if topology.local_role() == "guest":
+            return "host"
+        registry = topology.guest_registry
+        if registry is not None and target_machine in registry.sessions:
+            return target_machine
+        return None
+
+    def _on_machine_unreachable(self, machine: str) -> None:
+        # The bus reports a point-to-point target is unreachable (no link / down /
+        # version-incompatible) → fail pending request/reply to it fast.
+        if self._cluster_rpc is not None:
+            self._cluster_rpc.fail_unreachable(machine)
 
     def _start_scheduler(self) -> None:
         """Create and start the Scheduler after all active bots are online."""
@@ -368,10 +376,6 @@ class Gateway:
 
         # AgentManager owns channels, web_channels, backends, pools, watchdogs.
         if self._bots is not None:
-            # 先取消 owner 侧 chat pump —— 它们持有 manager 即将拆掉的
-            # WebChannel 订阅。
-            if self._chat_bus is not None:
-                await self._chat_bus.aclose()
             await self._bots.stop()
 
         # Event log: emit shutdown event then unbind + close.

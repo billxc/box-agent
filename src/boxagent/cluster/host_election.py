@@ -321,8 +321,6 @@ class HostElection:
             self.registry = GuestRegistry(
                 expected_token=self.config.guest_token or self.config.host_token,
                 on_topology_change=self.on_topology_change,
-                local_web_port=self.config.web_port or 9292,
-                local_web_token=self.config.web_token or "",
             )
             if self.on_registry_ready is not None:
                 try:
@@ -386,10 +384,6 @@ class HostElection:
                 await self.registry.close_all_sessions()
             except Exception as e:
                 logger.warning("host election: close registry sessions failed: %s", e)
-            try:
-                await self.registry.aclose()
-            except Exception:
-                pass
             self.registry = None
 
         if self.tunnel is not None:

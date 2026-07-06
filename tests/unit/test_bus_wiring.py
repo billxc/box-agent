@@ -1,9 +1,8 @@
-"""Tests for bus_wiring — the one wiring that dispatches both syncers' frames.
+"""Tests for bus_wiring — the wiring that bridges registry/guest_client → EventSyncer.
 
-Replaces test_event_sync_wiring.py + test_chat_sync_wiring.py. The behavior they
-covered (each syncer's frames reach it; frames don't swallow each other) is now
-one unified dispatch with no install-order chain, exercised here with fake
-syncers + a fake registry / guest_client.
+Chat now rides the ClusterBus packet path; this wiring is events-only. Covers:
+event_* frames reach the syncer, attach/detach per peer, and the wire-version
+gate drops mismatched frames.
 """
 from __future__ import annotations
 
@@ -26,36 +25,11 @@ class FakeEventSyncer:
     def attach_peer(self, peer_key, send_frame) -> None:
         self.attached.append(peer_key)
 
-    def detach_peer(self, peer_key) -> None:  # sync, like the real EventSyncer
+    def detach_peer(self, peer_key) -> None:
         self.detached.append(peer_key)
 
     async def handle_frame(self, peer_key, payload) -> bool:
         if str(payload.get("type", "")).startswith("event_"):
-            self.handled.append((peer_key, payload))
-            return True
-        return False
-
-
-class FakeChatSyncer:
-    """Matches ChatSyncer's shape: sync attach, async detach/resubscribe/handle."""
-
-    def __init__(self) -> None:
-        self.attached: list[str] = []
-        self.detached: list[str] = []
-        self.resubscribed: list[str] = []
-        self.handled: list[tuple[str, dict]] = []
-
-    def attach_peer(self, peer_key, send_frame) -> None:
-        self.attached.append(peer_key)
-
-    async def detach_peer(self, peer_key) -> None:  # async, like the real ChatSyncer
-        self.detached.append(peer_key)
-
-    async def resubscribe(self, peer_key) -> None:
-        self.resubscribed.append(peer_key)
-
-    async def handle_frame(self, peer_key, payload) -> bool:
-        if str(payload.get("type", "")).startswith("chat_"):
             self.handled.append((peer_key, payload))
             return True
         return False
@@ -90,85 +64,71 @@ class FakeGuestClient:
 
 # ── registry (host) side ──
 
-async def test_registry_attaches_both_syncers_on_guest():
-    event_syncer, chat_syncer = FakeEventSyncer(), FakeChatSyncer()
+async def test_registry_attaches_event_syncer_on_guest():
+    event_syncer = FakeEventSyncer()
     registry = FakeRegistry()
-    install_registry_hooks(event_syncer, chat_syncer, registry)
+    install_registry_hooks(event_syncer, registry)
 
     registry.on_guest_attached("guestA", FakeSession())
-    await asyncio.sleep(0)  # let the chat resubscribe task run
     assert event_syncer.attached == ["guestA"]
-    assert chat_syncer.attached == ["guestA"]
-    assert chat_syncer.resubscribed == ["guestA"]
 
 
-async def test_registry_detaches_both_syncers():
-    event_syncer, chat_syncer = FakeEventSyncer(), FakeChatSyncer()
+async def test_registry_detaches_event_syncer():
+    event_syncer = FakeEventSyncer()
     registry = FakeRegistry()
-    install_registry_hooks(event_syncer, chat_syncer, registry)
+    install_registry_hooks(event_syncer, registry)
 
     registry.on_guest_detached("guestA")
-    await asyncio.sleep(0)
     assert event_syncer.detached == ["guestA"]
-    assert chat_syncer.detached == ["guestA"]
 
 
-async def test_registry_frame_dispatch_no_swallow():
-    event_syncer, chat_syncer = FakeEventSyncer(), FakeChatSyncer()
+async def test_registry_frame_dispatch():
+    event_syncer = FakeEventSyncer()
     registry = FakeRegistry()
-    install_registry_hooks(event_syncer, chat_syncer, registry)
+    install_registry_hooks(event_syncer, registry)
 
-    # event_* → event syncer only
+    # event_* → event syncer
     assert await registry.on_unknown_frame("guestA", {"type": "event_batch"}) is True
-    assert len(event_syncer.handled) == 1 and not chat_syncer.handled
-    # chat_* → chat syncer only (not swallowed by the event syncer)
-    assert await registry.on_unknown_frame("guestA", {"type": "chat_event"}) is True
-    assert len(chat_syncer.handled) == 1
-    # unknown → neither
+    assert len(event_syncer.handled) == 1
+    # unknown → not consumed
     assert await registry.on_unknown_frame("guestA", {"type": "mystery"}) is False
 
 
 # ── guest_client side (peer key = 'host') ──
 
-async def test_guest_client_attaches_both_on_connect():
-    event_syncer, chat_syncer = FakeEventSyncer(), FakeChatSyncer()
+async def test_guest_client_attaches_on_connect():
+    event_syncer = FakeEventSyncer()
     client = FakeGuestClient()
-    install_guest_client_hooks(event_syncer, chat_syncer, client)
+    install_guest_client_hooks(event_syncer, client)
 
     client.on_connect(client)
-    await asyncio.sleep(0)
     assert event_syncer.attached == ["host"]
-    assert chat_syncer.attached == ["host"]
-    assert chat_syncer.resubscribed == ["host"]
 
 
 async def test_guest_client_frame_dispatch():
-    event_syncer, chat_syncer = FakeEventSyncer(), FakeChatSyncer()
+    event_syncer = FakeEventSyncer()
     client = FakeGuestClient()
-    install_guest_client_hooks(event_syncer, chat_syncer, client)
+    install_guest_client_hooks(event_syncer, client)
 
     assert await client.on_unknown_frame({"type": "event_resync"}) is True
-    assert await client.on_unknown_frame({"type": "chat_subscribe"}) is True
     assert await client.on_unknown_frame({"type": "nope"}) is False
-    assert len(event_syncer.handled) == 1 and len(chat_syncer.handled) == 1
+    assert len(event_syncer.handled) == 1
 
     client.on_disconnect()
-    await asyncio.sleep(0)
-    assert event_syncer.detached == ["host"] and chat_syncer.detached == ["host"]
+    assert event_syncer.detached == ["host"]
 
 
 # ── wire-version gate (mixed-version graceful drop) ──
 
 async def test_frame_with_unsupported_wire_version_is_dropped():
-    event_syncer, chat_syncer = FakeEventSyncer(), FakeChatSyncer()
+    event_syncer = FakeEventSyncer()
     registry = FakeRegistry()
-    install_registry_hooks(event_syncer, chat_syncer, registry)
+    install_registry_hooks(event_syncer, registry)
 
-    # A frame from a newer protocol version: consumed (dropped), never dispatched
-    # to either syncer — so it can't be misparsed.
+    # A frame from a newer protocol version: consumed (dropped), never dispatched.
     handled = await registry.on_unknown_frame("guestA", {"type": "event_batch", "v": 999})
     assert handled is True
-    assert not event_syncer.handled and not chat_syncer.handled
+    assert not event_syncer.handled
 
     # Missing v (legacy peer) is accepted and dispatched normally.
     assert await registry.on_unknown_frame("guestA", {"type": "event_batch"}) is True
@@ -177,9 +137,9 @@ async def test_frame_with_unsupported_wire_version_is_dropped():
 
 async def test_current_wire_version_is_accepted():
     from boxagent.cluster.peer_transport import WIRE_VERSION
-    event_syncer, chat_syncer = FakeEventSyncer(), FakeChatSyncer()
+    event_syncer = FakeEventSyncer()
     registry = FakeRegistry()
-    install_registry_hooks(event_syncer, chat_syncer, registry)
+    install_registry_hooks(event_syncer, registry)
 
-    assert await registry.on_unknown_frame("guestA", {"type": "chat_event", "v": WIRE_VERSION}) is True
-    assert len(chat_syncer.handled) == 1
+    assert await registry.on_unknown_frame("guestA", {"type": "event_batch", "v": WIRE_VERSION}) is True
+    assert len(event_syncer.handled) == 1

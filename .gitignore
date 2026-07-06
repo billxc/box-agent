@@ -25,4 +25,4 @@ DerivedData/
 *.moved-aside
 *.hmap
 *.ipa
-ios/BoxAgent/Local.xcconfig
+ios/BoxAgent/Local.xcconfig.harness.stale-*/

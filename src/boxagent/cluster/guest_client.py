@@ -13,7 +13,6 @@ from aiohttp import ClientSession, WSMsgType
 
 from . import devtunnel
 from .peer_transport import WIRE_VERSION
-from .rpc_over_bus import InboundRequestExecutor, RpcChannel, _PendingResponse
 from boxagent.log import Category, log
 
 logger = logging.getLogger(__name__)
@@ -47,6 +46,9 @@ class GuestClient:
     # syncer can attach/detach its peer (key: "host").
     on_connect: Callable[["GuestClient"], None] | None = None
     on_disconnect: Callable[[], None] | None = None
+    # The process ClusterBus (duck-typed). When set, the host link is registered
+    # with it and inbound `packet` frames are routed to it. Injected by gateway.
+    cluster_bus: object | None = None
 
     _task: asyncio.Task | None = None
     _stop: bool = False
@@ -57,16 +59,6 @@ class GuestClient:
     # _handle_web_machines / _handle_web_bots so the local webui can render
     # the full cluster sidebar.
     remote_machines: list[dict] = field(default_factory=list)
-    # Reverse RPC caller side (guest → host). Per-link correlation, shared with
-    # the host's GuestSession via RpcChannel.
-    _channel: RpcChannel = field(default_factory=RpcChannel, repr=False)
-    # Inbound RPC loopback re-issuer (host → guest, and the second hop of a
-    # guest→host→guest relay). Built lazily on first inbound frame.
-    _inbound_executor: "InboundRequestExecutor | None" = field(default=None, repr=False)
-
-    @property
-    def _pending(self) -> dict[str, _PendingResponse]:
-        return self._channel.pending
 
     def start(self) -> None:
         if self._task is not None:
@@ -91,30 +83,6 @@ class GuestClient:
         if self._session is not None:
             await self._session.close()
             self._session = None
-
-    async def call(
-        self,
-        method: str,
-        path: str,
-        *,
-        query: dict | None = None,
-        body: dict | None = None,
-        timeout: float = 30.0,
-    ) -> dict:
-        """Reverse RPC: guest → host. Returns ``{"status": int, "body": dict}``.
-
-        Same request/reply mechanism as :meth:`GuestSession.call` on the host
-        side (both delegate to the shared :class:`RpcChannel`). Used by the
-        guest-side webui to forward "remote machine" requests through the host,
-        which then dispatches locally or proxies to another guest.
-        """
-        ws = self._ws
-        if ws is None or ws.closed:
-            raise RuntimeError("guest: not connected to host")
-        return await self._channel.call(
-            ws.send_json, method, path,
-            query=query, body=body, timeout=timeout,
-        )
 
     async def announce_bots(self) -> None:
         ws = self._ws
@@ -214,6 +182,8 @@ class GuestClient:
                         "token": self.host_token,
                         "bots": self.bot_provider(),
                     })
+                    if self.cluster_bus is not None:
+                        self.cluster_bus.attach_link("host", ws.send_json)
                     logger.info("guest: hello sent (machine_id=%s)", self.machine_id)
                     log.info(
                         Category.CLUSTER_GUEST_CONNECTED,
@@ -254,9 +224,8 @@ class GuestClient:
                 )
             finally:
                 self._ws = None
-                # Reject any in-flight reverse RPCs so callers see a clean
-                # error instead of hanging until timeout.
-                self._channel.reject_all(RuntimeError("guest: ws disconnected"))
+                if self.cluster_bus is not None:
+                    self.cluster_bus.detach_link("host")
             if self._stop:
                 break
             await asyncio.sleep(min(backoff, 60.0))
@@ -278,22 +247,20 @@ class GuestClient:
                     payload = json.loads(msg.data)
                 except Exception:
                     continue
+                if payload.get("type") == "packet":
+                    # Unified cluster bus: route to ClusterBus (own v3 gate).
+                    # Intercept before the legacy v2 gate below.
+                    if self.cluster_bus is not None:
+                        self.cluster_bus.on_inbound("host", payload)
+                    continue
                 if payload.get("v", WIRE_VERSION) != WIRE_VERSION:
                     logger.warning("guest: dropping frame with unsupported wire version %r",
                                    payload.get("v"))
                     continue
-                if payload.get("type") == "rpc":
-                    asyncio.create_task(self._handle_rpc(ws, payload))
-                elif payload.get("type") == "ping":
+                if payload.get("type") == "ping":
                     await ws.send_json({"type": "pong"})
                 elif payload.get("type") == "welcome":
                     pass
-                elif payload.get("type") == "rpc_resp":
-                    self._channel.resolve(
-                        str(payload.get("id") or ""),
-                        int(payload.get("status") or 0),
-                        payload.get("body") or {},
-                    )
                 elif payload.get("type") == "machines_snapshot":
                     raw = payload.get("machines") or []
                     self.remote_machines = [
@@ -314,22 +281,3 @@ class GuestClient:
             elif msg.type in (WSMsgType.CLOSED, WSMsgType.ERROR):
                 break
 
-    async def _handle_rpc(self, ws: aiohttp.ClientWebSocketResponse, request: dict) -> None:
-        """Re-issue an inbound host→guest RPC over local loopback via the shared
-        :class:`InboundRequestExecutor`, then reply ``rpc_resp`` over ``ws``."""
-        assert self._session is not None
-        executor = self._inbound_executor
-        if executor is None or executor.local_web_port != self.local_web_port:
-            executor = InboundRequestExecutor(
-                local_web_port=self.local_web_port,
-                local_web_token=self.local_web_token,
-                http_session_provider=lambda: self._session,
-                logger_message="guest: rpc %s %s failed: %s",
-                event_message_prefix="guest: rpc ",
-                fail_category=Category.CLUSTER_GUEST_RPC_FAIL,
-                not_configured_error="guest loopback not configured",
-                machine_id=self.machine_id,
-                require_web_port=False,
-            )
-            self._inbound_executor = executor
-        await executor.serve(ws.send_json, request)
