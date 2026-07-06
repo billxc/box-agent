@@ -1,29 +1,19 @@
-"""FROZEN, append-only, BLACK-BOX invariants for the MessageBus migration.
+"""BLACK-BOX invariants for cross-machine EVENT replication (EventSyncer).
 
-This file is the regression net for unifying BoxAgent's event + chat delivery
-onto one bus. It is written against TODAY's unmodified product code and must
-stay GREEN through every migration phase. Later phases only ADD invariants; no
-existing invariant's expected value may change (a changed expectation is a
-behavior regression, not a test refactor — stop and ask the owner).
+Regression net for the events cross-machine path. Chat + rpc were migrated onto
+the ClusterBus (a broadcast / request-reply layer) and are covered by
+test_cluster_bus.py + test_request_reply.py; this file is events-only.
 
 BLACK-BOX rule (hard): assertions read ONLY
   - store_rows(node) / CountingEventStore insert counts
   - store id order via _arrival_order(node) (arrival == insertion order)
-  - chat subscriber queue contents
-  - frames captured through the harness's PUBLIC recording seams
-    (record_event_frames / record_chat_frames — installed via attach_peer)
-They NEVER reference private state (_subscribers, _pumps, _buffer, _peers, or
-any EventSyncer / ChatSyncer internals). Stimulus that must poke a syncer
-(duplicate delivery, a failing link, per-message reordered delivery) is owned by
-the harness's test-only delivery seams, so this file stays clean and only the
-harness updates when the syncers move to PeerTransport in Phase 1. The one
-tolerated exception is the harness's own settle()/quiescence poll, which is test
-infrastructure, not an assertion.
+  - frames captured through the harness's PUBLIC recording seam (record_event_frames)
+They NEVER reference private EventSyncer internals. Stimulus that must poke the
+syncer (duplicate delivery, a failing link, per-message reordered delivery) is
+owned by the harness's test-only delivery seams.
 
-Invariant index (this phase — EVENT + CHAT + RPC round-trip):
+Invariant index (EVENT replication):
   A1  event write is synchronous (row present before publish returns)
-  A2  chat stream_delta NEVER hits SQLite (negative test, the head no-go)
-  A3  per-topic durability is declarative & enumerable (param table)
   B1  event A -> B replication
   B2  bidirectional
   B3  dedup (no double rows)
@@ -32,29 +22,15 @@ Invariant index (this phase — EVENT + CHAT + RPC round-trip):
   B6  3-day window filter (both emit-side and resync-side)
   B7  detach stops delivery
   B8  send failure swallowed, local row still written
-  C1  subscribed chat reaches queue cross-machine; unsubscribed does not
-  C2  refcount: two local watchers -> one upstream subscribe
-  C3  two-hop host relay
-  C6  subscriber reconnect re-sends subscribe
-  D1  ONE reconnect recovers BOTH event backfill AND chat re-subscribe
-  D3  cross-machine chat never hits either store
   E1  100+ events arrive in order, seq contiguous (arrival == publish order)
-  E2  100+ chat deltas arrive in order
   E3  order preserved across flush/batch boundary (arrival == publish order)
   E-RED  ordering guard PROVEN RED — the REAL arrival-order assertion (store id
          order) goes RED when frames are delivered reversed per-message
-  F1  slow subscriber drops its own; fast subscriber unaffected
   G1  boxagent.log facade signature/behavior unchanged
   G2  /api/events query still works
   G3  TelegramNotifier still called
   G4  retention sweeper unaffected
   G5  one subscriber raising doesn't break store write or other subscribers
-  R1  RPC single hop host->guest returns guest's real body, id-correlated
-  R2  reverse RPC loopback re-issue hits the REAL host handler (spy-proven)
-  R3  two-hop gA->host->gB returns correct body (nested pending pairs)
-  R4  50 concurrent out-of-order replies never cross (id correlation) — key one
-  R5  unreachable machine times out cleanly + no pending-future leak
-  R6  RPC is concurrent, not serialized behind one pump
 """
 from __future__ import annotations
 
@@ -97,76 +73,6 @@ async def test_INV_A1_event_write_is_synchronous(tmp_path):
         assert row.meta == {"task_id": "t1"}
         assert row.origin_machine == "A"
         assert row.origin_seq == 1
-    finally:
-        await cluster.aclose()
-
-
-async def test_INV_A2_chat_stream_delta_never_hits_sqlite(tmp_path):
-    """THE NEGATIVE TEST. 200 chat stream_delta publishes ->
-    (a) CountingEventStore insert-delta == 0, and
-    (b) before/after store snapshot equal.
-    Chat physically cannot reach SQLite."""
-    cluster = TwoNodeCluster(tmp_path)
-    try:
-        queue = await cluster.subscribe_chat("A", "A", "b", "c")
-        store = cluster.store("A")
-
-        before_rows = cluster.store_rows("A")
-        before_local = store.insert_local_count
-        before_remote = store.insert_remote_count
-
-        for i in range(200):
-            cluster.publish_chat("A", "b", "c", {
-                "type": "stream_delta", "delta": "x", "message_id": "m1", "seq": i,
-            })
-
-        await cluster.settle()
-
-        # (a) spy insert-delta is exactly zero across the whole burst.
-        assert store.insert_local_count == before_local
-        assert store.insert_remote_count == before_remote
-        # (b) store snapshot identical (no rows in any category).
-        after_rows = cluster.store_rows("A")
-        assert after_rows == before_rows
-        assert cluster.store_rows("A", category_prefix="chat") == []
-        # And the deltas really did fan out to the subscriber (200 of them).
-        assert queue.qsize() == 200
-    finally:
-        await cluster.aclose()
-
-
-async def test_INV_A3_per_topic_durability_is_declarative(tmp_path):
-    """Enumerated table: event topics increment the store by 1; chat topics
-    (message / stream_delta / tool_call / typing) increment by 0. Today this
-    is enforced by which code path is used (bus.publish vs channel._publish);
-    post-unification it becomes the subscriber-list-is-the-policy fact."""
-    cluster = TwoNodeCluster(tmp_path)
-    try:
-        # Ensure an owner-side subscriber so chat actually fans out.
-        await cluster.subscribe_chat("A", "A", "b", "c")
-        store = cluster.store("A")
-
-        durable_cases = [
-            ("scheduler.run", "info"),
-            ("agent.notify", "info"),
-            ("backend.crash", "error"),
-        ]
-        for category, level in durable_cases:
-            before = store.total_inserts
-            cluster.publish_event("A", level, category, "x")
-            assert store.total_inserts == before + 1, f"{category} should be durable"
-
-        ephemeral_cases = [
-            {"type": "message", "text": "hi"},
-            {"type": "stream_delta", "delta": "d", "message_id": "m"},
-            {"type": "tool_call", "tool_id": "t", "name": "n", "args": {}},
-            {"type": "typing"},
-        ]
-        for event in ephemeral_cases:
-            before = store.total_inserts
-            cluster.publish_chat("A", "b", "c", event)
-            await cluster.settle()
-            assert store.total_inserts == before, f"{event['type']} must be ephemeral"
     finally:
         await cluster.aclose()
 
@@ -317,164 +223,6 @@ async def test_INV_B8_send_failure_swallowed_local_row_kept(tmp_path):
 
 
 # ==========================================================================
-# C. Cross-machine chat subscription (regresses ChatSyncer)
-# ==========================================================================
-
-async def test_INV_C1_subscribed_reaches_queue_unsubscribed_does_not(tmp_path):
-    cluster = TwoNodeCluster(tmp_path)
-    try:
-        queue = await cluster.subscribe_chat("B", "A", "b", "c")
-        cluster.publish_chat("A", "b", "c", {"type": "message", "text": "watched"})
-        cluster.publish_chat("A", "b", "OTHER", {"type": "message", "text": "unwatched"})
-        await cluster.wait_for_queue(queue, 1)
-        await cluster.settle()
-        items = _drain(queue)
-        assert len(items) == 1
-        assert items[0]["text"] == "watched"
-    finally:
-        await cluster.aclose()
-
-
-async def test_INV_C2_refcount_two_watchers_one_upstream(tmp_path):
-    """Two local browsers on the same remote chat produce exactly one upstream
-    chat_subscribe frame; last-leave produces one chat_unsubscribe."""
-    cluster = TwoNodeCluster(tmp_path)
-    try:
-        # Capture frames B sends toward A via the harness's public recording
-        # seam (installed through attach_peer — no _peers reach-in).
-        sent = cluster.record_chat_frames("B", "A")
-
-        queue1 = await cluster.subscribe_chat("B", "A", "b", "c")
-        queue2 = await cluster.subscribe_chat("B", "A", "b", "c")
-        subs = [f for f in sent if f.get("type") == "chat_subscribe"]
-        assert len(subs) == 1
-
-        cluster.publish_chat("A", "b", "c", {"type": "message", "n": 1})
-        await cluster.wait_for_queue(queue1, 1)
-        await cluster.wait_for_queue(queue2, 1)
-        assert queue1.qsize() == 1 and queue2.qsize() == 1
-
-        node_b_bus = cluster.nodes["B"].chat_bus
-        await node_b_bus.unsubscribe("b", "c", "A", queue1)
-        await cluster.settle()  # upstream frames ride the ordered async drain
-        unsubs = [f for f in sent if f.get("type") == "chat_unsubscribe"]
-        assert unsubs == []  # one watcher left
-        await node_b_bus.unsubscribe("b", "c", "A", queue2)
-        await cluster.settle()
-        unsubs = [f for f in sent if f.get("type") == "chat_unsubscribe"]
-        assert len(unsubs) == 1
-    finally:
-        await cluster.aclose()
-
-
-async def test_INV_C3_two_hop_host_relay(tmp_path):
-    """gA subscribes to gB's bot; host relays subscribe to gB and events back."""
-    cluster = ThreeNodeCluster(tmp_path)
-    try:
-        queue = await cluster.subscribe_chat("gA", "gB", "b", "c")
-        cluster.publish_chat("gB", "b", "c", {"type": "message", "text": "relayed"})
-        await cluster.wait_for_queue(queue, 1)
-        items = _drain(queue)
-        assert len(items) == 1
-        assert items[0]["text"] == "relayed"
-    finally:
-        await cluster.aclose()
-
-
-async def test_INV_C6_subscriber_reconnect_resends_subscribe(tmp_path):
-    """After a WS reconnect, the subscriber re-establishes its subscription and
-    resumes receiving NEW deltas."""
-    cluster = TwoNodeCluster(tmp_path)
-    try:
-        queue = await cluster.subscribe_chat("B", "A", "b", "c")
-        cluster.publish_chat("A", "b", "c", {"type": "message", "n": 1})
-        await cluster.wait_for_queue(queue, 1)
-        assert _drain(queue)[0]["n"] == 1
-
-        await cluster.drop_link("A", "B")
-        await cluster.relink("A", "B")
-        # Give the owner-side pump time to re-subscribe after re-subscribe frame.
-        await cluster.settle()
-        cluster.publish_chat("A", "b", "c", {"type": "message", "n": 2})
-        await cluster.wait_for_queue(queue, 1)
-        items = _drain(queue)
-        assert items and items[-1]["n"] == 2
-    finally:
-        await cluster.aclose()
-
-
-# ==========================================================================
-# D. Cross invariants (the risk unification introduces)
-# ==========================================================================
-
-async def test_INV_D1_one_reconnect_recovers_events_and_chat(tmp_path):
-    """The single most important new test. In ONE reconnect:
-      (a) event: B.store backfills the 2 events dropped during the outage
-      (b) chat: B's queue resumes receiving NEW deltas after re-subscribe
-    The 3 deltas dropped during the outage may be lost (chat is live)."""
-    cluster = TwoNodeCluster(tmp_path)
-    try:
-        queue = await cluster.subscribe_chat("B", "A", "b", "c")
-        # Baseline: chat works, event works.
-        cluster.publish_chat("A", "b", "c", {"type": "message", "n": 0})
-        cluster.publish_event("A", "info", "c", "e0")
-        await cluster.wait_for_queue(queue, 1)
-        await cluster.settle()
-        assert _drain(queue)[0]["n"] == 0
-        assert "e0" in {r.message for r in cluster.store_rows("B")}
-
-        # Outage.
-        await cluster.drop_link("A", "B")
-        cluster.publish_event("A", "info", "c", "e1")
-        cluster.publish_event("A", "info", "c", "e2")
-        cluster.publish_chat("A", "b", "c", {"type": "message", "n": 1})
-        cluster.publish_chat("A", "b", "c", {"type": "message", "n": 2})
-        cluster.publish_chat("A", "b", "c", {"type": "message", "n": 3})
-        await cluster.settle()
-        # B saw none of it while disconnected.
-        assert {r.message for r in cluster.store_rows("B")} == {"e0"}
-
-        # Reconnect: events backfill via cursor, chat re-subscribes.
-        await cluster.relink("A", "B")
-        await cluster.settle()
-
-        # (a) events backfilled.
-        b_messages = {r.message for r in cluster.store_rows("B")}
-        assert {"e0", "e1", "e2"} <= b_messages
-
-        # (b) chat resumes for NEW deltas.
-        cluster.publish_chat("A", "b", "c", {"type": "message", "n": 4})
-        await cluster.wait_for_queue(queue, 1)
-        new_items = _drain(queue)
-        assert any(item.get("n") == 4 for item in new_items)
-    finally:
-        await cluster.aclose()
-
-
-async def test_INV_D3_cross_machine_chat_never_hits_either_store(tmp_path):
-    """The cross-machine version of A2: a delta published on A and watched from
-    B increments NEITHER store's insert count."""
-    cluster = TwoNodeCluster(tmp_path)
-    try:
-        queue = await cluster.subscribe_chat("B", "A", "b", "c")
-        store_a = cluster.store("A")
-        store_b = cluster.store("B")
-        a_before = store_a.total_inserts
-        b_before = store_b.total_inserts
-        for i in range(50):
-            cluster.publish_chat("A", "b", "c", {
-                "type": "stream_delta", "delta": str(i), "message_id": "m",
-            })
-        await cluster.wait_for_queue(queue, 50)
-        await cluster.settle()
-        assert store_a.total_inserts == a_before
-        assert store_b.total_inserts == b_before
-        assert queue.qsize() == 50
-    finally:
-        await cluster.aclose()
-
-
-# ==========================================================================
 # E. Ordering (the create_task footgun) + the RED proof
 # ==========================================================================
 
@@ -502,24 +250,6 @@ async def test_INV_E1_events_arrive_in_order(tmp_path):
         assert [row.message for row in arrival] == [f"n{i}" for i in range(100)]
         # Contiguity is an independent guarantee — origin_seq has no holes.
         assert [row.origin_seq for row in arrival] == list(range(1, 101))
-    finally:
-        await cluster.aclose()
-
-
-async def test_INV_E2_chat_deltas_arrive_in_order(tmp_path):
-    """100 stream_delta published in order arrive in order at the remote
-    subscriber queue."""
-    cluster = TwoNodeCluster(tmp_path)
-    try:
-        queue = await cluster.subscribe_chat("B", "A", "b", "c")
-        for i in range(100):
-            cluster.publish_chat("A", "b", "c", {
-                "type": "stream_delta", "delta": str(i), "message_id": "m",
-            })
-        await cluster.wait_for_queue(queue, 100)
-        await cluster.settle()
-        deltas = [item["delta"] for item in _drain(queue)]
-        assert deltas == [str(i) for i in range(100)]
     finally:
         await cluster.aclose()
 
@@ -624,40 +354,6 @@ async def test_INV_E_RED_ordering_guard_reds_against_reversed_delivery(tmp_path)
         # stays green even though arrival scrambled, proving the fix mattered.
         by_seq = sorted(arrival, key=lambda row: row.origin_seq)
         assert [row.message for row in by_seq] == published
-    finally:
-        await cluster.aclose()
-
-
-# ==========================================================================
-# F. Backpressure / slow subscriber isolation
-# ==========================================================================
-
-async def test_INV_F1_slow_subscriber_drops_without_stalling_fast(tmp_path):
-    """Two subscribers on the same chat: the fast one drains everything, the
-    slow one never drains. The slow one's bounded queue caps at maxsize and
-    drops the overflow WITHOUT raising and WITHOUT starving the fast one."""
-    from boxagent.transports.web.channel import WebChannel
-    from boxagent.cluster.chat_sync import QUEUE_MAXSIZE
-    cluster = TwoNodeCluster(tmp_path)
-    try:
-        # Local same-machine fan-out: two subscribers on one chat, via the real
-        # ChatBus subscribe path (bus.subscribe + bounded QueueSubscriber).
-        channel: WebChannel = cluster.owner_channel("A", "b")
-        fast_queue = await cluster.subscribe_chat("A", "A", "b", "c")
-        slow_queue = await cluster.subscribe_chat("A", "A", "b", "c")
-
-        overflow = QUEUE_MAXSIZE + 100
-        for i in range(overflow):
-            channel._publish("c", {"type": "stream_delta", "delta": str(i)})
-            # Fast subscriber drains as it goes.
-            while not fast_queue.empty():
-                fast_queue.get_nowait()
-
-        # Slow queue capped, never raised.
-        assert slow_queue.qsize() <= slow_queue.maxsize
-        # Fast subscriber was never blocked — it received the last publish.
-        channel._publish("c", {"type": "stream_delta", "delta": "final"})
-        assert fast_queue.get_nowait()["delta"] == "final"
     finally:
         await cluster.aclose()
 
