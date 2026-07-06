@@ -155,3 +155,31 @@ async def test_guest_client_frame_dispatch():
     client.on_disconnect()
     await asyncio.sleep(0)
     assert event_syncer.detached == ["host"] and chat_syncer.detached == ["host"]
+
+
+# ── wire-version gate (mixed-version graceful drop) ──
+
+async def test_frame_with_unsupported_wire_version_is_dropped():
+    event_syncer, chat_syncer = FakeEventSyncer(), FakeChatSyncer()
+    registry = FakeRegistry()
+    install_registry_hooks(event_syncer, chat_syncer, registry)
+
+    # A frame from a newer protocol version: consumed (dropped), never dispatched
+    # to either syncer — so it can't be misparsed.
+    handled = await registry.on_unknown_frame("guestA", {"type": "event_batch", "v": 999})
+    assert handled is True
+    assert not event_syncer.handled and not chat_syncer.handled
+
+    # Missing v (legacy peer) is accepted and dispatched normally.
+    assert await registry.on_unknown_frame("guestA", {"type": "event_batch"}) is True
+    assert len(event_syncer.handled) == 1
+
+
+async def test_current_wire_version_is_accepted():
+    from boxagent.cluster.peer_transport import WIRE_VERSION
+    event_syncer, chat_syncer = FakeEventSyncer(), FakeChatSyncer()
+    registry = FakeRegistry()
+    install_registry_hooks(event_syncer, chat_syncer, registry)
+
+    assert await registry.on_unknown_frame("guestA", {"type": "chat_event", "v": WIRE_VERSION}) is True
+    assert len(chat_syncer.handled) == 1

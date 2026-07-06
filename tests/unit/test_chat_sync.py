@@ -100,7 +100,7 @@ async def test_subscriber_sends_upstream_and_enqueues_events():
 
     subs = _frames(sent, "host", "chat_subscribe")
     assert subs == [{
-        "type": "chat_subscribe", "target_machine": "host_m", "bot": "b", "chat_id": "c",
+        "type": "chat_subscribe", "target_machine": "host_m", "bot": "b", "chat_id": "c", "v": 2,
     }]
 
     await syncer.handle_frame("host", {
@@ -172,7 +172,7 @@ async def test_host_relays_subscribe_and_events_between_guests():
     })
     # Host forwards the subscribe toward gB.
     assert _frames(sent, "gB", "chat_subscribe") == [{
-        "type": "chat_subscribe", "target_machine": "gB", "bot": "b", "chat_id": "c",
+        "type": "chat_subscribe", "target_machine": "gB", "bot": "b", "chat_id": "c", "v": 2,
     }]
 
     # gB publishes; host relays back to gA.
@@ -183,7 +183,7 @@ async def test_host_relays_subscribe_and_events_between_guests():
     relayed = _frames(sent, "gA", "chat_event")
     assert relayed == [{
         "type": "chat_event", "origin_machine": "gB",
-        "bot": "b", "chat_id": "c", "event": {"type": "message", "text": "relayed"},
+        "bot": "b", "chat_id": "c", "event": {"type": "message", "text": "relayed"}, "v": 2,
     }]
 
 

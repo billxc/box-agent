@@ -229,3 +229,23 @@ covered by test_bus_wiring.py (5) + the frozen INV-B*/C*/D2.
 
 Also this phase: one shared MessageBus instance is now created in gateway and
 injected into EventBus + every WebChannel (events + chat ride one instance).
+
+
+## Phase 7 — wire-protocol version envelope (scoped)
+
+Every outbound syncer frame (event_batch/event_resync/chat_*) is stamped with
+`v: WIRE_VERSION` at the single send chokepoint (PeerTransport.send_to);
+bus_wiring's on_unknown_frame drops frames whose `v` it doesn't understand
+(missing `v` = legacy peer = accepted). This delivers the version-gated,
+graceful mixed-version behavior decision-v2 wanted.
+
+DELIBERATELY NOT DONE: the full frame-TYPE rewrite (replace event_batch/chat_*
+with one `{topic, payload}` vocabulary). The three vocabularies are disjoint by
+`type` and already routed through ONE dispatch (Phase 6 bus_wiring), so merging
+the types is aesthetic; doing it would rewrite the cross-machine wire contract
+(mixed-version hazard) and require editing the frozen net's frame-format
+assertions — net-negative value, flagged twice in review. Frame `type` is
+unchanged, so the frozen INV frame filters (`f.get("type") == ...`) stay green.
+
+Non-frozen tests that asserted EXACT frame dicts (test_chat_sync/test_chat_bus)
+were updated to include `"v": 2` — a mechanical, behavior-preserving change.

@@ -73,7 +73,7 @@ async def test_subscribe_remote_goes_through_syncer():
     assert isinstance(q, asyncio.Queue)
     # Upstream chat_subscribe was sent toward the host.
     assert sent["host"] == [{
-        "type": "chat_subscribe", "target_machine": "host_m", "bot": "b", "chat_id": "c",
+        "type": "chat_subscribe", "target_machine": "host_m", "bot": "b", "chat_id": "c", "v": 2,
     }]
 
 

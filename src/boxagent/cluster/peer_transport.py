@@ -8,8 +8,10 @@ loop. Each syncer composes one of these and keeps its own attach/detach
 side-effects (EventSyncer resync-on-attach + sync detach; ChatSyncer plain
 attach + async relay cleanup) and its own inbound ``handle_frame`` vocabulary.
 
-Frame VOCABULARIES are NOT unified here (that is a later phase) — this only owns
-the peer set and the outbound send.
+Frame VOCABULARIES stay type-tagged per syncer, but every outbound frame is
+stamped with the wire-protocol version ``v`` here (the single send chokepoint for
+event + chat frames), so a peer can drop frames from an incompatible protocol
+version gracefully instead of misparsing them (see bus_wiring's version gate).
 """
 from __future__ import annotations
 
@@ -19,6 +21,12 @@ from typing import Awaitable, Callable, Iterator
 logger = logging.getLogger(__name__)
 
 SendFrame = Callable[[dict], Awaitable[None]]
+
+# Cluster wire-protocol version. Bumped when the frame shape changes
+# incompatibly; a node drops frames whose ``v`` it doesn't understand rather than
+# misparse them. A missing ``v`` is treated as the current version (legacy peers
+# that predate the field).
+WIRE_VERSION = 2
 
 
 class PeerTransport:
@@ -62,10 +70,14 @@ class PeerTransport:
     # ---------- outbound ----------
 
     async def send_to(self, peer_key: str, frame: dict) -> None:
-        """Send one frame to a peer, swallowing + logging any send failure."""
+        """Send one frame to a peer, swallowing + logging any send failure.
+
+        Stamps the wire-protocol version onto the frame first (idempotent — a
+        broadcast reuses one frame dict across peers)."""
         send = self._peers.get(peer_key)
         if send is None:
             return
+        frame.setdefault("v", WIRE_VERSION)
         try:
             await send(frame)
         except Exception as exception:

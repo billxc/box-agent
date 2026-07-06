@@ -16,6 +16,23 @@ so a loop is present). Both syncers send over the same peer WS, so they share on
 from __future__ import annotations
 
 import asyncio
+import logging
+
+from .peer_transport import WIRE_VERSION
+
+logger = logging.getLogger(__name__)
+
+
+def _wire_version_ok(machine_id: str, payload: dict) -> bool:
+    """True if the frame's wire version is understood. A missing ``v`` is a
+    legacy peer (predates the field) and is accepted; a present-but-different
+    ``v`` is a newer/older protocol we drop gracefully rather than misparse."""
+    version = payload.get("v", WIRE_VERSION)
+    if version == WIRE_VERSION:
+        return True
+    logger.warning("dropping frame from %s: unsupported wire version %r (this node speaks %d)",
+                   machine_id, version, WIRE_VERSION)
+    return False
 
 
 def install_registry_hooks(event_syncer, chat_syncer, registry) -> None:
@@ -34,6 +51,8 @@ def install_registry_hooks(event_syncer, chat_syncer, registry) -> None:
         asyncio.create_task(chat_syncer.detach_peer(machine_id))
 
     async def _on_unknown_frame(machine_id: str, payload: dict) -> bool:
+        if not _wire_version_ok(machine_id, payload):
+            return True  # consumed (dropped) — do not misparse or fall through
         if await event_syncer.handle_frame(machine_id, payload):
             return True
         return await chat_syncer.handle_frame(machine_id, payload)
@@ -62,6 +81,8 @@ def install_guest_client_hooks(event_syncer, chat_syncer, client) -> None:
         asyncio.create_task(chat_syncer.detach_peer(HOST_KEY))
 
     async def _on_unknown_frame(payload: dict) -> bool:
+        if not _wire_version_ok("host", payload):
+            return True
         if await event_syncer.handle_frame(HOST_KEY, payload):
             return True
         return await chat_syncer.handle_frame(HOST_KEY, payload)
