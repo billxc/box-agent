@@ -8,6 +8,22 @@
 
 > 📦 **2026-03 ~ 2026-05 的历史条目已归档**到 [archive/decisions-2026-03-to-05.md](archive/decisions-2026-03-to-05.md)。本文件保留 2026-06 起的决策。
 
+## 2026-07-03 — message-bus 迁移 Phase 1.5：塌掉 RPC host/guest 镜像（`cluster/rpc_over_bus.py`）
+
+**背景**：RPC 的 request/reply 半边在 tree 里存在两份，按 role 镜像：`GuestSession.call`（host 侧 registry.py）vs `GuestClient.call`（guest 侧 guest_client.py）；`GuestRegistry._serve_inbound_rpc`（host loopback 回环重发）vs `GuestClient._handle_rpc`（guest loopback，与 host 版几乎逐字相同，只差 http session / 日志身份 / host 独有的 503-not-configured guard）；`ClusterRpc._proxy_via_host` vs `_proxy_to_remote`（只差错误串）。这是 tree 里最大的一块 role-split 重复，也是整个 message-bus 迁移能 net-negative 的关键（chat+event 单独做是 +306 陷阱）。
+
+**方案**：新增 `cluster/rpc_over_bus.py`，把每对镜像塌成一份：
+- `_PendingResponse`（id→future 关联原语）从 registry.py 迁来，registry/guest_client 从此处 re-export 引用。
+- `RpcChannel` —— caller 侧。owns per-link `_pending`（**保持 per-link，不做 bus-global**，否则 reject-on-disconnect 要长出 peer-scan）。`call(send_frame, method, path, ...)` 铸 rpc_id、park future、经注入的 `send_frame` 发 `{type:rpc}` 帧、await 关联回复、清理；`resolve(rpc_id, status, body)` 关联入站 `rpc_resp`；`reject_all(exc)` 断链时一把 fail 所有在飞 caller。host `GuestSession` 与 guest `GuestClient` 各 compose 一个，`call`/`_resolve`/`_pending` 全部 delegate。
+- `InboundRequestExecutor` —— 唯一的 loopback 回环重发器。读 `{id,method,path,query,body}` → `http://127.0.0.1:{local_web_port}{path}` + `Bearer` 头 → `session.request(...)` → JSON-or-raw → 回 `rpc_resp` → except→502。host/guest 三处差异（http session provider / 日志身份 / host 独有 503 guard）全部参数化，**两条日志串按 role 逐字传入保持 byte-identical**。**保持真 aiohttp 回环，不塌成 in-process publish** —— 回环是隐藏的控制流环：guest→host→guest 时 host 重发的请求自己命中 `dispatch_machine_request` 再往第二个 guest 转发，两跳中继 for free；in-process 捷径会静默跳过 auth / machine-resolution / onward dispatch，破坏两跳（INV-R3 冻结此点）。
+- `ClusterRpc._proxy`（一份）取代 `_proxy_via_host` + `_proxy_to_remote`，`label` 参数区分 "host"/"remote" 错误串。
+
+**为什么 RPC 骑 transport 而非 `MessageBus.publish`/topics**：chat/event 是 fire-and-forget fan-out 走 serial single-pump（坑#1 要严格保序）；RPC 是 caller await 单条关联回复，要 id-correlation + 并发，正好相反。放 serial pump 上会把并发 RPC 串行化（一个慢 `/api/logs` 分页阻塞全部）。所以 RPC 骑 transport，`bus/` core 永不获得 "rpc" 概念。
+
+**net LOC（code-only，docstring/注释/空行剔除）**：3 个既有文件删 162 行、加 84 行（delegation shim + lazy-executor build）；新文件 `rpc_over_bus.py` 加 128 行（含 `_PendingResponse` 7 行是**搬迁**非新增）。净 `(84+128)−162 = +50` raw，扣掉搬迁的 `_PendingResponse`(7)+`_resolve`(4) 后按"policy held constant"口径约 **+39**。注：Phase 1.5 是**纯 delegation**，镜像塌成一份共享体的收益在**行数上被 `rpc_over_bus.py` 的两大 docstring 抵消**（模块+类 docstring ~54 行）；纯 executable-body 层面 host+guest 两份 loopback（94 行）+ 两份 call（53 行）+ 两份 proxy（38 行）= 185 行镜像塌成 executor(~55)+RpcChannel-call/resolve/reject(~30)+`_proxy`(~13) ≈ 98 行，body 净减 ~87。行数账的"负"在 Phase 6/7 帧统一落地时才完全兑现（见 decision-v2.md §3）。
+
+**测试**：`test_message_bus_invariants.py` 的 INV-R1..R6 全绿（单跳真 body / loopback 命中真 handler / **两跳 gA→host→gB** / 50 并发乱序不串 / 超时无泄漏 / 非串行）；既有 `test_cluster_rpc.py` / `test_cluster_registry.py` / `test_admin_cluster_restart.py` **零改动**全绿（delegation 保持了 `session._pending` / `session.call` / `session._resolve` 的公开面）。全量 968 passed。
+
 ## 2026-07-02 — 跨机 chat 流统一到 ChatBus/ChatSyncer（干掉 SSE re-framing）
 
 **背景**：同机器的 chat stream 走 `WebChannel` per-chat `asyncio.Queue` fan-out，浏览器 SSE 订阅 `/api/stream`。跨机器则完全另一套：`_handle_web_stream` 里 `if machine != local: dispatch_machine_stream` → guest/host 把 SSE 逐帧 `data:` 行拆开、经 WS `rpc_stream`/`rpc_end` 帧重发、对端再拼回 `data:`。事件因此被 **序列化→拆行→重发→拼回→再序列化** 每一跳一次，脆且和同机器完全不同架构。Owner 要求同机器/跨机器同架构。

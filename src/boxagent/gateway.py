@@ -157,7 +157,13 @@ class Gateway:
             or "local"
         )
         event_store = EventStore(self.local_dir / "events.db")
-        self._event_bus = EventBus(store=event_store, machine_id=machine_id)
+        # One shared MessageBus for the whole process: events publish on
+        # "events.<category>", chat on "chat.<machine>.<bot>.<chat_id>" — one
+        # instance carries both (the owner's "one bus"). Injected into EventBus
+        # here and into every WebChannel via AgentManager.
+        from boxagent.bus.core import MessageBus
+        self._message_bus = MessageBus()
+        self._event_bus = EventBus(store=event_store, machine_id=machine_id, bus=self._message_bus)
         log.bind(self._event_bus)
 
         # Standalone Telegram push: subscribes to the bus, posts to bot API.
@@ -193,6 +199,8 @@ class Gateway:
             storage=storage,
             start_time=self._start_time,
             gateway=self,
+            message_bus=self._message_bus,
+            machine_id=machine_id,
         )
         self._topology = TopologyService(
             config=self.config,
@@ -274,26 +282,20 @@ class Gateway:
         # Cluster: host election. host_priority list determines who is host
         # vs guest at runtime, with failover when primary disappears.
         if self.config.cluster_tunnel:
-            from boxagent.events.sync_wiring import (
-                install_guest_client_hooks as install_event_guest_hooks,
-                install_registry_hooks as install_event_registry_hooks,
-            )
-            from boxagent.cluster.chat_sync_wiring import (
-                install_guest_client_hooks as install_chat_guest_hooks,
-                install_registry_hooks as install_chat_registry_hooks,
+            from boxagent.cluster.bus_wiring import (
+                install_guest_client_hooks,
+                install_registry_hooks,
             )
             event_syncer = self._event_syncer
             chat_syncer = self._chat_syncer
 
-            # event hook 先装（直接赋值 registry callback）；chat hook 后装
-            # （链式接上已有的）。顺序重要 —— 见 chat_sync_wiring 模块 docstring。
+            # One wiring owns the registry/guest_client callbacks and dispatches
+            # both event_* and chat_* frames — no install-order chain.
             def on_registry_ready(registry):
-                install_event_registry_hooks(event_syncer, registry)
-                install_chat_registry_hooks(chat_syncer, registry)
+                install_registry_hooks(event_syncer, chat_syncer, registry)
 
             def on_guest_client_ready(client):
-                install_event_guest_hooks(event_syncer, client)
-                install_chat_guest_hooks(chat_syncer, client)
+                install_guest_client_hooks(event_syncer, chat_syncer, client)
 
             self._host_election = HostElection(
                 config=self.config,

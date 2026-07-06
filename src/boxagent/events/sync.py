@@ -21,8 +21,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Awaitable, Callable
 
+from ..cluster.peer_transport import PeerTransport, SendFrame
 from .bus import EventBus
 from .models import Event
 from .storage import EventStore
@@ -32,8 +32,6 @@ logger = logging.getLogger(__name__)
 SYNC_WINDOW_SECONDS = 3 * 86400  # only sync events newer than this
 DEBOUNCE_SECONDS = 0.2
 MAX_BATCH = 500
-
-SendFrame = Callable[[dict], Awaitable[None]]
 
 
 def event_to_dict(event: Event) -> dict:
@@ -85,16 +83,22 @@ class EventSyncer:
         self._loop = loop
         self._window = sync_window_seconds
         self._debounce = debounce_seconds
-        self._peers: dict[str, SendFrame] = {}
+        self._transport = PeerTransport(log_prefix="syncer")
         self._buffer: list[Event] = []
         self._flush_task: asyncio.Task | None = None
         bus.subscribe(self._on_local_event)
+
+    # The peer registry lives in the shared transport; expose the live dict so
+    # callers that read the peer set (and the test harness) see the same object.
+    @property
+    def _peers(self) -> dict[str, SendFrame]:
+        return self._transport._peers
 
     # ---------- peer lifecycle ----------
 
     def attach_peer(self, peer_key: str, send_frame: SendFrame) -> None:
         """Register a peer and schedule an initial resync request to it."""
-        self._peers[peer_key] = send_frame
+        self._transport.attach_peer(peer_key, send_frame)
         cursors = self._store.max_seq_per_machine()
         self._spawn(self._send_to(peer_key, {
             "type": "event_resync",
@@ -102,7 +106,7 @@ class EventSyncer:
         }))
 
     def detach_peer(self, peer_key: str) -> None:
-        self._peers.pop(peer_key, None)
+        self._transport.detach_peer(peer_key)
 
     def close(self) -> None:
         try:
@@ -111,7 +115,7 @@ class EventSyncer:
             pass
         if self._flush_task is not None and not self._flush_task.done():
             self._flush_task.cancel()
-        self._peers.clear()
+        self._transport.clear()
         self._buffer.clear()
 
     # ---------- inbound ----------
@@ -150,7 +154,7 @@ class EventSyncer:
             return
         # Gossip to other peers (not back to source). Only the host has >1 peer
         # in the typical hub-and-spoke; on a guest this loop is a no-op.
-        others = [p for p in self._peers if p != source_peer]
+        others = [p for p in self._transport if p != source_peer]
         if not others:
             return
         frame = {
@@ -161,8 +165,7 @@ class EventSyncer:
             await self._send_to(peer_key, frame)
 
     async def _handle_resync(self, peer_key: str, cursors: dict) -> None:
-        send = self._peers.get(peer_key)
-        if send is None:
+        if peer_key not in self._transport:
             return
         since_ts = time.time() - self._window
         peer_cursors = {str(k): int(v) for k, v in cursors.items() if isinstance(v, (int, float))}
@@ -208,7 +211,7 @@ class EventSyncer:
         await self._flush()
 
     async def _flush(self) -> None:
-        if not self._buffer or not self._peers:
+        if not self._buffer or not self._transport.peer_keys():
             self._buffer.clear()
             return
         events = self._buffer[:MAX_BATCH]
@@ -217,7 +220,7 @@ class EventSyncer:
             "type": "event_batch",
             "events": [event_to_dict(e) for e in events],
         }
-        for peer_key in list(self._peers):
+        for peer_key in self._transport.peer_keys():
             await self._send_to(peer_key, frame)
         if self._buffer:
             self._schedule_flush()
@@ -225,13 +228,7 @@ class EventSyncer:
     # ---------- helpers ----------
 
     async def _send_to(self, peer_key: str, frame: dict) -> None:
-        send = self._peers.get(peer_key)
-        if send is None:
-            return
-        try:
-            await send(frame)
-        except Exception as exception:
-            logger.warning("syncer: send to %s failed: %r", peer_key, exception)
+        await self._transport.send_to(peer_key, frame)
 
     @staticmethod
     def _running_loop() -> asyncio.AbstractEventLoop | None:

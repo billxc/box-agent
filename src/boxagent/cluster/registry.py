@@ -33,14 +33,20 @@ import asyncio
 import json
 import logging
 import time
-import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from aiohttp import ClientSession, web
 from aiohttp.web import WebSocketResponse
 
+from boxagent.cluster.rpc_over_bus import (
+    InboundRequestExecutor,
+    RpcChannel,
+    _PendingResponse,
+)
 from boxagent.log import Category, log
+
+from .peer_transport import WIRE_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -56,18 +62,6 @@ class RemoteBot:
     kind: str = "bot"
 
 
-class _PendingResponse:
-    """Future-like holder for a single RPC awaiting its reply.
-
-    Resolves ``result`` once with a JSON dict (``{"status": int, "body": dict}``).
-    """
-
-    __slots__ = ("result",)
-
-    def __init__(self) -> None:
-        self.result: asyncio.Future[dict] = asyncio.get_event_loop().create_future()
-
-
 @dataclass
 class GuestSession:
     """One connected guest node."""
@@ -75,8 +69,12 @@ class GuestSession:
     machine_id: str
     ws: WebSocketResponse
     bots: list[RemoteBot] = field(default_factory=list)
-    _pending: dict[str, _PendingResponse] = field(default_factory=dict, repr=False)
+    _channel: RpcChannel = field(default_factory=RpcChannel, repr=False)
     _closed: bool = False
+
+    @property
+    def _pending(self) -> dict[str, _PendingResponse]:
+        return self._channel.pending
 
     async def call(
         self,
@@ -88,26 +86,13 @@ class GuestSession:
         timeout: float = 30.0,
     ) -> dict:
         """RPC: send request, await single response."""
-        rpc_id = uuid.uuid4().hex
-        pending = _PendingResponse()
-        self._pending[rpc_id] = pending
-        try:
-            await self.ws.send_json({
-                "type": "rpc",
-                "id": rpc_id,
-                "method": method,
-                "path": path,
-                "query": query or {},
-                "body": body,
-            })
-            return await asyncio.wait_for(pending.result, timeout=timeout)
-        finally:
-            self._pending.pop(rpc_id, None)
+        return await self._channel.call(
+            self.ws.send_json, method, path,
+            query=query, body=body, timeout=timeout,
+        )
 
     def _resolve(self, rpc_id: str, status: int, body: dict) -> None:
-        p = self._pending.get(rpc_id)
-        if p and not p.result.done():
-            p.result.set_result({"status": status, "body": body})
+        self._channel.resolve(rpc_id, status, body)
 
 
 @dataclass
@@ -138,6 +123,7 @@ class GuestRegistry:
     local_web_port: int = 0
     local_web_token: str = ""
     _http_session: ClientSession | None = field(default=None, repr=False)
+    _inbound_executor: InboundRequestExecutor | None = field(default=None, repr=False)
 
     def get(self, machine_id: str) -> GuestSession | None:
         return self.sessions.get(machine_id)
@@ -211,62 +197,32 @@ class GuestRegistry:
     async def _serve_inbound_rpc(self, session: GuestSession, request: dict) -> None:
         """Handle an `rpc` frame coming *from* a guest.
 
-        Mirrors `GuestClient._handle_rpc`: re-issue the request against the
-        host's own web port over loopback, then send the response back to the
-        guest as `rpc_resp`. Reusing the loopback HTTP path means the host's full
+        Delegates to the shared :class:`InboundRequestExecutor`: re-issue the
+        request against the host's own web port over loopback so the host's full
         `_handle_web_*` logic — which already includes host→guest proxying —
-        handles routing for free.
+        handles routing (incl. onward guest→guest relay) for free.
         """
-        rpc_id = str(request.get("id") or "")
-        method = str(request.get("method") or "GET").upper()
-        path = str(request.get("path") or "")
-        query: dict = request.get("query") or {}
-        body = request.get("body")
-
-        if not self.local_web_port:
-            try:
-                await session.ws.send_json({
-                    "type": "rpc_resp", "id": rpc_id, "status": 503,
-                    "body": {"ok": False, "error": "host loopback not configured"},
-                })
-            except Exception:
-                pass
-            return
-
         if self._http_session is None:
             self._http_session = ClientSession()
-        url = f"http://127.0.0.1:{self.local_web_port}{path}"
-        headers = {}
-        if self.local_web_token:
-            headers["Authorization"] = f"Bearer {self.local_web_token}"
-
-        try:
-            kwargs: dict = {"params": query, "headers": headers}
-            if method != "GET" and body is not None:
-                kwargs["json"] = body
-            async with self._http_session.request(method, url, **kwargs) as response:
-                try:
-                    body_out = await response.json(content_type=None)
-                except Exception:
-                    body_out = {"raw": (await response.text())[:4096]}
-                await session.ws.send_json({
-                    "type": "rpc_resp", "id": rpc_id,
-                    "status": response.status, "body": body_out,
-                })
-        except Exception as e:
-            logger.warning("host: inbound rpc %s %s failed: %s", method, path, e)
-            log.warning(
-                Category.CLUSTER_HOST_RPC_FAIL,
-                f"inbound rpc {method} {path} failed",
-                machine_id=session.machine_id, method=method, path=path, error=repr(e),
+        # Rebuild if the injected loopback config changed since last call
+        # (gateway injects local_web_port after the web app starts).
+        executor = self._inbound_executor
+        if (executor is None
+                or executor.local_web_port != self.local_web_port
+                or executor._machine_id != session.machine_id):
+            executor = InboundRequestExecutor(
+                local_web_port=self.local_web_port,
+                local_web_token=self.local_web_token,
+                http_session_provider=lambda: self._http_session,
+                logger_message="host: inbound rpc %s %s failed: %s",
+                event_message_prefix="inbound rpc ",
+                fail_category=Category.CLUSTER_HOST_RPC_FAIL,
+                not_configured_error="host loopback not configured",
+                machine_id=session.machine_id,
+                require_web_port=True,
             )
-            try:
-                await session.ws.send_json({
-                    "type": "rpc_resp", "id": rpc_id, "status": 502,
-                    "body": {"ok": False, "error": str(e)},
-                })
-            except Exception:
-                pass
+            self._inbound_executor = executor
+        await executor.serve(session.ws.send_json, request)
 
     async def handle_ws(self, request: web.Request) -> web.WebSocketResponse:
         """Aiohttp handler for /api/guest/ws."""
@@ -350,6 +306,11 @@ class GuestRegistry:
                             )
                     continue
 
+                if payload.get("v", WIRE_VERSION) != WIRE_VERSION:
+                    logger.warning("dropping frame from %s: unsupported wire version %r",
+                                   session.machine_id, payload.get("v"))
+                    continue
+
                 if t == "ping":
                     await ws.send_json({"type": "pong"})
                 elif t == "rpc":
@@ -398,6 +359,11 @@ class GuestRegistry:
                             machine_id=session.machine_id, frame_type=str(t), error=repr(e),
                         )
         finally:
+            if session is not None:
+                # Fail any in-flight guest→host reverse RPCs so their callers
+                # (web relays via dispatch_machine_request) fail fast instead of
+                # hanging the full timeout on a dead session.
+                session._channel.reject_all(RuntimeError("guest ws disconnected"))
             if session is not None and not session._closed:
                 self.sessions.pop(session.machine_id, None)
                 # Remember bots so the UI keeps showing the row as "offline"
