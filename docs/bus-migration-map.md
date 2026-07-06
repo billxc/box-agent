@@ -249,3 +249,21 @@ unchanged, so the frozen INV frame filters (`f.get("type") == ...`) stay green.
 
 Non-frozen tests that asserted EXACT frame dicts (test_chat_sync/test_chat_bus)
 were updated to include `"v": 2` — a mechanical, behavior-preserving change.
+
+
+## Phase 8 — attempted then REVERTED (finding)
+
+Phase 8's plan was "delete the EventBus shim, log.bind(LogToBusAdapter)". I built
+it (bus_setup.py with StoreSubscriber-registration + subscribe_events helper +
+LogToBusAdapter; rewired EventSyncer / EventStreamSubscriber / TelegramNotifier /
+web_server / gateway; migrated the frozen harness + invariants) — and reverted it.
+
+**Finding**: EventBus is NOT a "shim to delete" — it is a coherent event *facade*
+that bundles (create-or-share the bus + register the durable store-write + provide
+publish + subscribe). Deleting it spreads that bundling to every caller: 4 production
+consumers + gateway + ~9 test files each had to juggle
+`MessageBus + register_store_subscriber + LogToBusAdapter + subscribe_events`
+separately. Net code INCREASED and ceremony spread everywhere — the opposite of the
+goal. The "EventBus = deletable shim" premise (decision-v2 Phase 8) was a planning
+error. EventBus stays, now routing through the shared MessageBus (Phase 4). The
+migration completes functionally at Phase 7.
