@@ -47,6 +47,9 @@ class GuestClient:
     # syncer can attach/detach its peer (key: "host").
     on_connect: Callable[["GuestClient"], None] | None = None
     on_disconnect: Callable[[], None] | None = None
+    # The process ClusterBus (duck-typed). When set, the host link is registered
+    # with it and inbound `packet` frames are routed to it. Injected by gateway.
+    cluster_bus: object | None = None
 
     _task: asyncio.Task | None = None
     _stop: bool = False
@@ -214,6 +217,8 @@ class GuestClient:
                         "token": self.host_token,
                         "bots": self.bot_provider(),
                     })
+                    if self.cluster_bus is not None:
+                        self.cluster_bus.attach_link("host", ws.send_json)
                     logger.info("guest: hello sent (machine_id=%s)", self.machine_id)
                     log.info(
                         Category.CLUSTER_GUEST_CONNECTED,
@@ -254,6 +259,8 @@ class GuestClient:
                 )
             finally:
                 self._ws = None
+                if self.cluster_bus is not None:
+                    self.cluster_bus.detach_link("host")
                 # Reject any in-flight reverse RPCs so callers see a clean
                 # error instead of hanging until timeout.
                 self._channel.reject_all(RuntimeError("guest: ws disconnected"))
@@ -277,6 +284,12 @@ class GuestClient:
                 try:
                     payload = json.loads(msg.data)
                 except Exception:
+                    continue
+                if payload.get("type") == "packet":
+                    # Unified cluster bus: route to ClusterBus (own v3 gate).
+                    # Intercept before the legacy v2 gate below.
+                    if self.cluster_bus is not None:
+                        self.cluster_bus.on_inbound("host", payload)
                     continue
                 if payload.get("v", WIRE_VERSION) != WIRE_VERSION:
                     logger.warning("guest: dropping frame with unsupported wire version %r",

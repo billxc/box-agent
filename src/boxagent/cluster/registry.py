@@ -122,6 +122,10 @@ class GuestRegistry:
     # in guest_client._handle_rpc). Injected by gateway after web app starts.
     local_web_port: int = 0
     local_web_token: str = ""
+    # The process ClusterBus (duck-typed to avoid an import cycle). When set, a
+    # connected guest becomes a cluster-bus link and inbound `packet` frames are
+    # routed to it. Injected by gateway in on_registry_ready.
+    cluster_bus: object | None = None
     _http_session: ClientSession | None = field(default=None, repr=False)
     _inbound_executor: InboundRequestExecutor | None = field(default=None, repr=False)
 
@@ -284,6 +288,8 @@ class GuestRegistry:
                         machine_id=machine_id, bot_count=len(bots),
                     )
                     await ws.send_json({"type": "welcome"})
+                    if self.cluster_bus is not None:
+                        self.cluster_bus.attach_link(machine_id, ws.send_json)
                     if self.on_guest_attached is not None:
                         try:
                             self.on_guest_attached(machine_id, session)
@@ -304,6 +310,14 @@ class GuestRegistry:
                                 "on_topology_change(hello) failed",
                                 machine_id=machine_id, error=repr(e),
                             )
+                    continue
+
+                if t == "packet":
+                    # Unified cluster bus: route to ClusterBus (which runs its own
+                    # v3 version gate). Intercept BEFORE the legacy v2 gate below,
+                    # which would otherwise drop a v3 packet frame.
+                    if self.cluster_bus is not None:
+                        self.cluster_bus.on_inbound(session.machine_id, payload)
                     continue
 
                 if payload.get("v", WIRE_VERSION) != WIRE_VERSION:
@@ -360,6 +374,8 @@ class GuestRegistry:
                         )
         finally:
             if session is not None:
+                if self.cluster_bus is not None:
+                    self.cluster_bus.detach_link(session.machine_id)
                 # Fail any in-flight guest→host reverse RPCs so their callers
                 # (web relays via dispatch_machine_request) fail fast instead of
                 # hanging the full timeout on a dead session.

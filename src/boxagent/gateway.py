@@ -162,7 +162,18 @@ class Gateway:
         # instance carries both (the owner's "one bus"). Injected into EventBus
         # here and into every WebChannel via AgentManager.
         from boxagent.bus.core import MessageBus
-        self._message_bus = MessageBus(machine_id=machine_id)
+        if self.config.cluster_tunnel:
+            # Clustered node: the shared bus is a ClusterBus (events + chat + rpc
+            # all ride it, local or remote transparently). Single-machine nodes
+            # stay on the plain in-process MessageBus.
+            from boxagent.cluster.cluster_bus import ClusterBus
+            self._message_bus = ClusterBus(
+                machine_id=machine_id,
+                route=self._route_packet,
+                on_unreachable=self._on_machine_unreachable,
+            )
+        else:
+            self._message_bus = MessageBus(machine_id=machine_id)
         self._event_bus = EventBus(store=event_store, machine_id=machine_id, bus=self._message_bus)
         log.bind(self._event_bus)
 
@@ -294,9 +305,11 @@ class Gateway:
             # both event_* and chat_* frames — no install-order chain.
             def on_registry_ready(registry):
                 install_registry_hooks(event_syncer, chat_syncer, registry)
+                registry.cluster_bus = self._message_bus
 
             def on_guest_client_ready(client):
                 install_guest_client_hooks(event_syncer, chat_syncer, client)
+                client.cluster_bus = self._message_bus
 
             self._host_election = HostElection(
                 config=self.config,
@@ -310,6 +323,25 @@ class Gateway:
             await self._host_election.start()
 
         logger.info("Gateway ready: %d bot(s) active", len(self.config.bots))
+
+    def _route_packet(self, target_machine: str) -> "str | None":
+        """ClusterBus route: which link key reaches `target_machine`. Guest →
+        always the host uplink; host → the target guest's session (link key ==
+        machine_id). None when unreachable → the bus signals on_unreachable."""
+        topology = self._topology
+        if topology is None:
+            return None
+        if topology.local_role() == "guest":
+            return "host"
+        registry = topology.guest_registry
+        if registry is not None and target_machine in registry.sessions:
+            return target_machine
+        return None
+
+    def _on_machine_unreachable(self, machine: str) -> None:
+        # Phase 4 wires this to the request/reply helper so pending requests to
+        # `machine` fail fast instead of hanging. No-op until then.
+        pass
 
     def _start_scheduler(self) -> None:
         """Create and start the Scheduler after all active bots are online."""
