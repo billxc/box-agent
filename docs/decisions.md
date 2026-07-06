@@ -18,11 +18,11 @@
 - 本机订了一个「远端拥有」的 topic → 新增的 `MessageBus.watch_subscriptions(prefix, on_add, on_remove)` 通知 `ChatSyncer`，refcount 边沿往上游发 `chat_subscribe`（**取代 `on_local_demand` + remote_subscribe**）。
 - 入站 `chat_event` 帧 → `bus.publish` 重新注入本机 topic：本机 browser queue（bus 订阅者）+ 下游中继（`_OutboundBridge`）**一次搞定**，两跳 relay = 重注入 + 前缀转发。
 
-**删掉的适配缝**：`chat_bus.py` 的 `_pump`/`_on_local_demand`/`aclose-cancels-pumps`；`ChatSyncer` 的 `on_local_publish`/`on_local_demand`/`_fire_demand`/`_queues`/`remote_subscribe`/`remote_unsubscribe`/`_toggle_source` 的本地分支。`ChatBus` 从 88 行缩到 62 行（纯订阅门面）。`_ChatQueueSubscriber` 与 WebChannel 的重复合并成 `bus/subscriber.py::QueueSubscriber`（两处共用）。
+**删掉的适配缝**：`chat_bus.py` 的 `_pump`/`_on_local_demand`/`aclose-cancels-pumps`；`ChatSyncer` 的 `on_local_publish`/`on_local_demand`/`_fire_demand`/`_queues`/`remote_subscribe`/`remote_unsubscribe`/`_toggle_source` 的本地分支。`ChatBus` 从 88 行缩到 62 行（纯订阅门面）。`_ChatQueueSubscriber` 与 WebChannel 的重复合并成 `bus/subscriber.py::QueueSubscriber`（两处共用）。**WebChannel 变 publish-only**：`subscribe`/`unsubscribe`/`_subscribers`/`stop` 的 `_close` 广播删掉（浏览器 SSE 订阅现在全归 ChatBus，旧"三套队列机制"的最后残留清掉）——浏览器改经 bus 直接订阅（测试同步改）。
 
 **唯一新增的不可消除物**：`bus.publish`/`subscribe` 同步、`ws.send_json` 异步 —— 出站 peer 帧走**单条有序发送队列** `_sendq` + 一个 `_drain` task。FIFO 保证同一 chat 的 stream_delta 不乱序（**坑#1** 禁止 create_task-per-event）。这是 sync bus↔async WS 的本质边界，不是适配缝；旧的 per-`(bot,chat)` pump 就是它的等价物，现在收敛成每节点一条。
 
-**诚实结账**：`src/` 净 **+70 行**（+241/−171）。真正的统一（`watch_subscriptions` + `QueueSubscriber` + 有序 drain + bridge 逻辑）加的比删的（pump/fork/`_queues`）略多 —— **架构真统一了，但代码没缩**。这和上一条的教训一致：加一层"让本地远端同协议"的能力是要花代码的。
+**诚实结账**：`src/` 净 **+44 行**（+246/−202）。真正的统一（`watch_subscriptions` + `QueueSubscriber` + 有序 drain + bridge 逻辑）加的比删的（pump/fork/`_queues`/WebChannel 订阅面）略多 —— **架构真统一了，代码没大缩**。跨机三种投递（broadcast+cursor / demand+relay / request-reply）是**本质不同的策略代码**，统一到一根 transport/bus 不会让策略消失，所以没有"大刀阔斧删除"藏着 —— 这和上一条的教训一致。
 
 **边界（哪些"没上 bus"，为什么对）**：
 - **RPC** 仍是 request/reply 骑 `PeerTransport`，不变 publish —— 上一条已论证（id-correlation + 并发 vs serial 保序 fan-out，正好相反；成熟 bus 如 NATS 也是 request/reply 架在 pub/sub 之上）。

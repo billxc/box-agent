@@ -640,10 +640,11 @@ async def test_INV_F1_slow_subscriber_drops_without_stalling_fast(tmp_path):
     from boxagent.cluster.chat_sync import QUEUE_MAXSIZE
     cluster = TwoNodeCluster(tmp_path)
     try:
-        # Local same-machine fan-out: two subscribers on one WebChannel.
+        # Local same-machine fan-out: two subscribers on one chat, via the real
+        # ChatBus subscribe path (bus.subscribe + bounded QueueSubscriber).
         channel: WebChannel = cluster.owner_channel("A", "b")
-        fast_queue = channel.subscribe("c")
-        slow_queue = channel.subscribe("c")
+        fast_queue = await cluster.subscribe_chat("A", "A", "b", "c")
+        slow_queue = await cluster.subscribe_chat("A", "A", "b", "c")
 
         overflow = QUEUE_MAXSIZE + 100
         for i in range(overflow):

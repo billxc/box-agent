@@ -7,8 +7,7 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
 from boxagent.agent_env import ChannelInfo
-from boxagent.bus.core import MessageBus, Subscription
-from boxagent.bus.subscriber import QueueSubscriber
+from boxagent.bus.core import MessageBus
 from boxagent.transports.base import Attachment, Channel, IncomingMessage, StreamHandle
 
 logger = logging.getLogger(__name__)
@@ -36,12 +35,9 @@ class WebChannel(Channel):
     # Local chat fan-out rides a MessageBus on "chat.<machine>.<bot>.<chat_id>"
     # topics. None → a private instance (tests / harness construct
     # WebChannel(bot_name=...)); production injects the shared bus so events and
-    # chat share one instance.
+    # chat share one instance. Browsers subscribe via ChatBus (bus.subscribe on
+    # the same topic) — WebChannel is publish-only, it owns no queues.
     message_bus: MessageBus | None = None
-    # Active subscriptions keyed by chat_id — kept as a dict so "is anyone
-    # watching this chat" checks and stop() work as before; each entry is
-    # (queue, bus_subscription). Fan-out goes through message_bus.
-    _subscribers: dict[str, list[tuple[asyncio.Queue, Subscription]]] = field(default_factory=dict)
     _stream_buffers: dict[str, str] = field(default_factory=dict)
     _next_msg_id: int = 0
 
@@ -53,36 +49,14 @@ class WebChannel(Channel):
         return
 
     async def stop(self) -> None:
-        for entries in self._subscribers.values():
-            for queue, subscription in entries:
-                queue.put_nowait({"type": "_close"})
-                subscription.close()
-        self._subscribers.clear()
+        # Publish-only: browsers' SSE subscriptions live on ChatBus, closed at
+        # gateway shutdown (chat_bus.aclose). Nothing to tear down here.
+        self._stream_buffers.clear()
 
-    # --- subscription management ---
+    # --- publish ---
 
     def _topic(self, chat_id: str) -> str:
         return f"chat.{self.machine_id}.{self.bot_name}.{chat_id}"
-
-    def subscribe(self, chat_id: str) -> asyncio.Queue:
-        queue: asyncio.Queue = asyncio.Queue(maxsize=1024)
-        subscription = self.message_bus.subscribe(
-            self._topic(chat_id), QueueSubscriber(queue, chat_id),
-        )
-        self._subscribers.setdefault(chat_id, []).append((queue, subscription))
-        return queue
-
-    def unsubscribe(self, chat_id: str, q: asyncio.Queue) -> None:
-        entries = self._subscribers.get(chat_id)
-        if not entries:
-            return
-        for index, (queue, subscription) in enumerate(entries):
-            if queue is q:
-                subscription.close()
-                del entries[index]
-                break
-        if not entries:
-            self._subscribers.pop(chat_id, None)
 
     def _publish(self, chat_id: str, event: dict) -> None:
         event.setdefault("ts", time.time())
