@@ -25,7 +25,7 @@ of log strings. This module collapses each mirror into ONE implementation:
   an in-process shortcut would skip auth, machine-resolution, and onward
   dispatch, silently breaking two-hop.
 
-The wire frames (``{"type": "rpc", ...}`` / ``{"type": "rpc_resp", ...}``) are
+The wire frames (``{"type": "rpc", ...}`` / ``{"type": "rpc_resp", "v": WIRE_VERSION, ...}``) are
 unchanged; frame unification is a later phase.
 """
 from __future__ import annotations
@@ -37,6 +37,8 @@ from typing import Awaitable, Callable
 from aiohttp import ClientSession
 
 from boxagent.log import log
+
+from .peer_transport import WIRE_VERSION
 
 SendFrame = Callable[[dict], Awaitable[None]]
 
@@ -91,7 +93,7 @@ class RpcChannel:
         self._pending[rpc_id] = pending
         try:
             await send_frame({
-                "type": "rpc",
+                "type": "rpc", "v": WIRE_VERSION,
                 "id": rpc_id,
                 "method": method,
                 "path": path,
@@ -173,7 +175,7 @@ class InboundRequestExecutor:
         if self._require_web_port and not self._local_web_port:
             try:
                 await send_reply({
-                    "type": "rpc_resp", "id": rpc_id, "status": 503,
+                    "type": "rpc_resp", "v": WIRE_VERSION, "id": rpc_id, "status": 503,
                     "body": {"ok": False, "error": self._not_configured_error},
                 })
             except Exception:
@@ -196,7 +198,7 @@ class InboundRequestExecutor:
                 except Exception:
                     body_out = {"raw": (await response.text())[:4096]}
                 await send_reply({
-                    "type": "rpc_resp", "id": rpc_id,
+                    "type": "rpc_resp", "v": WIRE_VERSION, "id": rpc_id,
                     "status": response.status, "body": body_out,
                 })
         except Exception as exception:
@@ -209,7 +211,7 @@ class InboundRequestExecutor:
             )
             try:
                 await send_reply({
-                    "type": "rpc_resp", "id": rpc_id, "status": 502,
+                    "type": "rpc_resp", "v": WIRE_VERSION, "id": rpc_id, "status": 502,
                     "body": {"ok": False, "error": str(exception)},
                 })
             except Exception:

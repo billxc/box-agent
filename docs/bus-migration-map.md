@@ -267,3 +267,25 @@ separately. Net code INCREASED and ceremony spread everywhere — the opposite o
 goal. The "EventBus = deletable shim" premise (decision-v2 Phase 8) was a planning
 error. EventBus stays, now routing through the shared MessageBus (Phase 4). The
 migration completes functionally at Phase 7.
+
+
+## Post-review fixes (xhigh code-review)
+
+A recall-mode review of the whole branch surfaced 15 findings; the top-3
+actionable ones were fixed:
+- **Version protocol was half-applied** (RPC frames got neither the `v` stamp nor
+  the version gate). Fixed: rpc/rpc_resp frames now carry `v: WIRE_VERSION`, and
+  both WS loops (registry.handle_ws, guest_client._serve) drop frames with an
+  unsupported `v` before dispatch — the version protocol now covers all three
+  frame families uniformly.
+- **bus_wiring fire-and-forget create_task** (resubscribe/detach could be GC'd
+  mid-flight, exceptions vanished). Fixed: `_spawn` holds a strong ref in a set
+  and logs any task exception.
+- **bus/subscriber.py LocalSubscriber/RemoteSubscriber were dead** (only tests
+  used them; production hand-rolls its own adapters). Deleted both + their tests
+  (~180 lines) — kept the `Subscriber` protocol.
+
+Deferred (documented, not fixed): MessageBus.publish O(total-subscriptions) scan
+on the shared bus (negligible at personal scale; a per-topic index would restore
+O(watchers)); remote-SSE `_close` teardown asymmetry; several latent items
+(payload aliasing, `_sources` derivable, EventBus `==` unsubscribe bookkeeping).

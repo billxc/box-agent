@@ -8,17 +8,11 @@ from __future__ import annotations
 
 from boxagent.bus.core import MessageBus, Subscription
 from boxagent.bus.message import Message
-from boxagent.bus.subscriber import (
-    LocalSubscriber,
-    RemoteSubscriber,
-    Subscriber,
-)
+from boxagent.bus.subscriber import Subscriber
 
 __all__ = [
     "Message",
     "MessageBus",
     "Subscription",
     "Subscriber",
-    "LocalSubscriber",
-    "RemoteSubscriber",
 ]

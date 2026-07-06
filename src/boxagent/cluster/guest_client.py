@@ -12,6 +12,7 @@ import aiohttp
 from aiohttp import ClientSession, WSMsgType
 
 from . import devtunnel
+from .peer_transport import WIRE_VERSION
 from .rpc_over_bus import InboundRequestExecutor, RpcChannel, _PendingResponse
 from boxagent.log import Category, log
 
@@ -276,6 +277,10 @@ class GuestClient:
                 try:
                     payload = json.loads(msg.data)
                 except Exception:
+                    continue
+                if payload.get("v", WIRE_VERSION) != WIRE_VERSION:
+                    logger.warning("guest: dropping frame with unsupported wire version %r",
+                                   payload.get("v"))
                     continue
                 if payload.get("type") == "rpc":
                     asyncio.create_task(self._handle_rpc(ws, payload))

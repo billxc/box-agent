@@ -46,6 +46,8 @@ from boxagent.cluster.rpc_over_bus import (
 )
 from boxagent.log import Category, log
 
+from .peer_transport import WIRE_VERSION
+
 logger = logging.getLogger(__name__)
 
 
@@ -302,6 +304,11 @@ class GuestRegistry:
                                 "on_topology_change(hello) failed",
                                 machine_id=machine_id, error=repr(e),
                             )
+                    continue
+
+                if payload.get("v", WIRE_VERSION) != WIRE_VERSION:
+                    logger.warning("dropping frame from %s: unsupported wire version %r",
+                                   session.machine_id, payload.get("v"))
                     continue
 
                 if t == "ping":

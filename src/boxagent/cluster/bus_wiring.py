@@ -22,6 +22,25 @@ from .peer_transport import WIRE_VERSION
 
 logger = logging.getLogger(__name__)
 
+# Strong refs to fire-and-forget chat resubscribe/detach tasks: the event loop
+# keeps only a WEAK ref to a bare create_task result, so without this the task
+# can be garbage-collected mid-flight (a reconnect's chat_subscribe replay would
+# silently never run). The done-callback drops the ref and logs any exception
+# that would otherwise vanish into an unretrieved task.
+_background_tasks: set = set()
+
+
+def _spawn(coroutine) -> None:
+    task = asyncio.create_task(coroutine)
+    _background_tasks.add(task)
+
+    def _done(finished: asyncio.Task) -> None:
+        _background_tasks.discard(finished)
+        if not finished.cancelled() and finished.exception() is not None:
+            logger.warning("chat wiring task failed: %r", finished.exception())
+
+    task.add_done_callback(_done)
+
 
 def _wire_version_ok(machine_id: str, payload: dict) -> bool:
     """True if the frame's wire version is understood. A missing ``v`` is a
@@ -44,11 +63,11 @@ def install_registry_hooks(event_syncer, chat_syncer, registry) -> None:
             await session.ws.send_json(frame)
         event_syncer.attach_peer(machine_id, send_frame)
         chat_syncer.attach_peer(machine_id, send_frame)
-        asyncio.create_task(chat_syncer.resubscribe(machine_id))
+        _spawn(chat_syncer.resubscribe(machine_id))
 
     def _on_detached(machine_id: str) -> None:
         event_syncer.detach_peer(machine_id)
-        asyncio.create_task(chat_syncer.detach_peer(machine_id))
+        _spawn(chat_syncer.detach_peer(machine_id))
 
     async def _on_unknown_frame(machine_id: str, payload: dict) -> bool:
         if not _wire_version_ok(machine_id, payload):
@@ -74,11 +93,11 @@ def install_guest_client_hooks(event_syncer, chat_syncer, client) -> None:
             await ws.send_json(frame)
         event_syncer.attach_peer(HOST_KEY, send_frame)
         chat_syncer.attach_peer(HOST_KEY, send_frame)
-        asyncio.create_task(chat_syncer.resubscribe(HOST_KEY))
+        _spawn(chat_syncer.resubscribe(HOST_KEY))
 
     def _on_disconnect() -> None:
         event_syncer.detach_peer(HOST_KEY)
-        asyncio.create_task(chat_syncer.detach_peer(HOST_KEY))
+        _spawn(chat_syncer.detach_peer(HOST_KEY))
 
     async def _on_unknown_frame(payload: dict) -> bool:
         if not _wire_version_ok("host", payload):
