@@ -8,29 +8,10 @@ from typing import Awaitable, Callable
 
 from boxagent.agent_env import ChannelInfo
 from boxagent.bus.core import MessageBus, Subscription
-from boxagent.bus.message import Message
+from boxagent.bus.subscriber import QueueSubscriber
 from boxagent.transports.base import Attachment, Channel, IncomingMessage, StreamHandle
 
 logger = logging.getLogger(__name__)
-
-
-class _ChatQueueSubscriber:
-    """Bus subscriber forwarding one chat topic's events to a browser queue.
-
-    Delivers the raw event dict (``message.payload``): the SSE handler and the
-    ChatBus owner pump both read event dicts off this queue, unchanged from when
-    WebChannel owned the fan-out directly.
-    """
-
-    def __init__(self, queue: asyncio.Queue, chat_id: str) -> None:
-        self._queue = queue
-        self._chat_id = chat_id
-
-    def deliver(self, message: Message) -> None:
-        try:
-            self._queue.put_nowait(message.payload)
-        except asyncio.QueueFull:
-            logger.warning("web subscriber queue full (chat_id=%s); dropping event", self._chat_id)
 
 
 @dataclass
@@ -86,7 +67,7 @@ class WebChannel(Channel):
     def subscribe(self, chat_id: str) -> asyncio.Queue:
         queue: asyncio.Queue = asyncio.Queue(maxsize=1024)
         subscription = self.message_bus.subscribe(
-            self._topic(chat_id), _ChatQueueSubscriber(queue, chat_id),
+            self._topic(chat_id), QueueSubscriber(queue, chat_id),
         )
         self._subscribers.setdefault(chat_id, []).append((queue, subscription))
         return queue

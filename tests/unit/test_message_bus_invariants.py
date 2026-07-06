@@ -356,9 +356,11 @@ async def test_INV_C2_refcount_two_watchers_one_upstream(tmp_path):
 
         node_b_bus = cluster.nodes["B"].chat_bus
         await node_b_bus.unsubscribe("b", "c", "A", queue1)
+        await cluster.settle()  # upstream frames ride the ordered async drain
         unsubs = [f for f in sent if f.get("type") == "chat_unsubscribe"]
         assert unsubs == []  # one watcher left
         await node_b_bus.unsubscribe("b", "c", "A", queue2)
+        await cluster.settle()
         unsubs = [f for f in sent if f.get("type") == "chat_unsubscribe"]
         assert len(unsubs) == 1
     finally:

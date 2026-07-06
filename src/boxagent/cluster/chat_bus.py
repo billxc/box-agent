@@ -1,87 +1,62 @@
 """location-transparent chat 订阅门面。
 
-调用方订阅某 ``machine`` 上的 ``(bot, chat_id)``，拿回一个普通 ``asyncio.Queue``
-（元素是 event dict）—— 本地还是远端形状一致，于是 web server 的 SSE handler
-不再按 machine 分叉：
+SSE handler 订阅某 ``machine`` 上的 ``(bot, chat_id)``，拿回一个普通 ``asyncio.Queue``
+（元素是 event dict）—— 本地还是远端**同一条路径**：都是 ``bus.subscribe`` 一个
+``chat.<owner>.<bot>.<chat_id>`` topic：
 
-    local  machine → 该 bot 的进程内 WebChannel queue（不变）
-    remote machine → ChatSyncer.remote_subscribe（结构化帧走 cluster WS）
+    local  owner → 该 bot 的 WebChannel 会 publish 到这个 topic（进程内 fan-out）
+    remote owner → ChatSyncer 的 demand observer 看到这个订阅，往上游发 chat_subscribe；
+                   远端来的 chat_event 帧被 ChatSyncer 重新 publish 回同一 topic
 
-owner 侧：远端 peer 开始看我本机 bot 时，ChatSyncer fire ``on_local_demand``；
-我们跑一个 per-chat pump，把该 bot 的 WebChannel 事件经 ``on_local_publish`` 转发 ——
-顺序、复用同一份进程内 fan-out，不用 create_task-per-event（避免乱序）。
+没有本地/远端分叉，没有 owner-side pump —— 那些都塌进了 ChatSyncer（一根 bus 上的
+bridge）。本门面只负责建 queue、退订、shutdown 时给在看的 queue 发 ``_close``。
 """
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Callable
 
-from .chat_sync import ChatSyncer
+from boxagent.bus.core import MessageBus, Subscription
+from boxagent.bus.subscriber import QueueSubscriber
 
-logger = logging.getLogger(__name__)
+from .chat_sync import QUEUE_MAXSIZE, _topic
 
-# bot_name -> 本机 WebChannel（duck-typed subscribe/unsubscribe）或 None，
-# 这样 cluster/ 不必 import transport 层。
+# bot_name -> 本机 WebChannel（或 None）—— 只用来判断本机 bot 是否 web-enabled。
 ChannelFor = Callable[[str], "object | None"]
 
 
 class ChatBus:
-    def __init__(self, *, local_machine: str, syncer: ChatSyncer, channel_for: ChannelFor) -> None:
+    def __init__(self, *, local_machine: str, message_bus: MessageBus, channel_for: ChannelFor) -> None:
         self._local = local_machine
-        self._syncer = syncer
+        self._bus = message_bus
         self._channel_for = channel_for
-        self._pumps: dict[tuple[str, str], asyncio.Task] = {}
-        syncer.on_local_demand = self._on_local_demand
+        self._subscriptions: dict[asyncio.Queue, Subscription] = {}
 
     def _is_local(self, machine: str | None) -> bool:
         return machine is None or machine == self._local
 
-    # ── 订阅（browser ← bot stream）──
-
     async def subscribe(self, bot: str, chat_id: str, machine: str | None = None) -> asyncio.Queue | None:
-        if self._is_local(machine):
-            channel = self._channel_for(bot)
-            return channel.subscribe(chat_id) if channel is not None else None
-        return await self._syncer.remote_subscribe(machine, bot, chat_id)
+        owner = machine or self._local
+        # 本机 bot 不存在/未启用 web → None（→ 404）。远端 bot 不在本机校验范围内。
+        if self._is_local(machine) and self._channel_for(bot) is None:
+            return None
+        queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
+        subscription = self._bus.subscribe(
+            _topic((owner, bot, chat_id)), QueueSubscriber(queue, f"{owner}/{bot}/{chat_id}"),
+        )
+        self._subscriptions[queue] = subscription
+        return queue
 
     async def unsubscribe(self, bot: str, chat_id: str, machine: str | None, queue: asyncio.Queue) -> None:
-        if self._is_local(machine):
-            channel = self._channel_for(bot)
-            if channel is not None:
-                channel.unsubscribe(chat_id, queue)
-            return
-        await self._syncer.remote_unsubscribe(machine, bot, chat_id, queue)
-
-    # ── owner 侧 pump：把本机拥有的 bot 的事件喂给远端 peer ──
-
-    def _on_local_demand(self, bot: str, chat_id: str, active: bool) -> None:
-        key = (bot, chat_id)
-        if active:
-            if key not in self._pumps:
-                self._pumps[key] = asyncio.create_task(self._pump(bot, chat_id))
-        else:
-            task = self._pumps.pop(key, None)
-            if task is not None:
-                task.cancel()
-
-    async def _pump(self, bot: str, chat_id: str) -> None:
-        channel = self._channel_for(bot)
-        if channel is None:
-            return
-        queue = channel.subscribe(chat_id)
-        try:
-            while True:
-                event = await queue.get()
-                await self._syncer.on_local_publish(bot, chat_id, event)
-        except asyncio.CancelledError:
-            pass
-        except Exception as exception:
-            logger.warning("chat: owner pump (%s, %s) crashed: %r", bot, chat_id, exception)
-        finally:
-            channel.unsubscribe(chat_id, queue)
+        subscription = self._subscriptions.pop(queue, None)
+        if subscription is not None:
+            subscription.close()  # 触发 ChatSyncer demand observer（refcount 归 0 → 上游退订）
 
     async def aclose(self) -> None:
-        for task in list(self._pumps.values()):
-            task.cancel()
-        self._pumps.clear()
+        for queue, subscription in list(self._subscriptions.items()):
+            try:
+                queue.put_nowait({"type": "_close"})
+            except asyncio.QueueFull:
+                pass
+            subscription.close()
+        self._subscriptions.clear()

@@ -99,8 +99,8 @@ src/boxagent/
 │   ├── rpc.py               ClusterRpc（host↔guest HTTP 请求转发；guest 经 host 两跳到其他 guest）
 │   ├── rpc_over_bus.py      RpcChannel（role-agnostic call + per-link _pending）+ InboundRequestExecutor（唯一 loopback 回环）——塌掉 host/guest RPC 镜像
 │   ├── peer_transport.py    PeerTransport：syncer 共享的 peer 注册表 + send-and-swallow（发帧时盖 wire-version v）
-│   ├── chat_sync.py         ChatSyncer：跨机 chat pub/sub（chat_subscribe/chat_event 帧，替代旧 SSE re-framing）
-│   ├── chat_bus.py          ChatBus：location-transparent 订阅门面（local→WebChannel / remote→ChatSyncer）+ owner pump
+│   ├── chat_sync.py         ChatSyncer：MessageBus 上的跨机 chat bridge —— 订 chat. 前缀转发给下游 peer / watch 订阅传播 demand / 入站 chat_event 帧 bus.publish 重注入；出站走单条有序 drain（sync bus→async WS，坑#1）
+│   ├── chat_bus.py          ChatBus：location-transparent 订阅门面 —— local/remote 同一句 bus.subscribe(chat.<owner>.<bot>.<chat_id>)，无分叉无 pump
 │   ├── bus_wiring.py        一个 wiring 把 EventSyncer + ChatSyncer 都接入 registry/guest_client hook；on_unknown_frame 按 v 版本门 + 帧类型 dispatch（取代旧的两条 install-order 链）
 │   ├── http_routes.py       cluster 路由挂载（/api/guest/ws）
 │   ├── tunnel.py            host 端 devtunnel 生命周期（spawn / 重启）

@@ -20,7 +20,7 @@ This module is a neutral leaf: it imports nothing project-internal.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from boxagent.bus.message import Message
 
@@ -28,6 +28,12 @@ if TYPE_CHECKING:
     from boxagent.bus.subscriber import Subscriber
 
 logger = logging.getLogger(__name__)
+
+# 订阅观察者：一个 (prefix, on_add, on_remove) 三元组。当有人 subscribe / 退订一个
+# 前缀匹配的 EXACT topic 时被通知，用来把"本机有人在看某远端 chat"这种 demand
+# 沿 WS 往上游传播。只报告 exact-topic 订阅——bridge 自己的前缀订阅（如 "chat."）
+# 不算 demand，故不上报。
+SubscriptionWatcher = tuple[str, "Callable[[str], None]", "Callable[[str], None]"]
 
 
 class Subscription:
@@ -72,6 +78,21 @@ class MessageBus:
         self._exact: dict[str, list[Subscription]] = {}
         self._prefix: list[Subscription] = []
         self._next_order = 0
+        # 订阅观察者（chat bridge 用来传播 demand）。见 SubscriptionWatcher。
+        self._watchers: list[SubscriptionWatcher] = []
+
+    def watch_subscriptions(
+        self,
+        topic_prefix: str,
+        on_add: "Callable[[str], None]",
+        on_remove: "Callable[[str], None]",
+    ) -> None:
+        """注册一个订阅观察者：当有人 subscribe / 退订一个以 ``topic_prefix`` 开头
+        的 EXACT topic 时，分别调用 ``on_add(topic)`` / ``on_remove(topic)``。
+
+        每次 add/remove 都触发（不去重）；调用方自行 refcount。只报告 exact-topic
+        订阅——bridge 自己在同一 prefix 上的前缀订阅不会被当成 demand。"""
+        self._watchers.append((topic_prefix, on_add, on_remove))
 
     def subscribe(
         self,
@@ -90,6 +111,7 @@ class MessageBus:
             self._prefix.append(subscription)
         else:
             self._exact.setdefault(topic_pattern, []).append(subscription)
+            self._notify_watchers(topic_pattern, added=True)
         return subscription
 
     def publish(self, topic: str, payload: dict, ts: float) -> None:
@@ -136,3 +158,16 @@ class MessageBus:
                     pass
                 if not bucket:
                     del self._exact[subscription.topic_pattern]
+            self._notify_watchers(subscription.topic_pattern, added=False)
+
+    def _notify_watchers(self, topic: str, *, added: bool) -> None:
+        for prefix, on_add, on_remove in self._watchers:
+            if topic.startswith(prefix):
+                callback = on_add if added else on_remove
+                try:
+                    callback(topic)
+                except Exception:
+                    logger.warning(
+                        "subscription watcher for prefix %s raised on topic %s",
+                        prefix, topic, exc_info=True,
+                    )

@@ -9,9 +9,13 @@ This module is a neutral leaf: it imports nothing project-internal.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Protocol, runtime_checkable
 
 from boxagent.bus.message import Message
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -25,3 +29,24 @@ class Subscriber(Protocol):
     """
 
     def deliver(self, message: Message) -> None: ...
+
+
+class QueueSubscriber:
+    """Ephemeral subscriber that forwards a topic's payloads to an asyncio.Queue.
+
+    Shared by every "someone is watching this chat over SSE" consumer (WebChannel
+    for a local bot, ChatBus for a remote one) — both hand the browser an
+    asyncio.Queue of raw event dicts. Drops on a full queue rather than blocking
+    the synchronous bus fan-out.
+    """
+
+    def __init__(self, queue: asyncio.Queue, label: str = "") -> None:
+        self._queue = queue
+        self._label = label
+
+    def deliver(self, message: Message) -> None:
+        try:
+            self._queue.put_nowait(message.payload)
+        except asyncio.QueueFull:
+            logger.warning("bus queue subscriber full (%s); dropping event", self._label)
+

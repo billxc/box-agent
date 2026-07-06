@@ -1,43 +1,23 @@
 """Tests for ChatBus — the location-transparent chat subscription façade.
 
-Drives ChatBus with a fake WebChannel (real asyncio.Queue fan-out) + a real
-ChatSyncer whose single peer records frames. Covers: local vs remote subscribe
-dispatch, and the owner-side pump that forwards a local bot's events to a remote
-subscriber in order.
+ChatBus does ONE thing now: ``bus.subscribe(chat.<owner>.<bot>.<chat_id>)`` for
+both local and remote owners. For a local owner the WebChannel publishes onto
+that topic (here simulated with ``bus.publish``); for a remote owner the
+ChatSyncer bridge (on the same bus) turns the subscription into an upstream
+chat_subscribe and re-publishes inbound frames. No local/remote fork, no pump.
 """
 from __future__ import annotations
 
 import asyncio
 
+from boxagent.bus.core import MessageBus
 from boxagent.cluster.chat_bus import ChatBus
 from boxagent.cluster.chat_sync import ChatSyncer
 
 
-class FakeChannel:
-    """Minimal WebChannel stand-in: subscribe/unsubscribe + publish."""
-
-    def __init__(self) -> None:
-        self.subs: dict[str, list[asyncio.Queue]] = {}
-        self.unsubscribed: list[tuple[str, asyncio.Queue]] = []
-
-    def subscribe(self, chat_id: str) -> asyncio.Queue:
-        q: asyncio.Queue = asyncio.Queue(maxsize=1024)
-        self.subs.setdefault(chat_id, []).append(q)
-        return q
-
-    def unsubscribe(self, chat_id: str, q: asyncio.Queue) -> None:
-        self.unsubscribed.append((chat_id, q))
-        queues = self.subs.get(chat_id)
-        if queues and q in queues:
-            queues.remove(q)
-
-    def publish(self, chat_id: str, event: dict) -> None:
-        for q in self.subs.get(chat_id, []):
-            q.put_nowait(event)
-
-
-def _make_bus(local: str, route, channels: dict):
-    syncer = ChatSyncer(local_machine=local, route=route)
+def _make(local: str, route=lambda target: None, bots=("b",)):
+    bus = MessageBus()
+    syncer = ChatSyncer(local_machine=local, route=route, message_bus=bus)
     sent: dict[str, list[dict]] = {}
 
     def attach(peer: str):
@@ -45,97 +25,92 @@ def _make_bus(local: str, route, channels: dict):
             sent.setdefault(peer, []).append(frame)
         syncer.attach_peer(peer, send)
 
-    bus = ChatBus(local_machine=local, syncer=syncer, channel_for=channels.get)
-    return bus, syncer, sent, attach
+    channels = {name: object() for name in bots}  # truthy = web-enabled bot
+    chat_bus = ChatBus(local_machine=local, message_bus=bus, channel_for=channels.get)
+    return bus, syncer, chat_bus, sent, attach
 
 
-# ── subscribe dispatch ──
+async def _settle(syncer: ChatSyncer) -> None:
+    for _ in range(100):
+        await asyncio.sleep(0)
+        queue = syncer._sendq
+        if queue is None or queue.empty():
+            await asyncio.sleep(0)
+            if queue is None or queue.empty():
+                return
 
-async def test_subscribe_local_returns_channel_queue():
-    channel = FakeChannel()
-    bus, _syncer, _sent, _attach = _make_bus("host", lambda t: None, {"b": channel})
-    q = await bus.subscribe("b", "c", "host")
-    # It's the channel's own queue: a channel publish lands on it.
-    channel.publish("c", {"type": "message", "text": "hi"})
-    assert q is channel.subs["c"][0]
-    assert q.get_nowait() == {"type": "message", "text": "hi"}
+
+def _frames(sent, peer, kind):
+    return [f for f in sent.get(peer, []) if f.get("type") == kind]
+
+
+# ── subscribe path (local & remote are the same bus.subscribe) ──
+
+async def test_subscribe_local_receives_channel_publish():
+    bus, _syncer, chat_bus, _sent, _attach = _make("host")
+    queue = await chat_bus.subscribe("b", "c", "host")
+    # The local WebChannel would publish onto this exact topic.
+    bus.publish("chat.host.b.c", {"type": "message", "text": "hi"}, 0.0)
+    assert queue.get_nowait() == {"type": "message", "text": "hi"}
 
 
 async def test_subscribe_local_unknown_bot_returns_none():
-    bus, _syncer, _sent, _attach = _make_bus("host", lambda t: None, {})
-    assert await bus.subscribe("missing", "c", "host") is None
+    _bus, _syncer, chat_bus, _sent, _attach = _make("host", bots=())
+    assert await chat_bus.subscribe("missing", "c", "host") is None
 
 
-async def test_subscribe_remote_goes_through_syncer():
-    bus, _syncer, sent, attach = _make_bus("guestA", lambda t: "host", {})
+async def test_subscribe_remote_drives_upstream_subscribe():
+    bus, syncer, chat_bus, sent, attach = _make("guestA", route=lambda target: "host")
     attach("host")
-    q = await bus.subscribe("b", "c", "host_m")
-    assert isinstance(q, asyncio.Queue)
-    # Upstream chat_subscribe was sent toward the host.
-    assert sent["host"] == [{
+    queue = await chat_bus.subscribe("b", "c", "host_m")
+    await _settle(syncer)
+    assert isinstance(queue, asyncio.Queue)
+    assert _frames(sent, "host", "chat_subscribe") == [{
         "type": "chat_subscribe", "target_machine": "host_m", "bot": "b", "chat_id": "c", "v": 2,
     }]
 
 
-async def test_unsubscribe_local_releases_channel():
-    channel = FakeChannel()
-    bus, _syncer, _sent, _attach = _make_bus("host", lambda t: None, {"b": channel})
-    q = await bus.subscribe("b", "c", "host")
-    await bus.unsubscribe("b", "c", "host", q)
-    assert channel.unsubscribed == [("c", q)]
-
-
-# ── owner-side pump ──
-
-async def test_owner_pump_forwards_local_events_in_order():
-    channel = FakeChannel()
-    bus, syncer, sent, attach = _make_bus("host", lambda t: None, {"b": channel})
-    attach("gA")
-
-    # A remote peer subscribes to our local bot → demand activates the pump.
-    await syncer.handle_frame("gA", {
-        "type": "chat_subscribe", "target_machine": "host", "bot": "b", "chat_id": "c",
+async def test_subscribe_remote_delivers_reinjected_event():
+    bus, syncer, chat_bus, _sent, attach = _make("guestA", route=lambda target: "host")
+    attach("host")
+    queue = await chat_bus.subscribe("b", "c", "host_m")
+    # Inbound chat_event from the host → syncer re-publishes onto the topic.
+    await syncer.handle_frame("host", {
+        "type": "chat_event", "origin_machine": "host_m",
+        "bot": "b", "chat_id": "c", "event": {"type": "message", "text": "yo"},
     })
-    await asyncio.sleep(0.02)  # let the pump task subscribe to the channel
-    assert "c" in channel.subs  # pump subscribed
-
-    # Local bot emits two events; the pump forwards both, in order.
-    channel.publish("c", {"type": "message", "n": 1})
-    channel.publish("c", {"type": "message", "n": 2})
-    await asyncio.sleep(0.02)
-
-    events = [f for f in sent.get("gA", []) if f["type"] == "chat_event"]
-    assert [f["event"]["n"] for f in events] == [1, 2]
-    assert all(f["origin_machine"] == "host" for f in events)
+    assert queue.get_nowait() == {"type": "message", "text": "yo"}
 
 
-async def test_owner_pump_stops_and_unsubscribes_on_last_leave():
-    channel = FakeChannel()
-    bus, syncer, _sent, attach = _make_bus("host", lambda t: None, {"b": channel})
-    attach("gA")
-    await syncer.handle_frame("gA", {
-        "type": "chat_subscribe", "target_machine": "host", "bot": "b", "chat_id": "c",
-    })
-    await asyncio.sleep(0.02)
-    q = channel.subs["c"][0]
+# ── unsubscribe ──
 
-    await syncer.handle_frame("gA", {
-        "type": "chat_unsubscribe", "target_machine": "host", "bot": "b", "chat_id": "c",
-    })
-    await asyncio.sleep(0.02)
-    assert (("c", q)) in channel.unsubscribed  # pump released its subscription
+async def test_unsubscribe_remote_releases_upstream():
+    bus, syncer, chat_bus, sent, attach = _make("guestA", route=lambda target: "host")
+    attach("host")
+    queue = await chat_bus.subscribe("b", "c", "host_m")
+    await _settle(syncer)
+    assert len(_frames(sent, "host", "chat_subscribe")) == 1
+
+    await chat_bus.unsubscribe("b", "c", "host_m", queue)
+    await _settle(syncer)
+    assert len(_frames(sent, "host", "chat_unsubscribe")) == 1
 
 
-async def test_aclose_cancels_pumps():
-    channel = FakeChannel()
-    bus, syncer, _sent, attach = _make_bus("host", lambda t: None, {"b": channel})
-    attach("gA")
-    await syncer.handle_frame("gA", {
-        "type": "chat_subscribe", "target_machine": "host", "bot": "b", "chat_id": "c",
-    })
-    await asyncio.sleep(0.02)
-    q = channel.subs["c"][0]
-    await bus.aclose()
-    await asyncio.sleep(0.02)
-    assert (("c", q)) in channel.unsubscribed
-    assert not bus._pumps
+async def test_unsubscribe_local_sends_no_frame():
+    bus, syncer, chat_bus, sent, _attach = _make("host")
+    queue = await chat_bus.subscribe("b", "c", "host")
+    await chat_bus.unsubscribe("b", "c", "host", queue)
+    await _settle(syncer)
+    assert sent == {}
+
+
+# ── shutdown ──
+
+async def test_aclose_signals_close_and_detaches():
+    bus, _syncer, chat_bus, _sent, _attach = _make("host")
+    queue = await chat_bus.subscribe("b", "c", "host")
+    await chat_bus.aclose()
+    assert queue.get_nowait() == {"type": "_close"}
+    # Subscription closed: a later publish no longer reaches the queue.
+    bus.publish("chat.host.b.c", {"x": 1}, 0.0)
+    assert queue.empty()

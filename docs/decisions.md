@@ -8,6 +8,29 @@
 
 > 📦 **2026-03 ~ 2026-05 的历史条目已归档**到 [archive/decisions-2026-03-to-05.md](archive/decisions-2026-03-to-05.md)。本文件保留 2026-06 起的决策。
 
+## 2026-07-06 — chat 数据面真正上 MessageBus（ChatSyncer 从 sibling 变 bridge；net +70）
+
+**背景 / 起因**：上一条（PR #34）统一了 API/transport/wiring/帧，但 **chat 的本地↔远端还是缝起来的**：本机 chat 走 `MessageBus`，跨机走 `PeerTransport`，中间靠 `chat_bus.py` 的 owner-pump + `on_local_publish`/`on_local_demand` 两个适配 hook + `ChatSyncer._queues` 独立队列桥接。owner 追问"跨机也走同一根 bus、同协议"这条愿景为什么没兑现 —— 确实没兑现：那时是**两根 bus（本机 `MessageBus` + 跨机 `PeerTransport`）**，chat 骑两根、用适配缝拼。RPC 反而已经 location-transparent（`rpc_over_bus`，host=guest 逐字相同），证明"请求/应答"不妨碍位置透明 —— 所以 chat 没理由不上 bus。
+
+**这次做的**：把 `ChatSyncer` 从"sibling + 适配缝"改成**一根 `MessageBus` 上的 bridge**，chat 的数据面本地/远端**同一个 publish/subscribe**：
+- 浏览器订阅（SSE）= `bus.subscribe(chat.<owner>.<bot>.<chat_id>)`，**local/remote 一条路径**（`ChatBus.subscribe` 不再分叉）。
+- owner 侧 WebChannel `publish` 到该 topic → `ChatSyncer` 订 `chat.` 前缀的 `_OutboundBridge` 把它转发给下游 peer（**取代 owner-pump**）。
+- 本机订了一个「远端拥有」的 topic → 新增的 `MessageBus.watch_subscriptions(prefix, on_add, on_remove)` 通知 `ChatSyncer`，refcount 边沿往上游发 `chat_subscribe`（**取代 `on_local_demand` + remote_subscribe**）。
+- 入站 `chat_event` 帧 → `bus.publish` 重新注入本机 topic：本机 browser queue（bus 订阅者）+ 下游中继（`_OutboundBridge`）**一次搞定**，两跳 relay = 重注入 + 前缀转发。
+
+**删掉的适配缝**：`chat_bus.py` 的 `_pump`/`_on_local_demand`/`aclose-cancels-pumps`；`ChatSyncer` 的 `on_local_publish`/`on_local_demand`/`_fire_demand`/`_queues`/`remote_subscribe`/`remote_unsubscribe`/`_toggle_source` 的本地分支。`ChatBus` 从 88 行缩到 62 行（纯订阅门面）。`_ChatQueueSubscriber` 与 WebChannel 的重复合并成 `bus/subscriber.py::QueueSubscriber`（两处共用）。
+
+**唯一新增的不可消除物**：`bus.publish`/`subscribe` 同步、`ws.send_json` 异步 —— 出站 peer 帧走**单条有序发送队列** `_sendq` + 一个 `_drain` task。FIFO 保证同一 chat 的 stream_delta 不乱序（**坑#1** 禁止 create_task-per-event）。这是 sync bus↔async WS 的本质边界，不是适配缝；旧的 per-`(bot,chat)` pump 就是它的等价物，现在收敛成每节点一条。
+
+**诚实结账**：`src/` 净 **+70 行**（+241/−171）。真正的统一（`watch_subscriptions` + `QueueSubscriber` + 有序 drain + bridge 逻辑）加的比删的（pump/fork/`_queues`）略多 —— **架构真统一了，但代码没缩**。这和上一条的教训一致：加一层"让本地远端同协议"的能力是要花代码的。
+
+**边界（哪些"没上 bus"，为什么对）**：
+- **RPC** 仍是 request/reply 骑 `PeerTransport`，不变 publish —— 上一条已论证（id-correlation + 并发 vs serial 保序 fan-out，正好相反；成熟 bus 如 NATS 也是 request/reply 架在 pub/sub 之上）。
+- **event resync（cursor）** 仍是连上时按 cursor 拉漏事件的 query，不是 pub/sub 原语。
+- 所以"一根 bus"= **数据面**（event publish + chat publish/subscribe，本地远端同协议）统一到 `MessageBus`；**控制面**（resync / RPC request-reply）仍是各自模式骑同一根 `PeerTransport`。这是"一根共享管道 + 每 topic 族一个策略"，不是"一个 publish 端到端"。
+
+**测试**：`test_chat_sync.py`（16 例）、`test_chat_bus.py`（8 例）重写到 bus-native API（黑盒断言只看 sent 帧 / queue / 重注入），覆盖不减；出站现在异步 drain，冻结不变量 `test_INV_C2` 加 `await settle()` 等可观测帧到达（黑盒合法）。全量 **984 绿（基线 984 不降）**。`_bus_harness.py` 每 node 改用一根共享 `MessageBus`（events+chat 同实例，同生产）。
+
 ## 2026-07-06 — message-bus 统一（PR #34，含 RPC；诚实结账 +763）
 
 **目标（owner 愿景）**：event / chat / RPC 三条跨机投递收敛到**一根 content-agnostic 的 MessageBus** —— 同协议不同链路（local→进程内 queue subscriber，remote→cluster WS），bus 不认识"事件/聊天/RPC"，只认 topic + 谁订阅。

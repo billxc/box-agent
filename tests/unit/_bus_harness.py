@@ -42,6 +42,7 @@ import asyncio
 import time
 from typing import Awaitable, Callable
 
+from boxagent.bus.core import MessageBus
 from boxagent.cluster.chat_bus import ChatBus
 from boxagent.cluster.chat_sync import ChatSyncer
 from boxagent.events.bus import EventBus
@@ -82,7 +83,10 @@ class _Node:
     def __init__(self, machine_id: str, tmp_path, *, debounce_seconds: float) -> None:
         self.machine_id = machine_id
         self.store = CountingEventStore(tmp_path / f"{machine_id}.db")
-        self.bus = EventBus(store=self.store, machine_id=machine_id)
+        # One shared MessageBus per node: events + chat ride the same instance,
+        # exactly like production (gateway injects one bus everywhere).
+        self.message_bus = MessageBus()
+        self.bus = EventBus(store=self.store, machine_id=machine_id, bus=self.message_bus)
         self.event_syncer = EventSyncer(
             self.store, self.bus, debounce_seconds=debounce_seconds,
         )
@@ -93,14 +97,14 @@ class _Node:
         self._route_table: dict[str, str] = {}
 
         self.chat_syncer = ChatSyncer(
-            local_machine=machine_id, route=self._route,
+            local_machine=machine_id, route=self._route, message_bus=self.message_bus,
         )
 
         # One WebChannel per bot, lazily created.
         self._channels: dict[str, WebChannel] = {}
         self.chat_bus = ChatBus(
             local_machine=machine_id,
-            syncer=self.chat_syncer,
+            message_bus=self.message_bus,
             channel_for=self._channel_for,
         )
 
@@ -115,7 +119,9 @@ class _Node:
     def channel(self, bot: str) -> WebChannel:
         channel = self._channels.get(bot)
         if channel is None:
-            channel = WebChannel(bot_name=bot)
+            channel = WebChannel(
+                bot_name=bot, machine_id=self.machine_id, message_bus=self.message_bus,
+            )
             self._channels[bot] = channel
         return channel
 
@@ -320,28 +326,31 @@ class _Cluster:
                             bot: str, chat_id: str) -> asyncio.Queue:
         """Subscribe watcher_machine to (owner_machine, bot, chat_id).
 
-        Returns the queue. Local (owner==watcher) rides the WebChannel queue;
-        remote rides ChatBus/ChatSyncer over the link.
+        Returns the queue. Local and remote are the SAME path now: ChatBus does
+        one `bus.subscribe(chat.<owner>.<bot>.<chat>)`. For a local owner the
+        WebChannel publishes onto that topic directly; for a remote owner the
+        ChatSyncer bridge propagates demand upstream and re-publishes inbound
+        frames onto the same topic.
         """
         node = self.nodes[watcher_machine]
-        # The owner-side WebChannel must exist before the demand pump fires
-        # (the pump subscribes to it). In production AgentManager creates one
-        # per bot at startup; here we create it lazily on the owner node.
-        owner_channel = self.nodes[owner_machine].channel(bot)
+        # The owner-side WebChannel must exist so its publishes hit the shared bus
+        # (in production AgentManager creates one per bot at startup).
+        self.nodes[owner_machine].channel(bot)
         queue = await node.chat_bus.subscribe(bot, chat_id, owner_machine)
         if owner_machine != watcher_machine:
-            # Remote subscription: wait until the owner-side demand pump has
-            # actually subscribed to the owner channel, so a subsequent
-            # publish_chat is guaranteed to fan out to it (no lost-first-event
-            # race). This is an observable condition, not a fixed sleep.
-            await self._wait_channel_subscribed(owner_channel, chat_id)
+            # Remote: wait until the demand has propagated all the way to the
+            # owner's syncer (it registered a downstream peer for this key), so a
+            # subsequent publish_chat is guaranteed to fan out to it. Observable
+            # condition, not a fixed sleep.
+            await self._wait_downstream(
+                self.nodes[owner_machine], (owner_machine, bot, chat_id),
+            )
         return queue
 
-    async def _wait_channel_subscribed(self, channel, chat_id: str,
-                                       *, timeout: float = 2.0) -> None:
+    async def _wait_downstream(self, owner_node, key, *, timeout: float = 2.0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if channel._subscribers.get(chat_id):
+            if owner_node.chat_syncer._downstream.get(key):
                 return
             await asyncio.sleep(0)
             await _drain_ready_callbacks()

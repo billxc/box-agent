@@ -232,10 +232,11 @@ class Gateway:
         self._chat_syncer = ChatSyncer(
             local_machine=self._topology.local_machine_id(),
             route=route_chat,
+            message_bus=self._message_bus,
         )
         self._chat_bus = ChatBus(
             local_machine=self._topology.local_machine_id(),
-            syncer=self._chat_syncer,
+            message_bus=self._message_bus,
             channel_for=self._bots.web_channels.get,
         )
 
