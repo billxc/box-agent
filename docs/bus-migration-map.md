@@ -285,7 +285,13 @@ actionable ones were fixed:
   used them; production hand-rolls its own adapters). Deleted both + their tests
   (~180 lines) — kept the `Subscriber` protocol.
 
-Deferred (documented, not fixed): MessageBus.publish O(total-subscriptions) scan
-on the shared bus (negligible at personal scale; a per-topic index would restore
-O(watchers)); remote-SSE `_close` teardown asymmetry; several latent items
-(payload aliasing, `_sources` derivable, EventBus `==` unsubscribe bookkeeping).
+A second pass fixed three more:
+- **MessageBus.publish O(total-subscriptions)** — indexed by topic (_exact O(1)
+  for the chat hot path + a small _prefix list for events.*), order preserved.
+- **_PendingResponse loop affinity** — get_event_loop() → get_running_loop().
+- **registry reject_all on guest disconnect** — in-flight reverse RPCs now fail
+  fast instead of hanging the timeout (symmetric with the guest side).
+
+Still deferred (low value at personal scale / latent): remote-SSE `_close`
+teardown asymmetry; payload aliasing across subscriber queues; `_sources`
+derivable; EventBus `==` unsubscribe bookkeeping; bus_wiring installer dedup.
