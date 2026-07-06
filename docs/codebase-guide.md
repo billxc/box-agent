@@ -26,15 +26,19 @@ src/boxagent/
 │   ├── categories.py        Category 常量（含 cluster.host.* / cluster.tunnel.* /
 │   │                         cluster.guest.* / cluster.protocol.* / cluster.topology.*）
 │   └── null.py              NullLogger（未 bind 时的空实现）
-├── events/                  EventBus / EventStore 实现（业务代码禁止 import）
+├── bus/                     content-agnostic 消息总线（中立 leaf：不 import 任何项目内模块；events/ 与 cluster/ 都依赖它、彼此不依赖）
+│   ├── message.py           Message envelope {topic, payload, ts}（core 从不读 payload）
+│   ├── core.py              MessageBus：同步保序 publish fan-out（按 topic 索引：_exact 精确 topic O(1) + _prefix 前缀扫描；order 保全局注册序）+ subscribe→Subscription.close()
+│   └── subscriber.py        Subscriber protocol（sync deliver(message)）
+├── events/                  事件日志：EventBus 作为 log facade sink 路由经 MessageBus（业务代码禁止 import）
 │   ├── models.py            Event dataclass + Level
-│   ├── storage.py           SQLite-backed EventStore
-│   ├── bus.py               EventBus（pub/sub + 持久化）
-│   ├── sync.py              EventSyncer（跨机复制）
-│   ├── sync_wiring.py       绑定到 HostElection 生命周期
+│   ├── storage.py           SQLite-backed EventStore（唯一 SQLite writer）
+│   ├── bus.py               EventBus（log.bind 的 sink）：publish → bus.publish("events.<cat>")；第一个 subscriber 是 StoreSubscriber（同步写库 + 把 enrich 后的 Event 塞进 payload），其余 subscriber 拿同一 Event
+│   ├── store_subscriber.py  StoreSubscriber：本地写库 + mint id/origin_seq（durable topic 的第一 slot、同步）
+│   ├── sync.py              EventSyncer（跨机全量复制；订阅 EventBus，经 PeerTransport 发 event_batch/event_resync 帧）
 │   ├── retention.py         retention sweeper
 │   ├── telegram_notifier.py 独立 Telegram 推送订阅者
-│   └── web_stream.py        web UI SSE 订阅者
+│   └── web_stream.py        web UI SSE 订阅者（EventStreamSubscriber）
 ├── router/
 │   ├── core.py              Router（鉴权 / 命令 / dispatch）
 │   ├── callback.py          ChannelCallback / TextCollector / log_turn
@@ -94,10 +98,10 @@ src/boxagent/
 │   ├── topology_service.py  本机标识 / machine 描述符 / machine snapshot
 │   ├── rpc.py               ClusterRpc（host↔guest HTTP 请求转发；guest 经 host 两跳到其他 guest）
 │   ├── rpc_over_bus.py      RpcChannel（role-agnostic call + per-link _pending）+ InboundRequestExecutor（唯一 loopback 回环）——塌掉 host/guest RPC 镜像
-│   ├── peer_transport.py    PeerTransport：syncer 共享的 peer 注册表 + send-and-swallow
+│   ├── peer_transport.py    PeerTransport：syncer 共享的 peer 注册表 + send-and-swallow（发帧时盖 wire-version v）
 │   ├── chat_sync.py         ChatSyncer：跨机 chat pub/sub（chat_subscribe/chat_event 帧，替代旧 SSE re-framing）
 │   ├── chat_bus.py          ChatBus：location-transparent 订阅门面（local→WebChannel / remote→ChatSyncer）+ owner pump
-│   ├── chat_sync_wiring.py  把 ChatSyncer 链式接入 registry/guest_client hook（不覆盖 EventSyncer）
+│   ├── bus_wiring.py        一个 wiring 把 EventSyncer + ChatSyncer 都接入 registry/guest_client hook；on_unknown_frame 按 v 版本门 + 帧类型 dispatch（取代旧的两条 install-order 链）
 │   ├── http_routes.py       cluster 路由挂载（/api/guest/ws）
 │   ├── tunnel.py            host 端 devtunnel 生命周期（spawn / 重启）
 │   └── devtunnel.py         devtunnel CLI 包装（resolve url、auth）
@@ -112,7 +116,7 @@ src/boxagent/
 ## 想读懂的话，按顺序读
 
 **核心 dispatch 链路**：
-1. `gateway.py` —— Gateway 装配 manager 们（AgentManager / TopologyService / ClusterRpc / ClusterHttpRoutes / WebHttpServer / Scheduler / InternalApiServer / McpHttpServer / HostElection；外加 EventBus binding）；看 `start()` 知道启动顺序
+1. `gateway.py` —— Gateway 装配 manager 们（AgentManager / TopologyService / ClusterRpc / ClusterHttpRoutes / WebHttpServer / Scheduler / InternalApiServer / McpHttpServer / HostElection；建一根共享 MessageBus 注入 EventBus + 每个 WebChannel，log.bind(EventBus)）；看 `start()` 知道启动顺序
 2. `transports/base.py` —— Channel Protocol、IncomingMessage 数据类（这是核心契约）
 3. `agent_env.py` —— 每条消息生成的 AgentEnv 快照
 4. `router/core.py` —— `handle_message` → `_dispatch_one`，主流程

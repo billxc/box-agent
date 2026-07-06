@@ -1,6 +1,8 @@
-# Message Bus 统一方案（提案 · 待拍板）
+# Message Bus 统一方案（提案 · 历史参考）
 
-> 状态：**未定，待 owner 拍板**。这是 OPC 设计讨论（architect × engineer × tester 三轮 + devil's advocate 反方）的中文整合。不是已决定的事，看完再选路。
+> ⚠️ **历史文档**：方案已实现并合并（PR #34，2026-07-06）。**实际落地与本提案有出入** —— Phase 8（删 EventBus）调研后回退（EventBus 保留），净收益是 +763 而非文中估的 −100。当前架构以 `docs/codebase-guide.md` + `docs/decisions.md`（2026-07-06 条目）为准；本文仅作设计讨论留痕。
+>
+> 状态（写作时）：**未定，待 owner 拍板**。这是 OPC 设计讨论（architect × engineer × tester 三轮 + devil's advocate 反方）的中文整合。
 > 原始英文产出在 `.harness/nodes/discuss/run_1/`（decision.md / devil-advocate.md / round-*）。
 
 ---

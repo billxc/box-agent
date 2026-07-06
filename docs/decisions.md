@@ -8,6 +8,25 @@
 
 > 📦 **2026-03 ~ 2026-05 的历史条目已归档**到 [archive/decisions-2026-03-to-05.md](archive/decisions-2026-03-to-05.md)。本文件保留 2026-06 起的决策。
 
+## 2026-07-06 — message-bus 统一（PR #34，含 RPC；诚实结账 +763）
+
+**目标（owner 愿景）**：event / chat / RPC 三条跨机投递收敛到**一根 content-agnostic 的 MessageBus** —— 同协议不同链路（local→进程内 queue subscriber，remote→cluster WS），bus 不认识"事件/聊天/RPC"，只认 topic + 谁订阅。
+
+**目标架构**：
+- `bus/` 中立 leaf 包：`MessageBus.publish(topic, payload, ts)` 同步保序 fan-out（按 topic 索引：`_exact` 精确 topic + `_prefix` 前缀），`subscribe(pattern, subscriber)→Subscription`。`Message = {topic, payload, ts}`，core 从不读 payload。
+- **持久化/广播是 subscriber 行为，不是 bus 特性**：`EventStore` 是订阅 `events.` 的**同步第一 slot** subscriber（`StoreSubscriber` 写库 + mint id/origin_seq，enrich 后的 Event 塞进 payload 给下游）；广播=每节点订阅 peer 的 `events.*`；chat 无 StoreSubscriber → **chat 永不进 SQLite（构造即保证，非运行时 check）**。
+- **没有共享的复制算法**：`EventSyncer`（broadcast+debounce+cursor resync）和 `ChatSyncer`（demand+refcount+两跳 relay）是**两个 sibling subscriber**，共用一个 `PeerTransport`（peer 注册表 + send）。统一发生在 API / transport / wiring / 帧 层，不在复制算法层。
+- **RPC 骑 transport 不进 publish/topics**：它是 request/reply（id-correlation + 并发），和 chat/event 的 serial single-pump 相反。塌成 `rpc_over_bus.py`（一份 role-agnostic call + 一份 loopback InboundRequestExecutor），host/guest 镜像消失。详见下方 Phase 1.5 条目。
+- 一个 `bus_wiring.py` 取代 `sync_wiring.py` + `chat_sync_wiring.py` 的两条 install-order 链；`v` wire-version 封套 + mixed-version 优雅丢弃（三种帧族统一：peer_transport.send_to 盖 v，两个 WS 循环 dispatch 前门控）。
+
+**分阶段执行**（P0 回归网 → P7），每步以冻结不变量为 gate，独立 review 抓修过一个假绿 blocker。**Phase 8（删 EventBus）调研后回退**：EventBus 不是"待删 shim"而是有用的事件 facade（打包"建/共享 bus + 注册 store-write + publish + subscribe"）；删了会把这套摊到 4 个消费者 + gateway + ~9 个测试，**代码不减反增**。EventBus 保留，路由经共享 MessageBus。
+
+**诚实结账**：净 **+763 生产行**（不是最初估的 −100）。加一层 bus 抽象（`bus/` + `rpc_over_bus` + `peer_transport` + adapters）比去重删的多 —— **架构更清晰更统一，但更大不是更小**。devil's advocate 从第一轮就说中了这点；owner 在知情下坚持完整方案（C）而非 subset，最终照 C 交付。**教训**：估算净收益时把新增抽象层单列成"drift risk"是窄口径，全口径要一起算。
+
+**Code review（xhigh recall）**：15 项 finding，无 confirmed crasher。修了 6 项实质的（版本协议缺口=RPC 原本没盖 v/没门控、`MessageBus.publish` O(全部订阅)→按 topic 索引、死代码 `bus/subscriber.py` Local/RemoteSubscriber、bus_wiring fire-and-forget create_task、`_PendingResponse` get_event_loop→get_running_loop、registry 断开 reject_all）；余 9 项低价值/latent 记录在 `docs/bus-migration-map.md`。全量 984 绿（基线 886）。
+
+相关：`docs/bus-migration-map.md`（相位 + 测试映射 + findings）、`docs/message-bus-unification-提案.md`（设计提案 + DA + 三方讨论，**历史参考，写于 Phase 8 回退前**）。
+
 ## 2026-07-03 — message-bus 迁移 Phase 1.5：塌掉 RPC host/guest 镜像（`cluster/rpc_over_bus.py`）
 
 **背景**：RPC 的 request/reply 半边在 tree 里存在两份，按 role 镜像：`GuestSession.call`（host 侧 registry.py）vs `GuestClient.call`（guest 侧 guest_client.py）；`GuestRegistry._serve_inbound_rpc`（host loopback 回环重发）vs `GuestClient._handle_rpc`（guest loopback，与 host 版几乎逐字相同，只差 http session / 日志身份 / host 独有的 503-not-configured guard）；`ClusterRpc._proxy_via_host` vs `_proxy_to_remote`（只差错误串）。这是 tree 里最大的一块 role-split 重复，也是整个 message-bus 迁移能 net-negative 的关键（chat+event 单独做是 +306 陷阱）。
