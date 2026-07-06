@@ -155,7 +155,7 @@ class ClusterBus(MessageBus):
         queue = self._ensure_send_task()
         if queue is None:
             return
-        frame = {"v": WIRE_VERSION, "packet": dataclasses.asdict(packet)}
+        frame = {"type": "packet", "v": WIRE_VERSION, "packet": dataclasses.asdict(packet)}
         try:
             queue.put_nowait((link_key, frame))
         except asyncio.QueueFull:

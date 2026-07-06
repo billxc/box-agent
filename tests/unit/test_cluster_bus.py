@@ -195,7 +195,47 @@ async def test_inbound_missing_version_dropped():
     assert recorder.received == []                # missing v → dropped (hard-cut)
 
 
-async def test_outbound_to_version_incompatible_link_unreachable():
+async def test_shipped_frame_carries_type_packet_for_read_loop_routing():
+    # The WS read loops (guest_client/registry) route a frame to ClusterBus ONLY
+    # when frame["type"] == "packet". A frame without it falls to the legacy
+    # version gate and is dropped — the real bug this guards.
+    bus = ClusterBus(machine_id="host", route=_route_map({}))
+    link_a = FakeLink()
+    bus.attach_link("A", link_a.send)
+
+    bus.send(receiver="", topic="events.x", payload={"n": 1}, ts=1.0)
+    await _settle()
+
+    assert len(link_a.sent) == 1
+    frame = link_a.sent[0]
+    assert frame["type"] == "packet"
+    assert frame["v"] == WIRE_VERSION
+    assert "packet" in frame
+
+
+async def test_wire_round_trip_frame_delivers_on_other_bus():
+    # End-to-end: the exact frame node A emits, fed to node B's on_inbound,
+    # reaches B's local subscriber (proves the emitted frame is what on_inbound
+    # parses — the read-loop contract).
+    node_a = ClusterBus(machine_id="A", route=_route_map({"B": "linkB"}))
+    link_b = FakeLink()
+    node_a.attach_link("linkB", link_b.send)
+
+    node_b = ClusterBus(machine_id="B", route=_route_map({}))
+    recorder = Recorder()
+    node_b.subscribe("req.web", recorder)
+
+    node_a.send(receiver="B", topic="req.web", payload={"hello": 1}, ts=1.0)
+    await _settle()
+
+    assert len(link_b.sent) == 1
+    node_b.on_inbound("A", link_b.sent[0])   # feed A's exact wire frame to B
+    await _settle()
+
+    assert len(recorder.received) == 1
+    assert recorder.received[0].payload == {"hello": 1}
+    assert recorder.received[0].receiver == "B"
+
     unreachable: list[str] = []
     bus = ClusterBus(
         machine_id="host", route=_route_map({"B": "linkB"}),
