@@ -215,3 +215,17 @@ Existing RPC tests and their disposition (from run_2 tester):
 | test_cluster_registry.py::TestRpcRoundtrip::test_call_resolves_on_rpc_resp | Migrate (impl-coupled) | **INV-R1** (built in Phase 0) |
 | test_cluster_registry.py::TestRpcRoundtrip::test_call_timeout | Migrate + strengthen (add pending-cleanup) | **INV-R5** (built in Phase 0; adds pending-cleanup assertion) |
 | test_admin_cluster_restart.py (3) | Keep — frozen (HTTPS side-path `fetch_host_json`, NOT WS RPC) | — |
+
+
+## Phase 6 update — wiring merged
+
+`events/sync_wiring.py` + `cluster/chat_sync_wiring.py` (and their tests
+`test_event_sync_wiring.py` / `test_chat_sync_wiring.py`) were DELETED and
+replaced by `cluster/bus_wiring.py` + `test_bus_wiring.py`. The old chained
+`on_unknown_frame` install-order constraint is gone: one installer owns the
+registry/guest_client callbacks and dispatches event_* then chat_* frames.
+Behavior preserved (each syncer still receives its own frames, no swallow) —
+covered by test_bus_wiring.py (5) + the frozen INV-B*/C*/D2.
+
+Also this phase: one shared MessageBus instance is now created in gateway and
+injected into EventBus + every WebChannel (events + chat ride one instance).

@@ -54,12 +54,19 @@ class AgentManager:
         storage: Storage,
         start_time: float,
         gateway: "Any" = None,
+        message_bus: "Any" = None,
+        machine_id: str = "",
     ) -> None:
         self.config = config
         self.config_dir = config_dir
         self.storage = storage
         self.start_time = start_time
         self.gateway = gateway
+        # Shared MessageBus (events + chat ride one instance) + this node's
+        # machine_id, threaded into every WebChannel so chat topics are
+        # "chat.<machine_id>.<bot>.<chat_id>" on the shared bus.
+        self.message_bus = message_bus
+        self.machine_id = machine_id
         # State this manager owns. Other managers that need a read view
         # (TopologyService → web_channels, WebHttpServer → pools/web_channels)
         # receive the dict by reference at their own construction time.
@@ -232,7 +239,7 @@ class AgentManager:
             await self.channels[name].start()
 
         if bot_config.web_enabled:
-            web_channel = WebChannel(bot_name=name)
+            web_channel = WebChannel(bot_name=name, machine_id=self.machine_id, message_bus=self.message_bus)
             web_channel.on_message = router.handle_message
             self.web_channels[name] = web_channel
             router._channels["web"] = web_channel
@@ -354,7 +361,7 @@ class AgentManager:
             passthrough=True,
         )
 
-        web_channel = WebChannel(bot_name=name)
+        web_channel = WebChannel(bot_name=name, machine_id=self.machine_id, message_bus=self.message_bus)
         web_channel.on_message = router.handle_message
         self.web_channels[name] = web_channel
         router._channels["web"] = web_channel

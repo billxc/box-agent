@@ -53,16 +53,20 @@ class WebChannel(Channel):
     tool_calls_display: str = "summary"
     machine_id: str = ""
     # Local chat fan-out rides a MessageBus on "chat.<machine>.<bot>.<chat_id>"
-    # topics. Defaults to a private bus (tests / harness construct
+    # topics. None → a private instance (tests / harness construct
     # WebChannel(bot_name=...)); production injects the shared bus so events and
     # chat share one instance.
-    message_bus: MessageBus = field(default_factory=MessageBus)
+    message_bus: MessageBus | None = None
     # Active subscriptions keyed by chat_id — kept as a dict so "is anyone
     # watching this chat" checks and stop() work as before; each entry is
     # (queue, bus_subscription). Fan-out goes through message_bus.
     _subscribers: dict[str, list[tuple[asyncio.Queue, Subscription]]] = field(default_factory=dict)
     _stream_buffers: dict[str, str] = field(default_factory=dict)
     _next_msg_id: int = 0
+
+    def __post_init__(self) -> None:
+        if self.message_bus is None:
+            self.message_bus = MessageBus()
 
     async def start(self) -> None:  # noqa: D401 — protocol no-op
         return

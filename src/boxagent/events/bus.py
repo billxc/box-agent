@@ -93,10 +93,13 @@ class _CallbackBusSubscriber:
 
 
 class EventBus:
-    def __init__(self, store: EventStore, machine_id: str) -> None:
+    def __init__(self, store: EventStore, machine_id: str, bus: MessageBus | None = None) -> None:
         self._store = store
         self._machine_id = machine_id
-        self._bus = MessageBus()
+        # The shared, process-wide MessageBus (events + chat ride the same
+        # instance in production, injected by the gateway). Defaults to a private
+        # instance so tests can construct EventBus(store, machine_id) standalone.
+        self._bus = bus if bus is not None else MessageBus()
         # The durable subscriber owns the local store write. It is registered
         # FIRST so it runs first and synchronously (see publish); the enriched
         # Event it stashes into the payload is what the remaining subscribers
