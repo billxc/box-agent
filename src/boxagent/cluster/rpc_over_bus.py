@@ -52,7 +52,10 @@ class _PendingResponse:
     __slots__ = ("result",)
 
     def __init__(self) -> None:
-        self.result: asyncio.Future[dict] = asyncio.get_event_loop().create_future()
+        # Built only inside RpcChannel.call (a coroutine), so a loop is running;
+        # get_running_loop() binds the future to the correct loop (get_event_loop
+        # is deprecated-when-no-loop and can bind to the wrong one).
+        self.result: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
 
 
 class RpcChannel:

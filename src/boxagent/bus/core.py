@@ -33,7 +33,9 @@ logger = logging.getLogger(__name__)
 class Subscription:
     """Handle returned by `MessageBus.subscribe`. `close()` unsubscribes.
 
-    Closing is idempotent and safe to call after the bus is gone.
+    Closing is idempotent and safe to call after the bus is gone. `order` is a
+    process-monotonic sequence so fan-out can restore global subscription order
+    even though subscriptions are indexed by topic.
     """
 
     def __init__(
@@ -41,10 +43,12 @@ class Subscription:
         bus: "MessageBus",
         topic_pattern: str,
         subscriber: "Subscriber",
+        order: int,
     ) -> None:
         self._bus = bus
         self.topic_pattern = topic_pattern
         self.subscriber = subscriber
+        self.order = order
         self._closed = False
 
     def close(self) -> None:
@@ -58,10 +62,16 @@ class MessageBus:
     """Synchronous, ordered, content-agnostic publish/subscribe."""
 
     def __init__(self) -> None:
-        # Insertion-ordered list of live subscriptions. First-subscribed is
-        # first in the list, therefore first delivered. A list (not a dict) is
-        # what preserves the ordered-slot guarantee.
-        self._subscriptions: list[Subscription] = []
+        # Indexed by topic so a publish touches only the relevant subscriptions,
+        # not every subscription in the process (the whole node shares one bus,
+        # so a chat stream_delta must not scan unrelated event/chat subs):
+        #   _exact:  exact-topic patterns → subs, O(1) lookup (the chat hot path)
+        #   _prefix: prefix patterns (ending in ".") → scanned with startswith
+        #            (only the events.* family + a handful of /events SSE subs)
+        # `order` restores global first-subscribed-first ordering across both.
+        self._exact: dict[str, list[Subscription]] = {}
+        self._prefix: list[Subscription] = []
+        self._next_order = 0
 
     def subscribe(
         self,
@@ -74,24 +84,33 @@ class MessageBus:
         ending in "." ("events." / "events.scheduler."). Returns a
         `Subscription`; call `.close()` to unsubscribe.
         """
-        subscription = Subscription(self, topic_pattern, subscriber)
-        self._subscriptions.append(subscription)
+        subscription = Subscription(self, topic_pattern, subscriber, self._next_order)
+        self._next_order += 1
+        if topic_pattern.endswith("."):
+            self._prefix.append(subscription)
+        else:
+            self._exact.setdefault(topic_pattern, []).append(subscription)
         return subscription
 
     def publish(self, topic: str, payload: dict, ts: float) -> None:
         """Fan a message out to every matching subscriber, in order.
 
-        SYNCHRONOUS and ordered: a plain for-loop over the subscriptions whose
-        pattern matches `topic`, in subscription order. One subscriber's
-        `deliver` raising is caught, logged, and MUST NOT stop the others
-        (subscriber-exception isolation).
+        SYNCHRONOUS and ordered: the store-subscriber-first / first-subscribed
+        ordering is preserved by sorting the matched subscriptions by `order`.
+        One subscriber's `deliver` raising is caught, logged, and MUST NOT stop
+        the others (subscriber-exception isolation).
         """
         message = Message(topic=topic, payload=payload, ts=ts)
-        # Snapshot: a subscriber's deliver() may close its own subscription (or
-        # another) during fan-out; iterate over a copy so that mutation is safe.
-        for subscription in list(self._subscriptions):
-            if not _topic_matches(subscription.topic_pattern, topic):
-                continue
+        # Gather matches: O(1) exact bucket + a scan of the (small) prefix list.
+        matched = list(self._exact.get(topic, ()))
+        for subscription in self._prefix:
+            if topic.startswith(subscription.topic_pattern):
+                matched.append(subscription)
+        # Restore global registration order; the list is a snapshot, so a
+        # subscriber closing its own (or another) subscription mid-fan-out is safe.
+        if len(matched) > 1:
+            matched.sort(key=lambda subscription: subscription.order)
+        for subscription in matched:
             try:
                 subscription.subscriber.deliver(message)
             except Exception:
@@ -103,17 +122,17 @@ class MessageBus:
                 )
 
     def _remove(self, subscription: Subscription) -> None:
-        try:
-            self._subscriptions.remove(subscription)
-        except ValueError:
-            pass
-
-
-def _topic_matches(topic_pattern: str, topic: str) -> bool:
-    """True if `topic_pattern` selects `topic`.
-
-    A pattern ending in "." is a prefix match; otherwise it is an exact match.
-    """
-    if topic_pattern.endswith("."):
-        return topic.startswith(topic_pattern)
-    return topic == topic_pattern
+        if subscription.topic_pattern.endswith("."):
+            try:
+                self._prefix.remove(subscription)
+            except ValueError:
+                pass
+        else:
+            bucket = self._exact.get(subscription.topic_pattern)
+            if bucket is not None:
+                try:
+                    bucket.remove(subscription)
+                except ValueError:
+                    pass
+                if not bucket:
+                    del self._exact[subscription.topic_pattern]

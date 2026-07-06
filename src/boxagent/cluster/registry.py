@@ -359,6 +359,11 @@ class GuestRegistry:
                             machine_id=session.machine_id, frame_type=str(t), error=repr(e),
                         )
         finally:
+            if session is not None:
+                # Fail any in-flight guest→host reverse RPCs so their callers
+                # (web relays via dispatch_machine_request) fail fast instead of
+                # hanging the full timeout on a dead session.
+                session._channel.reject_all(RuntimeError("guest ws disconnected"))
             if session is not None and not session._closed:
                 self.sessions.pop(session.machine_id, None)
                 # Remember bots so the UI keeps showing the row as "offline"
