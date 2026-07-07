@@ -154,6 +154,8 @@ function install() {
     removeItem: (k) => { store.delete(k); },
     clear: () => { store.clear(); },
   };
+  // Minimal location so code building URLs (multiplex ws) can run under Node.
+  globalThis.location = { href: "https://host.example/ui/", protocol: "https:" };
   return { El, document, customElements, connectTree, makeRoot };
 }
 

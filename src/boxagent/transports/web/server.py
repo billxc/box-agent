@@ -11,6 +11,7 @@ targets that port.
 """
 
 import asyncio
+import json
 import logging
 import time
 from pathlib import Path
@@ -163,6 +164,7 @@ class WebHttpServer:
         app.router.add_get("/api/history", self._handle_web_history)
         app.router.add_post("/api/send", self._handle_web_send)
         app.router.add_get("/api/stream", self._handle_web_stream)
+        app.router.add_get("/api/multiplex", self._handle_web_multiplex)
         app.router.add_get("/api/claude/projects", self._handle_claude_projects)
         app.router.add_get("/api/claude/sessions", self._handle_claude_sessions)
         app.router.add_get("/api/claude/transcript", self._handle_claude_transcript)
@@ -723,6 +725,21 @@ class WebHttpServer:
             return web.json_response({"ok": False, "error": str(e)}, status=500)
         return web.json_response({"ok": True})
 
+    def _resolve_chat_topic(self, machine: str, bot: str, chat_id: str) -> str | None:
+        """Map a (machine, bot, chat_id) selector to its bus topic, or None if
+        the bot is local but not web-enabled.
+
+        Location-transparent: a browser subscribes to chat.<owner>.<bot>.<chat_id>
+        and the bus delivers whether the owning bot is on this machine (its
+        WebChannel publishes locally) or remote (the ClusterBus forwards its
+        broadcast packet here).
+        """
+        local_machine = self.topology.local_machine_id()
+        owner = machine or local_machine
+        if owner == local_machine and self.web_channels.get(bot) is None:
+            return None
+        return f"chat.{owner}.{bot}.{chat_id}"
+
     async def _handle_web_stream(self, request: web.Request) -> web.StreamResponse:
         if not self._authorized(request):
             return self._unauthorized()
@@ -734,16 +751,10 @@ class WebHttpServer:
         if self.message_bus is None:
             return web.json_response({"ok": False, "error": "bus unavailable"}, status=503)
 
-        # Location-transparent: a browser subscribes to chat.<owner>.<bot>.<chat_id>
-        # and the bus delivers, whether the owning bot is on this machine (its
-        # WebChannel publishes locally) or a remote one (the ClusterBus forwards
-        # its broadcast packet here). Same SSE loop either way.
         from boxagent.bus.subscriber import QueueSubscriber
-        local_machine = self.topology.local_machine_id()
-        owner = machine or local_machine
-        if owner == local_machine and self.web_channels.get(bot) is None:
+        topic = self._resolve_chat_topic(machine, bot, chat_id)
+        if topic is None:
             return web.json_response({"ok": False, "error": "bot not web-enabled"}, status=404)
-        topic = f"chat.{owner}.{bot}.{chat_id}"
         queue: asyncio.Queue = asyncio.Queue(maxsize=1024)
         subscription = self.message_bus.subscribe(topic, QueueSubscriber(queue, topic))
 
@@ -775,6 +786,83 @@ class WebHttpServer:
         finally:
             subscription.close()
         return response
+
+    async def _handle_web_multiplex(self, request: web.Request) -> web.WebSocketResponse:
+        """One page-level WebSocket that fans in many chats' events.
+
+        A per-chat SSE stream burns one of the browser's ~6 HTTP/1.1 connection
+        slots each, so a few open chats stall the whole UI. This endpoint holds
+        many bus subscriptions on a single socket instead: the client sends
+        ``{"type":"subscribe","machine":..,"bot":..,"chat_id":..}`` /
+        ``"unsubscribe"`` frames as it opens/closes chats, and every pushed event
+        is tagged ``{machine,bot,chat_id,event:{...}}`` so the browser demuxes it
+        to the right window. Connection count drops from N to 1.
+        """
+        if not self._authorized(request):
+            return self._unauthorized()
+        if self.message_bus is None:
+            return web.json_response({"ok": False, "error": "bus unavailable"}, status=503)
+
+        from boxagent.bus.subscriber import TaggedQueueSubscriber
+
+        ws = web.WebSocketResponse(heartbeat=30.0)
+        await ws.prepare(request)
+
+        queue: asyncio.Queue = asyncio.Queue(maxsize=4096)
+        # topic -> Subscription, so re-subscribe is idempotent and unsubscribe finds it.
+        subscriptions: dict[str, object] = {}
+
+        def subscribe(machine: str, bot: str, chat_id: str) -> None:
+            if not machine or not bot or not chat_id:
+                return
+            topic = self._resolve_chat_topic(machine, bot, chat_id)
+            if topic is None or topic in subscriptions:
+                return
+            tag = {"machine": machine, "bot": bot, "chat_id": chat_id}
+            subscriptions[topic] = self.message_bus.subscribe(
+                topic, TaggedQueueSubscriber(queue, tag, topic)
+            )
+
+        def unsubscribe(machine: str, bot: str, chat_id: str) -> None:
+            topic = self._resolve_chat_topic(machine, bot, chat_id)
+            subscription = subscriptions.pop(topic, None) if topic else None
+            if subscription is not None:
+                subscription.close()
+
+        async def pump() -> None:
+            # Drain the merged queue onto the socket. Tagged events already carry
+            # their {machine,bot,chat_id}; the browser routes on that.
+            while True:
+                event = await queue.get()
+                await ws.send_json(event)
+
+        pump_task = asyncio.create_task(pump())
+        try:
+            async for message in ws:
+                if message.type != web.WSMsgType.TEXT:
+                    continue
+                try:
+                    frame = json.loads(message.data)
+                except Exception:
+                    logger.warning("multiplex ws: invalid JSON frame")
+                    continue
+                kind = frame.get("type")
+                machine = str(frame.get("machine") or "")
+                bot = str(frame.get("bot") or "")
+                chat_id = str(frame.get("chat_id") or "")
+                if kind == "subscribe":
+                    subscribe(machine, bot, chat_id)
+                elif kind == "unsubscribe":
+                    unsubscribe(machine, bot, chat_id)
+                # unknown frames ignored
+        except (ConnectionResetError, asyncio.CancelledError):
+            pass
+        finally:
+            pump_task.cancel()
+            for subscription in subscriptions.values():
+                subscription.close()
+            subscriptions.clear()
+        return ws
 
     # ── Claude native session picker ──
 

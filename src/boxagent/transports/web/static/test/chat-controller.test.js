@@ -13,7 +13,7 @@ function makeApp(over = {}) {
   const setTexts = [];
   const rec = (n) => (...a) => { calls.push([n, ...a]); };
   const state = Object.assign(
-    { streamMsgs: {}, serverSessions: {}, sessions: {}, machines: [], bot: "b", botMachine: "m", chatId: "c", es: null,
+    { streamMsgs: {}, serverSessions: {}, sessions: {}, machines: [], bot: "b", botMachine: "m", chatId: "c", subscribed: null,
       historyOffset: 0, historyTotal: 0, historyLoading: false, historyExhausted: false },
     over.state || {},
   );
@@ -28,6 +28,10 @@ function makeApp(over = {}) {
     chatTitle: { textContent: "" },
     sessionInfoEl: { setInfo: (v) => calls.push(["setInfo", v]) },
     sendBtn: { disabled: false },
+    multiplex: {
+      subscribe: (machine, bot, chatId, handler) => calls.push(["mux.subscribe", machine, bot, chatId, handler]),
+      unsubscribe: (machine, bot, chatId) => calls.push(["mux.unsubscribe", machine, bot, chatId]),
+    },
     chatLog: {
       addMessage: (...a) => { calls.push(["addMessage", ...a]); return { setText: (t) => setTexts.push(t) }; },
       showTyping: rec("showTyping"), removeTyping: rec("removeTyping"), scrollToBottom: rec("scrollToBottom"),
@@ -44,6 +48,7 @@ function makeApp(over = {}) {
 }
 const has = (app, n) => app._calls.some((c) => c[0] === n);
 const arg = (app, n) => (app._calls.find((c) => c[0] === n) || [])[1];
+const arg2 = (app, n) => (app._calls.find((c) => c[0] === n) || []).slice(1);
 
 // ── wiring ──
 
@@ -119,9 +124,9 @@ test("switchChat resolves title, swaps history, opens the stream", async () => {
         ? { ok: true, json: async () => ({ history: [{ role: "user", text: "h" }], total: 5 }) }
         : { ok: true, json: async () => ({ info: null }) },
   });
-  app.state.es = { close() { app._calls.push(["es.close"]); } };
+  app.state.subscribed = { machine: "m", bot: "b", chat_id: "c0" };
   await app.switchChat("c1");
-  assert.ok(has(app, "es.close"), "old stream closed");
+  assert.deepEqual(arg2(app, "mux.unsubscribe"), ["m", "b", "c0"], "old chat unsubscribed");
   assert.equal(app.state.chatId, "c1");
   assert.equal(app.chatTitle.textContent, "Renamed", "custom_title wins");
   assert.ok(has(app, "setHistory"));
@@ -129,7 +134,10 @@ test("switchChat resolves title, swaps history, opens the stream", async () => {
   assert.equal(app.state.historyOffset, 1);
   assert.equal(app.state.historyExhausted, false);
   assert.deepEqual(app._calls.find((c) => c[0] === "setConn"), ["setConn", "connecting"]);
-  assert.ok(app.state.es instanceof EventSource, "openStream opened a new stream");
+  const sub = app._calls.find((c) => c[0] === "mux.subscribe");
+  assert.ok(sub, "openStream subscribed on the multiplex socket");
+  assert.deepEqual(sub.slice(1, 4), ["m", "b", "c1"], "subscribed the new chat tag");
+  assert.deepEqual(app.state.subscribed, { machine: "m", bot: "b", chat_id: "c1" });
 });
 
 test("switchChat with a failed history fetch renders an empty log", async () => {

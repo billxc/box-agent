@@ -9,7 +9,7 @@
 // Everything the controller needs from the outside is read through `app.*`, so
 // this file never touches app.js internals. That injection is also what makes
 // the controller unit-testable: chat-controller.test.js drives it with a fake
-// `app` (mock api + spy components) — no real EventSource/fetch/DOM needed.
+// `app` (mock api + spy components + spy app.multiplex) — no real socket/DOM needed.
 //
 // Stays in app.js (on the `app` bag): state, api, $, TOKEN, HISTORY_PAGE_SIZE,
 // curKey, setConn, showRecapBanner, chatTitle, sessionInfoEl, sendBtn, chatLog,
@@ -117,7 +117,13 @@
     // ── Switch to a chat: title, history swap, stream ──
 
     async function switchChat(chatId) {
-      if (state.es) { state.es.close(); state.es = null; }
+      // Drop the previous chat's multiplex subscription. One page-level socket
+      // stays open across chats; switching only adds/removes interest, so we
+      // never churn a connection (and never occupy more than one slot).
+      if (state.subscribed) {
+        app.multiplex.unsubscribe(state.subscribed.machine, state.subscribed.bot, state.subscribed.chat_id);
+        state.subscribed = null;
+      }
       state.chatId = chatId;
       state.streamMsgs = {};
       app.refreshSessionList();
@@ -176,26 +182,17 @@
       openStream();
     }
 
-    // ── SSE stream + event router ──
+    // ── Multiplex subscription + event router ──
 
+    // Subscribe the active chat to the page-level multiplex socket. Events for
+    // this (machine, bot, chat_id) are demuxed back into handleEvent. Named
+    // openStream for continuity with the old per-chat SSE entrypoint.
     function openStream() {
-      const url =
-        `api/stream?bot=${encodeURIComponent(state.bot)}` +
-        `&machine=${encodeURIComponent(state.botMachine)}` +
-        `&chat_id=${encodeURIComponent(state.chatId)}` +
-        (app.TOKEN ? `&token=${encodeURIComponent(app.TOKEN)}` : "");
-      const es = new EventSource(url);
-      state.es = es;
-      es.onopen = () => app.setConn("online");
-      es.onerror = () => {
-        app.setConn("offline");
-        // EventSource auto-reconnects; don't fight it.
-      };
-      es.onmessage = (e) => {
-        let ev;
-        try { ev = JSON.parse(e.data); } catch { return; }
-        handleEvent(ev);
-      };
+      const machine = state.botMachine;
+      const bot = state.bot;
+      const chatId = state.chatId;
+      state.subscribed = { machine, bot, chat_id: chatId };
+      app.multiplex.subscribe(machine, bot, chatId, handleEvent);
     }
 
     function handleEvent(ev) {

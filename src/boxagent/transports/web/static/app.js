@@ -35,7 +35,7 @@
     sessions: {},         // "machine|bot" -> {chat_id: {title, preview, ts}}  (local browser-side)
     serverSessions: {},   // "machine|bot" -> [{chat_id, platform, preview, last_ts, ...}]
     chatId: null,
-    es: null,
+    subscribed: null,     // {machine, bot, chat_id} currently on the multiplex socket
     streamMsgs: {},
     refreshTimer: null,
     historyOffset: 0,     // how many items already loaded from end of history
@@ -247,6 +247,9 @@
     chatTitle, sessionInfoEl, sendBtn, chatLog, recents,
     refreshSessionList, fetchServerSessions, loadMachines,
   };
+  // One page-level multiplex WebSocket; the controller adds/removes per-chat
+  // interest through app.multiplex instead of opening a socket per chat.
+  MultiplexClient(app);
   ChatController(app);
 
   // ── UI events ──

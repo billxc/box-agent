@@ -48,3 +48,26 @@ class QueueSubscriber:
             self._queue.put_nowait(packet.payload)
         except asyncio.QueueFull:
             logger.warning("bus queue subscriber full (%s); dropping event", self._label)
+
+
+class TaggedQueueSubscriber:
+    """Like QueueSubscriber, but stamps a fixed routing tag onto every payload.
+
+    Used by the multiplexed chat stream: one WebSocket holds many chat
+    subscriptions on a single shared queue, so each pushed event has to say which
+    (machine, bot, chat_id) it belongs to for the browser to demux. That tag is
+    known at subscribe time (it is the chat topic), so we merge it in here rather
+    than re-parse the topic downstream. Emits ``{**tag, "event": payload}`` and
+    drops on a full queue like its sibling.
+    """
+
+    def __init__(self, queue: asyncio.Queue, tag: dict, label: str = "") -> None:
+        self._queue = queue
+        self._tag = tag
+        self._label = label
+
+    def deliver(self, packet: Packet) -> None:
+        try:
+            self._queue.put_nowait({**self._tag, "event": packet.payload})
+        except asyncio.QueueFull:
+            logger.warning("bus tagged queue subscriber full (%s); dropping event", self._label)
