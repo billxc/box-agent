@@ -5,7 +5,7 @@ Owns lifecycle wiring; behavior lives in the composed managers built in
 
   - ``_bots``             AgentManager        (per-bot lifecycle + teardown)
   - ``_topology``         TopologyService     (cluster identity / peer list)
-  - ``_cluster_rpc``      ClusterRpc          (host↔guest HTTP/SSE proxying)
+  - ``_cluster_rpc``      RequestReply        (host↔guest request/reply over ClusterBus)
   - ``_cluster_routes``   ClusterHttpRoutes   (cluster routes on web port)
   - ``_scheduler_routes`` SchedulerHttpRoutes (POST /api/schedule/run)
   - ``_internal_api``     InternalApiServer   (TCP aiohttp app, port file: api-port.txt)
