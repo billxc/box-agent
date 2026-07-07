@@ -128,6 +128,13 @@ class MessageBus:
             self._notify_watchers(topic_pattern, added=True)
         return subscription
 
+    def has_subscribers(self, topic: str) -> bool:
+        """Whether any live subscription would receive a publish to ``topic``
+        (exact bucket or a matching prefix). Read-only introspection."""
+        if self._exact.get(topic):
+            return True
+        return any(topic.startswith(sub.topic_pattern) for sub in self._prefix)
+
     def send(self, *, receiver: str, topic: str, payload: dict, ts: float) -> str:
         """Location-unified send. Stamp `message_id` (UUID) + `sender` (this
         machine), then deliver to local subscribers when the packet is addressed
