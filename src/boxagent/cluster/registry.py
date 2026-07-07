@@ -41,6 +41,7 @@ from aiohttp.web import WebSocketResponse
 
 from boxagent.log import Category, log
 
+from .cluster_bus import WIRE_VERSION as CLUSTER_BUS_WIRE_VERSION
 from .peer_transport import WIRE_VERSION
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,10 @@ class GuestSession:
     machine_id: str
     ws: WebSocketResponse
     bots: list[RemoteBot] = field(default_factory=list)
+    # Cluster-bus wire version this guest negotiated at hello. 0 = the hello
+    # carried no `v` (an old/incompatible peer) — used to fast-fail requests to
+    # it instead of hanging the full timeout.
+    version: int = 0
     _closed: bool = False
 
 
@@ -110,6 +115,7 @@ class GuestRegistry:
             out.append({
                 "machine_id": machine_id,
                 "online": True,
+                "version": session.version,
                 "bots": [
                     {"name": bot.name, "display_name": bot.display_name,
                      "backend": bot.backend, "model": bot.model, "kind": bot.kind}
@@ -123,6 +129,7 @@ class GuestRegistry:
             out.append({
                 "machine_id": machine_id,
                 "online": False,
+                "version": 0,
                 "bots": info.get("bots") or [],
                 "last_seen": info.get("last_seen") or 0,
             })
@@ -200,7 +207,8 @@ class GuestRegistry:
                         for bot in bots_raw
                         if isinstance(bot, dict) and bot.get("name")
                     ]
-                    session = GuestSession(machine_id=machine_id, ws=ws, bots=bots)
+                    guest_version = int(payload.get("v") or 0)
+                    session = GuestSession(machine_id=machine_id, ws=ws, bots=bots, version=guest_version)
                     # If a previous session with this machine_id is still around,
                     # evict it (a guest reconnect).
                     old_session = self.sessions.get(machine_id)
@@ -211,15 +219,16 @@ class GuestRegistry:
                         except Exception:
                             pass
                     self.sessions[machine_id] = session
-                    logger.info("guest '%s' connected with %d bot(s)", machine_id, len(bots))
+                    logger.info("guest '%s' connected with %d bot(s) (wire v%d)",
+                                machine_id, len(bots), guest_version)
                     log.info(
                         Category.CLUSTER_GUEST_JOINED,
                         f"guest '{machine_id}' joined with {len(bots)} bot(s)",
-                        machine_id=machine_id, bot_count=len(bots),
+                        machine_id=machine_id, bot_count=len(bots), wire_version=guest_version,
                     )
-                    await ws.send_json({"type": "welcome"})
+                    await ws.send_json({"type": "welcome", "v": CLUSTER_BUS_WIRE_VERSION})
                     if self.cluster_bus is not None:
-                        self.cluster_bus.attach_link(machine_id, ws.send_json)
+                        self.cluster_bus.attach_link(machine_id, ws.send_json, version=guest_version)
                     if self.on_guest_attached is not None:
                         try:
                             self.on_guest_attached(machine_id, session)

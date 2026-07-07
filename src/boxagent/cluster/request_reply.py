@@ -28,6 +28,8 @@ from typing import Callable
 
 from aiohttp import ClientSession, web
 
+from .cluster_bus import WIRE_VERSION as CLUSTER_BUS_WIRE_VERSION
+
 logger = logging.getLogger(__name__)
 
 
@@ -88,9 +90,26 @@ class RequestReply:
         request: web.Request, body: dict | None = None,
     ) -> "web.Response | None":
         """Forward to a remote machine and return its response. None when the
-        target is local (caller continues with local handling)."""
+        target is local (caller continues with local handling).
+
+        Fast-fail gate: before sending a doomed request, check the target's
+        negotiated cluster-bus wire version. An incompatible peer (old / offline /
+        version-mismatch) returns 502 in <1ms instead of hanging the full timeout,
+        so the web UI never wedges its ~6 browser connection slots on it."""
         if machine == self._local:
             return None
+        target_version = self._topology.version_for(machine)
+        if target_version != CLUSTER_BUS_WIRE_VERSION:
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": (
+                        f"{machine} is incompatible "
+                        f"(wire version {target_version}, this node speaks {CLUSTER_BUS_WIRE_VERSION})"
+                    ),
+                },
+                status=502,
+            )
         reply = await self.request(
             machine, method, path, query=dict(request.query), body=body,
         )
@@ -109,11 +128,13 @@ class RequestReply:
 
     async def request(
         self, target_machine: str, method: str, path: str,
-        *, query: dict | None = None, body: dict | None = None, timeout: float = 30.0,
+        *, query: dict | None = None, body: dict | None = None, timeout: float = 8.0,
     ) -> dict:
         """Send a request to `target_machine`, await the correlated reply.
         Returns ``{"status": int, "body": dict}``. Fails fast (not a full timeout)
-        if the bus reports the target unreachable mid-flight."""
+        if the bus reports the target unreachable mid-flight. The 8s default is a
+        backstop only — the version pre-check and on_unreachable signal normally
+        fail an unreachable peer far sooner."""
         correlation_id = self._id_factory()
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[correlation_id] = (future, target_machine)

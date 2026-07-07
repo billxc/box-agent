@@ -12,6 +12,7 @@ import aiohttp
 from aiohttp import ClientSession, WSMsgType
 
 from . import devtunnel
+from .cluster_bus import WIRE_VERSION as CLUSTER_BUS_WIRE_VERSION
 from .peer_transport import WIRE_VERSION
 from boxagent.log import Category, log
 
@@ -178,12 +179,14 @@ class GuestClient:
                     backoff = self.reconnect_delay
                     await ws.send_json({
                         "type": "hello",
+                        "v": CLUSTER_BUS_WIRE_VERSION,
                         "machine_id": self.machine_id,
                         "token": self.host_token,
                         "bots": self.bot_provider(),
                     })
-                    if self.cluster_bus is not None:
-                        self.cluster_bus.attach_link("host", ws.send_json)
+                    # NB: the ClusterBus link is attached on the `welcome` frame
+                    # (see _serve), not here — the host's wire version is only
+                    # known once welcome arrives, so we negotiate it there.
                     logger.info("guest: hello sent (machine_id=%s)", self.machine_id)
                     log.info(
                         Category.CLUSTER_GUEST_CONNECTED,
@@ -253,21 +256,33 @@ class GuestClient:
                     if self.cluster_bus is not None:
                         self.cluster_bus.on_inbound("host", payload)
                     continue
-                if payload.get("v", WIRE_VERSION) != WIRE_VERSION:
-                    logger.warning("guest: dropping frame with unsupported wire version %r",
-                                   payload.get("v"))
+                if payload.get("type") == "welcome":
+                    # Handled BEFORE the legacy v2 gate: welcome carries the
+                    # cluster-bus wire version (v3), which the v2 gate would drop.
+                    # Attach the host link now, with the host's negotiated version
+                    # (missing v = old host = 0 = incompatible → fast-fail later).
+                    host_version = int(payload.get("v") or 0)
+                    if self.cluster_bus is not None:
+                        self.cluster_bus.attach_link("host", ws.send_json, version=host_version)
+                    logger.info("guest: welcome received (host wire v%d)", host_version)
                     continue
-                if payload.get("type") == "ping":
-                    await ws.send_json({"type": "pong"})
-                elif payload.get("type") == "welcome":
-                    pass
-                elif payload.get("type") == "machines_snapshot":
+                if payload.get("type") == "machines_snapshot":
+                    # Also handled before the v2 gate: the host stamps snapshots
+                    # with type only (no `v`); each machine descriptor carries its
+                    # own `version` field, consumed as-is below.
                     raw = payload.get("machines") or []
                     self.remote_machines = [
                         m for m in raw if isinstance(m, dict) and m.get("machine_id")
                     ]
                     logger.debug("guest: machines_snapshot received (%d machines)",
                                  len(self.remote_machines))
+                    continue
+                if payload.get("v", WIRE_VERSION) != WIRE_VERSION:
+                    logger.warning("guest: dropping frame with unsupported wire version %r",
+                                   payload.get("v"))
+                    continue
+                if payload.get("type") == "ping":
+                    await ws.send_json({"type": "pong"})
                 elif self.on_unknown_frame is not None:
                     try:
                         await self.on_unknown_frame(payload)

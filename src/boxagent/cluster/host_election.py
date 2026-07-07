@@ -207,6 +207,15 @@ class HostElection:
                         )
                         await self._become_guest(sess_machine_id)
                         return
+            # Host is stable this tick. Periodically re-push the machines
+            # snapshot so guests keep a fresh view of everyone's cluster-bus
+            # wire version — in particular, a peer that updated and reconnected
+            # is no longer stuck being treated as the old version by others.
+            if registry is not None and registry.on_topology_change is not None:
+                try:
+                    await registry.on_topology_change(None)
+                except Exception as exception:
+                    logger.warning("host election: periodic snapshot re-push failed: %r", exception)
             return
 
         # Not host yet — settle into guest or promote.

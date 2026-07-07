@@ -17,6 +17,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from boxagent.cluster.cluster_bus import WIRE_VERSION as CLUSTER_BUS_WIRE_VERSION
 from boxagent.log import Category, log
 
 if TYPE_CHECKING:
@@ -96,6 +97,7 @@ class TopologyService:
             "online": True,
             "role": local_role,
             "self": True,
+            "version": CLUSTER_BUS_WIRE_VERSION,
             "host_index": self.config.my_host_index,
             "bots": self.local_bot_descriptors(),
             "last_seen": time.time(),
@@ -104,6 +106,7 @@ class TopologyService:
             for m in self.guest_registry.list_machines():
                 m["role"] = "guest"
                 m["self"] = False
+                m.setdefault("version", 0)
                 machine_id = m.get("machine_id") or ""
                 m["host_index"] = self.config.host_priority.index(machine_id) if machine_id in self.config.host_priority else -1
                 machines.append(m)
@@ -131,3 +134,25 @@ class TopologyService:
         if self.guest_registry.get_bot(machine_id, bot) is None:
             return None
         return self.guest_registry.get(machine_id)
+
+    def version_for(self, machine_id: str) -> int:
+        """Cluster-bus wire version negotiated with `machine_id` (0 = unknown /
+        old / incompatible). Used to fast-fail cross-machine requests to peers
+        that can't speak our protocol instead of hanging the full timeout.
+
+        Host reads it from the guest's `GuestSession.version`; a guest reads it
+        from the host-pushed `machines_snapshot` cached in
+        `guest_client.remote_machines`. The local machine is always current."""
+        if machine_id == self.local_machine_id():
+            return CLUSTER_BUS_WIRE_VERSION
+        registry = self.guest_registry
+        if registry is not None:
+            session = registry.sessions.get(machine_id)
+            if session is not None:
+                return int(getattr(session, "version", 0) or 0)
+        client = self.guest_client
+        if client is not None:
+            for machine in client.remote_machines:
+                if machine.get("machine_id") == machine_id:
+                    return int(machine.get("version") or 0)
+        return 0

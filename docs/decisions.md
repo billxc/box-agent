@@ -8,6 +8,47 @@
 
 > 📦 **2026-03 ~ 2026-05 的历史条目已归档**到 [archive/decisions-2026-03-to-05.md](archive/decisions-2026-03-to-05.md)。本文件保留 2026-06 起的决策。
 
+## 2026-07-07 — 跨机请求对不兼容/不可达机器「秒失败」（版本协商 + dispatch 前置门）
+
+**病**：统一到一根 ClusterBus 后，mixed-version 场景（有机器还在老代码 / 离线 /
+版本不匹配）下，跨机请求发给这种机器时**干等满超时**才失败。web UI 点开这种机器的
+bot 会连发 `/api/history`、`/api/send` 等跨机请求，每个卡满超时，占满浏览器
+HTTP/1.1 的 ~6 个连接槽 → UI 冻住（后台没坏，curl 秒回）。
+
+**修法**：给跨机传输加一层「协商版本 → 前置门 → 秒失败」，不发注定超时的请求。
+
+1. **握手带版本**：guest `hello` 帧加 `v=WIRE_VERSION`（ClusterBus 的 3），host
+   `welcome` 帧同样加 `v`。缺 `v` = 老 peer = 记 `0`（不兼容）。
+2. **attach_link 记真实协商版本**：host 收 hello 用 `payload.v` 建 `GuestSession.version`
+   并 `attach_link(version=...)`；guest 把 `attach_link` **从「发完 hello」挪到「收到
+   welcome」**（host 版本在 welcome 才拿得到）。guest 侧 `welcome`/`machines_snapshot`
+   两帧移到旧 v2 版本门**之前**处理——否则 v3 的 welcome 会被 events 用的 v2 门丢掉。
+3. **版本进 `machines_snapshot`**：`collect_machines` 每台机描述符加 `version`（host
+   自己 = WIRE_VERSION，各 guest 从 `GuestSession.version`；离线机器 = 0）。guest 侧
+   `remote_machines` 原样缓存。
+4. **dispatch 前置门（fast-fail 关键）**：`RequestReply.dispatch_machine_request` 发请求
+   **前**查目标机 version（新增 `TopologyService.version_for`：host 从
+   `guest_registry.sessions[*].version`，guest 从 `guest_client.remote_machines`，自己
+   = WIRE_VERSION，未知 = 0）。`!= WIRE_VERSION` → **立刻回 502**（<1ms，不占槽），不发
+   注定超时的请求。web/server.py 的 13 处调用点无需改。
+5. **定时刷新 + 重连重握手**：机器更新重启会自动重 hello（带新版本），host 收到即
+   `on_topology_change` 重推 snapshot；`HostElection._tick`（每 10s）在 host 稳态额外
+   **定时重推** snapshot，保证「别人更新重启后大家很快知道它是新版本」，不把已更新机器
+   一直当老版本挡。
+6. **默认超时兜底**：`request()` 默认 30s → **8s**（前置门 + `on_unreachable` 正常会更
+   早失败，8s 只是最后的网）。
+
+**为什么前置门而不是只靠超时**：`on_unreachable` 只在「链路当场不存在」时触发；一个
+**版本不匹配但链路在**的 peer，请求会真发出去、对面（老代码）读不懂或丢弃、requester
+干等超时。前置门在「发」之前就拦，把这一类从「超时级」降到「<1ms 级」。
+
+**改的文件**：`cluster/registry.py`（GuestSession.version + hello 记版本 + welcome 加 v
++ list_machines 带 version）、`cluster/guest_client.py`（hello 加 v + attach_link 挪到
+welcome + welcome/snapshot 提到 v2 门前）、`cluster/topology_service.py`（collect_machines
+带 version + `version_for`）、`cluster/request_reply.py`（dispatch 前置门 + timeout 8s）、
+`cluster/host_election.py`（host 稳态定时重推 snapshot）。测试
+`tests/unit/test_cluster_fast_fail.py`（+9）。
+
 ## 2026-07-06 — chat 数据面真正上 MessageBus（ChatSyncer 从 sibling 变 bridge；net +70）
 
 **背景 / 起因**：上一条（PR #34）统一了 API/transport/wiring/帧，但 **chat 的本地↔远端还是缝起来的**：本机 chat 走 `MessageBus`，跨机走 `PeerTransport`，中间靠 `chat_bus.py` 的 owner-pump + `on_local_publish`/`on_local_demand` 两个适配 hook + `ChatSyncer._queues` 独立队列桥接。owner 追问"跨机也走同一根 bus、同协议"这条愿景为什么没兑现 —— 确实没兑现：那时是**两根 bus（本机 `MessageBus` + 跨机 `PeerTransport`）**，chat 骑两根、用适配缝拼。RPC 反而已经 location-transparent（`rpc_over_bus`，host=guest 逐字相同），证明"请求/应答"不妨碍位置透明 —— 所以 chat 没理由不上 bus。
