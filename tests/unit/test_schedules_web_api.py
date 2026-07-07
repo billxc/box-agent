@@ -37,12 +37,11 @@ def _make_server(tmp_path):
 
 def _make_request(query=None, match_info=None):
     req = MagicMock()
-    req.query = query or {}
-    req.remote = "127.0.0.1"
-    req.transport = None
+    req.query_params = query or {}
+    req.client = SimpleNamespace(host="127.0.0.1")
     req.headers = {}
-    req.match_info = match_info or {}
-    req.path = "/api/schedules/runs"
+    req.path_params = match_info or {}
+    req.url = SimpleNamespace(path="/api/schedules/runs", query="")
     return req
 
 
@@ -122,7 +121,7 @@ async def test_schedules_run_detail_404_when_missing(tmp_path):
     server = _make_server(tmp_path)
     request = _make_request(match_info={"task_id": "ghost", "run_index": "1"})
     response = await server._handle_schedules_run_detail(request)
-    assert response.status == 404
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio

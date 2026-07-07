@@ -33,12 +33,10 @@ def _make_server(tmp_path, log_file=None) -> WebHttpServer:
 
 def _make_request(query: dict | None = None):
     req = MagicMock()
-    req.query = query or {}
-    req.remote = "127.0.0.1"
-    req.transport = None
+    req.query_params = query or {}
+    req.client = SimpleNamespace(host="127.0.0.1")
     req.headers = {}
-    req.match_info = {}
-    req.body_exists = False
+    req.path_params = {}
     return req
 
 
