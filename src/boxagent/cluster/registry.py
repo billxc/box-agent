@@ -4,25 +4,28 @@
 WebSocket 连接。每个 guest 用 ``hello`` 帧注册自己的 bot。host 随后把发往远端
 bot 的 web-UI HTTP 请求，通过 WS 用通用 RPC 信封转发给拥有它的 guest。
 
-wire 协议::
+wire 协议（当前，与 ``handle_ws`` 一致）::
 
   # Guest → Host（open 后立即）
-  {"type": "hello", "machine_id": "pc", "token": "...", "bots": [...]}
+  {"type": "hello", "machine_id": "pc", "token": "...", "bots": [...], "v": 3}
 
-  # Host → Guest（一个请求）
-  {"type": "rpc", "id": "<uuid>", "method": "GET",
-   "path": "/api/history", "query": {"bot": "x", "chat_id": "y"}, "body": null}
+  # Host → Guest（握手回执，带 host 的 cluster-bus wire 版本 + machine_id）
+  {"type": "welcome", "v": 3, "machine_id": "<host>"}
 
-  # Guest → Host（响应）
-  {"type": "rpc_resp", "id": "<uuid>", "status": 200, "body": {...}}
+  # 双向：ClusterBus packet —— chat 广播 + RPC request/reply 都骑它
+  {"type": "packet", "v": 3, "packet": {...}}   → cluster_bus.on_inbound
 
-  # 双向
+  # Host → Guest：机器拓扑快照 / Guest → Host：bot 列表变更
+  {"type": "machines_snapshot", "machines": [...]}
+  {"type": "bots_update", "bots": [...]}
+
+  # 双向心跳
   {"type": "ping"}  /  {"type": "pong"}
 
-registry 不认识的帧（EventSyncer 的 ``event_batch`` / ``event_resync``，
-ChatSyncer 的 ``chat_subscribe`` / ``chat_event``）落到 ``on_unknown_frame``。
-实时 chat SSE 以前走这里的 ``rpc_stream`` / ``rpc_end``，现在改走 ChatSyncer 的
-``chat_*`` 帧。
+registry 不认识的帧（EventSyncer 的 ``event_batch`` / ``event_resync``，wire v2）
+落到 ``on_unknown_frame``。历史上的 ``rpc`` / ``rpc_resp`` / ``rpc_stream`` 与
+ChatSyncer 的 ``chat_*`` 帧已被 ClusterBus 的 packet 路径取代（rpc / chat_sync
+模块已删）。
 """
 
 from __future__ import annotations

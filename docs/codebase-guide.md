@@ -68,7 +68,7 @@ src/boxagent/
 │   ├── web/                 WebChannel + WebHttpServer（Starlette + Hypercorn, HTTP/2）+ static 前端
 │   └── mcp/                 create_mcp_app + McpHttpServer（streamable-http）
 ├── sessions/
-│   ├── storage.py           Storage（session_history.yaml + transcripts/）
+│   ├── storage.py           Storage（sessions.yaml 绑定 chat_id→session_id + previous_session_ids 链；session_history.yaml recents；transcripts/）
 │   ├── base_pool.py         BaseSessionPool（chat_id ↔ backend 绑定）
 │   ├── pool.py              SessionPool（预热 N 个 backend 共享）
 │   ├── raw_pool.py          RawSessionPool（per-chat 懒生成；raw bot 用）
