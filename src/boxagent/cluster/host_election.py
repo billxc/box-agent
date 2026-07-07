@@ -317,6 +317,7 @@ class HostElection:
             self.registry = GuestRegistry(
                 expected_token=self.config.guest_token or self.config.host_token,
                 on_topology_change=self.on_topology_change,
+                local_machine_id=self.config.machine_id,
             )
             if self.on_registry_ready is not None:
                 try:

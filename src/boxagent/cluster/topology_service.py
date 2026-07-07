@@ -136,10 +136,13 @@ class TopologyService:
 
     def version_for(self, machine_id: str) -> int:
         """与 `machine_id` 协商的 cluster-bus wire 版本（0 = 未知 / 旧 / 不兼容）。
-        用于对无法说本协议的 peer 快速 fail 跨机请求，而非挂满 timeout。
+        用于对确知版本不同的 peer 快速 fail 跨机请求，而非挂满 timeout。
 
-        host 从 guest 的 `GuestSession.version` 读；guest 从 host 推来、缓存在
-        `guest_client.remote_machines` 的 `machines_snapshot` 读。本机永远是最新。"""
+        版本一律取活连接握手值（重连即刷新），不读会 stale 的异步快照缓存：
+        - host 看 guest：`GuestSession.version`（guest hello 时定）；
+        - guest 看 host：`guest_client.host_version`（host welcome 时定）；
+        - guest 看其他 guest：只能靠 host 推的 `machines_snapshot`（无直连，兜底）。
+        本机永远是最新。"""
         if machine_id == self.local_machine_id():
             return CLUSTER_BUS_WIRE_VERSION
         registry = self.guest_registry
@@ -149,6 +152,9 @@ class TopologyService:
                 return int(getattr(session, "version", 0) or 0)
         client = self.guest_client
         if client is not None:
+            # host 用活连接握手值，绕开会 stale 的快照（host 升级重连后立刻反映）。
+            if machine_id and machine_id == getattr(client, "host_machine_id", ""):
+                return int(getattr(client, "host_version", 0) or 0)
             for machine in client.remote_machines:
                 if machine.get("machine_id") == machine_id:
                     return int(machine.get("version") or 0)

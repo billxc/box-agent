@@ -90,13 +90,14 @@ class RequestReply:
         """转发到远端机器并返回其响应。target 是本机时返回 None（调用方继续本地
         处理）。
 
-        Fast-fail 门：发出注定失败的请求前，先查目标的 cluster-bus wire 版本。
-        不兼容的 peer（旧 / 离线 / 版本不匹配）<1ms 返回 502，不再挂满整个
-        timeout，避免 web UI 把 ~6 个浏览器连接槽都卡死在它上面。"""
+        Fast-fail 门：发请求前查目标的 cluster-bus wire 版本。**只对确知不同版本**
+        （正数且 != 本机）<1ms 回 502，不挂满 timeout，避免 web UI 把 ~6 个浏览器
+        连接槽卡死。版本 0（未知/没学到/旧构建没报版本但可能同协议）**放行**——
+        宁可让请求走一遭（兼容就成、真不通才走原 timeout），也不误杀。"""
         if machine == self._local:
             return None
         target_version = self._topology.version_for(machine)
-        if target_version != CLUSTER_BUS_WIRE_VERSION:
+        if target_version != 0 and target_version != CLUSTER_BUS_WIRE_VERSION:
             return web.json_response(
                 {
                     "ok": False,

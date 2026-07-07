@@ -324,3 +324,17 @@ WC 化后每个组件都要肉眼手验，迟早漏。加自动测试，但**不
 **前端**（`transports/web/static/`）：新增 `multiplex.js`（`MultiplexClient`，一根页面级 WS + backoff 重连 + 订阅集 + 按 `machine|bot|chat_id` demux）。`chat-controller.js` 的 `switchChat` 不再 `EventSource.close()` + 开新流，改成对上一个 chat `app.multiplex.unsubscribe` + 对新 chat `subscribe(handler=handleEvent)`；`openStream()` 保留名字但改成订阅一条 tag。连接数从 N 降到 1。`events.js`（Events 页那条独立 SSE）不在此列，未动。
 
 **测试**：后端 `tests/unit/test_web_multiplex.py`（真 aiohttp server + 真 ws client + 真 MessageBus：订阅→publish→tagged 帧→退订→断连清理，5 条）。前端 `test/multiplex.test.js`（fake WebSocket 注入 via `app._makeSocket`：单 socket 多 chat、demux、退订、幂等、缓冲、drop 重连、close 不重连、token 上 URL，9 条）；`chat-controller.test.js` 的 `es`/EventSource 断言改为 `app.multiplex` spy。基线后端 886 → 958 passed；前端 76 → 85 passed。
+
+## 2026-07-07 — 修 fast-fail 版本验证：取活连接握手值 + 未知放行（分支 fix-version-refresh）
+
+**病**：PR #37 的跨机 fast-fail 上线后，mbp 一直报 `devbox-xl is incompatible (wire version 0)`，即使 devbox-xl 已升级重启。**重启 mbp 才好**。两个错：
+
+1. **判据用了会 stale 的异步快照**：`version_for` 对「guest 看 host」这条路读的是 host 异步推来、缓存在 `guest_client.remote_machines` 的 machines_snapshot。快照晚到/漏推/重连时序不对，缓存就 stale 在 0，dispatch 一查还是 0 → 一直挡。只有重启清缓存才恢复。
+2. **把「0（未知）」当「不兼容」**：0 有三义混一起——真老机器 / 同协议但旧构建没在握手报 v（如 5705858）/ **还没学到版本**。后两种被误杀。
+
+**修**（都取活连接握手值，重连即刷新，绝不读 stale 缓存）：
+- welcome 帧带上 host 的 `machine_id`（`GuestRegistry.local_machine_id`，host_election 注入）；guest 收 welcome 存 `host_machine_id` + `host_version` 活值，断连清 0。
+- `version_for`：guest 看 host 直接读 `guest_client.host_version`（活值），不读快照；host 看 guest 仍读 `GuestSession.version`（本就是活的）；看其他 guest（无直连）才兜底读快照。
+- `dispatch_machine_request`：**只对确知不同版本**（正数且 != 本机）回 502；**0/未知放行**（宁可走一遭，兼容就成、真不通才走原 timeout），不误杀。
+
+**改的文件**：`cluster/registry.py`（local_machine_id 字段 + welcome 带 machine_id）、`cluster/host_election.py`（注入 local_machine_id）、`cluster/guest_client.py`（host_machine_id/host_version 活值 + welcome 存 + 断连清）、`cluster/topology_service.py`（version_for 走活值）、`cluster/request_reply.py`（dispatch 未知放行）。测试 `test_cluster_fast_fail.py` 加 5 个（活值盖 stale 快照、未知放行、welcome 带 machine_id 等）。972 passed。
