@@ -1,22 +1,22 @@
-"""Cluster topology — node descriptors, machine snapshots.
+"""Cluster 拓扑——节点描述符、machine 快照。
 
-Composition class. Held by Gateway as ``self._topology``. Two-phase DI:
+组合类。由 Gateway 持有为 ``self._topology``。两阶段 DI：
 
-- Phase 1 (constructor): config + shared web_channels dict (read for the
-  local bot list).
-- Phase 2 (setters): ``set_host_election`` after it exists.
+- 阶段 1（构造）：config + 共享的 web_channels dict（读本地 bot 列表）。
+- 阶段 2（setter）：``set_host_election``，等它存在后调。
 
-Public surface (no leading underscore):
+公开接口（无前导下划线）：
 - ``local_machine_id`` / ``local_role`` / ``local_bot_descriptors``
 - ``collect_machines`` / ``push_machines_snapshot_to_sats``
-- ``on_topology_change`` (single hook GuestRegistry calls on change)
-- ``remote_session_for`` (host-side lookup of a guest session owning a bot)
+- ``on_topology_change``（GuestRegistry 变更时调的唯一 hook）
+- ``remote_session_for``（host 侧查找持有某 bot 的 guest session）
 """
 
 import logging
 import time
 from typing import TYPE_CHECKING
 
+from boxagent.cluster.cluster_bus import WIRE_VERSION as CLUSTER_BUS_WIRE_VERSION
 from boxagent.log import Category, log
 
 if TYPE_CHECKING:
@@ -35,13 +35,13 @@ class TopologyService:
     ) -> None:
         self.config = config
         self.web_channels = web_channels
-        # Phase 2 deps
+        # 阶段 2 依赖
         self.host_election: "HostElection | None" = None
 
     def set_host_election(self, host_election: "HostElection") -> None:
         self.host_election = host_election
 
-    # ── HostElection-owned views (re-exposed read-only) ──
+    # ── HostElection 持有的视图（只读转暴露）──
 
     @property
     def guest_registry(self):
@@ -53,7 +53,7 @@ class TopologyService:
         host_election = self.host_election
         return host_election.client if host_election is not None else None
 
-    # ── Local identity ──
+    # ── 本机身份 ──
 
     def local_machine_id(self) -> str:
         return self.config.machine_id or self.config.node_id or "local"
@@ -96,6 +96,7 @@ class TopologyService:
             "online": True,
             "role": local_role,
             "self": True,
+            "version": CLUSTER_BUS_WIRE_VERSION,
             "host_index": self.config.my_host_index,
             "bots": self.local_bot_descriptors(),
             "last_seen": time.time(),
@@ -104,6 +105,7 @@ class TopologyService:
             for m in self.guest_registry.list_machines():
                 m["role"] = "guest"
                 m["self"] = False
+                m.setdefault("version", 0)
                 machine_id = m.get("machine_id") or ""
                 m["host_index"] = self.config.host_priority.index(machine_id) if machine_id in self.config.host_priority else -1
                 machines.append(m)
@@ -131,3 +133,23 @@ class TopologyService:
         if self.guest_registry.get_bot(machine_id, bot) is None:
             return None
         return self.guest_registry.get(machine_id)
+
+    def version_for(self, machine_id: str) -> int:
+        """与 `machine_id` 协商的 cluster-bus wire 版本（0 = 未知 / 旧 / 不兼容）。
+        用于对无法说本协议的 peer 快速 fail 跨机请求，而非挂满 timeout。
+
+        host 从 guest 的 `GuestSession.version` 读；guest 从 host 推来、缓存在
+        `guest_client.remote_machines` 的 `machines_snapshot` 读。本机永远是最新。"""
+        if machine_id == self.local_machine_id():
+            return CLUSTER_BUS_WIRE_VERSION
+        registry = self.guest_registry
+        if registry is not None:
+            session = registry.sessions.get(machine_id)
+            if session is not None:
+                return int(getattr(session, "version", 0) or 0)
+        client = self.guest_client
+        if client is not None:
+            for machine in client.remote_machines:
+                if machine.get("machine_id") == machine_id:
+                    return int(machine.get("version") or 0)
+        return 0

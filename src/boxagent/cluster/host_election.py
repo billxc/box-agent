@@ -1,37 +1,30 @@
-"""Runtime cluster role election & failover.
+"""运行时 host/guest 角色选举与故障切换。
 
-`cluster.host` is now an ordered fallback list (e.g. `[mbp, devbox-xl, macmini]`).
-Whoever is highest-priority and reachable owns the cluster tunnel and serves
-as the active host; everyone else runs as guest. Roles are decided at
-runtime and re-evaluated periodically — primary going offline causes the
-next-in-line to take over, primary coming back triggers the current host to
-demote.
+`cluster.host` 是有序 fallback 列表（如 `[mbp, devbox-xl, macmini]`）。
+优先级最高且可达的节点持有 cluster tunnel、当 active host，其余当 guest。
+角色运行时决定并周期性重估：primary 掉线由下一顺位接管，primary 恢复则
+当前 host 降级。
 
-Promotion / demotion uses the same shared `cluster.tunnel_name`
-(`boxagent-cluster`) — only one node hosts it at a time. We rely on
-`devtunnel host` being mutually exclusive: only one process can host a tunnel
-at any given moment.
+升/降级共用同一个 `cluster.tunnel_name`（`boxagent-cluster`），同一时刻只有
+一个节点 host 它——依赖 `devtunnel host` 的互斥性。
 
-State transitions:
+状态转换：
 
-  init ──probe──►  guest (someone else hosting)
-       └───────►  host  (no one hosting; I'm a candidate)
+  init ──probe──►  guest（别人在 host）
+       └───────►  host （无人 host；我是候选）
 
-  guest ──upstream gone, I'm next in line──► host
-  host  ──higher-priority candidate appears as guest──► guest
-  host  ──devtunnel host process exits unexpectedly──► guest (next probe re-elects)
+  guest ──upstream 掉线且我是下一顺位──► host
+  host  ──更高优先级候选以 guest 身份出现──► guest
+  host  ──devtunnel host 进程意外退出──► guest（下次 probe 重选）
 
-The "higher-priority displaces lower" path needs no new protocol: when a
-recovering primary boots, its first probe sees the lower-priority host
-hosting the tunnel and joins it as a guest. The lower-priority host's next
-tick spots the higher-priority session in its registry and voluntarily demotes.
-The recovering primary's next tick then finds no host and promotes itself.
+"高优先级顶替低优先级"无需新协议：恢复的 primary 启动后首次 probe 见到
+低优先级 host 持有 tunnel，就以 guest 身份加入；低优先级 host 下个 tick 在
+registry 里发现更高优先级 session，自愿降级；primary 下个 tick 找不到 host
+遂自我升级。
 
-Ownership: this object owns ``tunnel`` / ``registry`` / ``client`` for the
-lifetime of the elected role. Callers (Gateway) read them via the public
-attributes; they don't write back. Topology-change and bot-descriptor
-callbacks are injected at construction so this module never reaches into
-``gateway._xxx`` private state.
+所有权：本对象在角色生命周期内持有 ``tunnel`` / ``registry`` / ``client``，
+调用方（Gateway）只读公开属性不回写。topology 变更和 bot 描述符回调在构造时
+注入，本模块不触碰 ``gateway._xxx`` 私有状态。
 """
 
 from __future__ import annotations
@@ -64,7 +57,7 @@ GuestClientReadyCb = Callable[[GuestClient], None]
 
 @dataclass
 class HostElection:
-    """Decides this node's host/guest role and keeps it in sync with reality."""
+    """决定本节点 host/guest 角色，并让它与现实保持一致。"""
 
     config: "AppConfig"
     on_topology_change: TopologyChangeCb | None = None
@@ -72,17 +65,16 @@ class HostElection:
     on_registry_ready: RegistryReadyCb | None = None
     on_guest_client_ready: GuestClientReadyCb | None = None
     probe_interval: float = 10.0
-    # Before promoting ourselves on an empty probe, retry this many times
-    # with `promote_retry_delay` between attempts. Guards against split-brain
-    # caused by a single transient probe failure (timeout, devtunnel hiccup)
-    # while another node is legitimately hosting.
+    # 空 probe 就自我升级前，先重试这么多次（间隔 promote_retry_delay）。
+    # 防止单次瞬时 probe 失败（timeout、devtunnel 抽风）时另一节点其实在正常
+    # host 而导致 split-brain。
     promote_retry_count: int = 3
     promote_retry_delay: float = 2.0
 
     state: str = "init"  # "init" | "host" | "guest" | "standalone"
     current_upstream: str = ""
 
-    # Owned cluster components — populated by transitions, read by Gateway.
+    # 持有的 cluster 组件——由状态转换填充，供 Gateway 读取。
     tunnel: ClusterTunnel | None = field(default=None, repr=False)
     registry: GuestRegistry | None = field(default=None, repr=False)
     client: GuestClient | None = field(default=None, repr=False)
@@ -104,8 +96,7 @@ class HostElection:
         if self._task is not None:
             return
         self._stop = False
-        # Drive an immediate first tick before kicking off the periodic loop
-        # so the role is settled before any web request lands.
+        # 启动周期循环前先跑一次 tick，让角色在任何 web 请求到来前就定下来。
         try:
             await self._tick()
         except Exception as e:
@@ -149,7 +140,7 @@ class HostElection:
         except Exception:
             pass
 
-    # ── core decision logic ──
+    # ── 核心决策逻辑 ──
 
     async def _tick(self) -> None:
         if not self.config.cluster_tunnel:
@@ -160,14 +151,13 @@ class HostElection:
         my_index = self.config.my_host_index
         my_machine_id = self.config.machine_id
 
-        # Always probe ground truth first — never trust our own self-belief.
-        # Catches the case where our `devtunnel host` subprocess died after
-        # promote (guest tunnel claimed by a peer, devtunnel quirks, etc.) so
-        # we'd otherwise stay in a "host" delusion forever.
+        # 永远先 probe 真实状态，不信自己的自我认知。捕捉 promote 后
+        # `devtunnel host` 子进程死掉的情况（tunnel 被 peer 抢走、devtunnel 抽风
+        # 等），否则会永远停留在虚假的 "host" 幻觉里。
         upstream = await self._probe_active_host()
 
         if self.state == "host":
-            # Sanity: is the tunnel actually serving *us*?
+            # 自检：tunnel 是不是真的在服务*我们*？
             tunnel = self.tunnel
             tunnel_dead = tunnel is None or not tunnel.is_alive()
             stolen = upstream and upstream != my_machine_id
@@ -183,15 +173,14 @@ class HostElection:
                     machine_id=my_machine_id, tunnel_dead=tunnel_dead, probe=upstream,
                 )
                 await self._become_guest(upstream or "")
-                # Re-tick immediately so we either promote again (if no other
-                # host appeared) or settle into the new upstream.
+                # 立即重跑一次 tick：要么重新升级（若无其他 host），要么落入新
+                # upstream。
                 await self._tick()
                 return
 
-            # If the probe failed (no upstream visible) but our subprocess is
-            # alive, accept that — could be a transient devtunnel show hiccup.
-            # Then check whether a higher-priority candidate has joined as a
-            # guest and we should yield.
+            # probe 失败（看不到 upstream）但子进程还活着，就接受——可能是
+            # devtunnel show 的瞬时抽风。然后检查是否有更高优先级候选以 guest
+            # 身份加入、该让位。
             registry = self.registry
             if registry is not None and my_index > 0:
                 for sess_machine_id in list(registry.sessions.keys()):
@@ -207,17 +196,24 @@ class HostElection:
                         )
                         await self._become_guest(sess_machine_id)
                         return
+            # 本 tick host 稳定。周期性重推 machines 快照，让 guest 保持对全网
+            # cluster-bus wire 版本的新鲜视图——尤其是刚升级并重连的 peer，不再被
+            # 别人当成旧版本。
+            if registry is not None and registry.on_topology_change is not None:
+                try:
+                    await registry.on_topology_change(None)
+                except Exception as exception:
+                    logger.warning("host election: periodic snapshot re-push failed: %r", exception)
             return
 
-        # Not host yet — settle into guest or promote.
+        # 还不是 host——落入 guest 或升级。
         if upstream and upstream != my_machine_id:
             await self._ensure_guest(upstream)
             return
 
         if my_index >= 0:
-            # Empty probe could mean "really no host" or "transient hiccup
-            # while a peer is hosting". Re-probe a few times before stealing
-            # the tunnel to avoid split-brain.
+            # 空 probe 可能是"真没 host"，也可能是"peer 在 host 时的瞬时抽风"。
+            # 抢 tunnel 前多 probe 几次，避免 split-brain。
             for attempt in range(1, self.promote_retry_count + 1):
                 await asyncio.sleep(self.promote_retry_delay)
                 if self._stop:
@@ -232,15 +228,15 @@ class HostElection:
                     return
             await self._try_promote()
         else:
-            # Not a candidate, no host visible. Stay quiet; guest_client (if any)
-            # will keep retrying once a host appears.
+            # 非候选，且看不到 host。保持安静；一旦有 host 出现，guest_client（若有）
+            # 会自己重试。
             await self._ensure_guest("")
 
-    # ── probes ──
+    # ── probe ──
 
     async def _probe_active_host(self) -> str:
-        """Resolve the cluster tunnel URL and ask whoever's hosting it for
-        their machine_id via /api/version. Returns "" if no host is reachable.
+        """解析 cluster tunnel URL，向 host 它的节点问 /api/version 拿 machine_id。
+        无 host 可达时返回 ""。
         """
         tunnel = self.config.cluster_tunnel
         if not tunnel or not shutil.which("devtunnel"):
@@ -289,7 +285,7 @@ class HostElection:
             )
             return ""
 
-    # ── transitions ──
+    # ── 状态转换 ──
 
     async def _try_promote(self) -> None:
         async with self._transition_lock:
@@ -313,7 +309,7 @@ class HostElection:
                     tunnel=self.config.cluster_tunnel,
                     error=repr(e),
                 )
-                # Fall back to guest mode — someone else owns the tunnel.
+                # 降级为 guest——tunnel 被别人持有。
                 await self._ensure_guest_locked("")
                 return
             self.tunnel = tunnel
@@ -336,7 +332,7 @@ class HostElection:
                 f"promoted to active host (tunnel {self.config.cluster_tunnel})",
                 machine_id=self.config.machine_id, tunnel=self.config.cluster_tunnel, url=url,
             )
-            # Refresh sidebar for whoever's currently watching.
+            # 给正在看的人刷新 sidebar。
             await self._fire_topology_change(None)
 
     async def _ensure_guest(self, upstream: str) -> None:
@@ -376,7 +372,7 @@ class HostElection:
             await self._teardown_host()
             await self._ensure_guest_locked(upstream)
 
-    # ── teardown helpers ──
+    # ── teardown 辅助 ──
 
     async def _teardown_host(self) -> None:
         if self.registry is not None:

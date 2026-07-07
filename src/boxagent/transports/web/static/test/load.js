@@ -1,6 +1,6 @@
-// Loads util.js + the components into the DOM stub's globals so tests can
-// exercise the real component source (IIFEs that register custom elements on
-// `window`). Eval'd once; each test uses a fresh `makeRoot()` container.
+// 把 util.js + 各组件加载进 DOM stub 的全局，让测试能跑真实组件源码
+//（在 `window` 上注册自定义元素的 IIFE）。只 eval 一次；
+// 每个测试用一个新的 `makeRoot()` 容器。
 
 "use strict";
 
@@ -9,12 +9,13 @@ const path = require("path");
 const vm = require("vm");
 const { install, makeRoot } = require("./dom-stub");
 
-install(); // sets globalThis.window / document / customElements / CSS / HTMLElement
+install(); // 设置 globalThis.window / document / customElements / CSS / HTMLElement
 
 const staticDir = path.join(__dirname, "..");
 for (const rel of [
   "util.js",
   "session-data.js",
+  "multiplex.js",
   "chat-controller.js",
   "components/tool-card.js",
   "components/chat-message.js",
@@ -49,4 +50,5 @@ module.exports = {
   get defaultTitle() { return globalThis.defaultTitle; },
   get shortId() { return globalThis.shortId; },
   get ChatController() { return globalThis.ChatController; },
+  get MultiplexClient() { return globalThis.MultiplexClient; },
 };

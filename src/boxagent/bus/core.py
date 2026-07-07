@@ -1,21 +1,18 @@
-"""The content-agnostic message bus core.
+"""内容无关的消息总线核心。
 
-`MessageBus` routes on `topic` only. `payload` is opaque — the core never
-inspects it. `publish` is SYNCHRONOUS: an ordered for-loop over the subscribers
-whose pattern matches the topic. There is NO create_task per message here (坑
-#1); all async lives in a `RemoteSubscriber`'s single pump task. A subscriber
-registered FIRST is delivered FIRST (ordered slots — later phases rely on the
-store-subscriber running first and synchronously).
+`MessageBus` 只按 `topic` 路由，`payload` 对核心透明——从不检查。`publish` 是同步的：
+按注册顺序 for-loop 遍历匹配 topic 的订阅者。每条消息不 create_task（坑 #1）；
+异步全在 `RemoteSubscriber` 的单个 pump task 里。先注册先投递（有序槽位——后续阶段
+依赖 store-subscriber 最先且同步执行）。
 
-Topic matching (kept deliberately simple — linear scan, no trie; the fleet is
-3-4 nodes):
-  - exact:  pattern "chat.m.b.c" matches only topic "chat.m.b.c"
-  - prefix: a pattern ending in "." matches any topic starting with it, so
-            "events." matches "events.scheduler.run", and
-            "events.scheduler." matches "events.scheduler.run" but NOT
-            "events.cluster.x".
+Topic 匹配（刻意保持简单——线性扫描，无 trie；集群只有 3-4 个节点）：
+  - exact：pattern "chat.m.b.c" 只匹配 topic "chat.m.b.c"
+  - prefix：以 "." 结尾的 pattern 匹配任何以它开头的 topic，故
+            "events." 匹配 "events.scheduler.run"，
+            "events.scheduler." 匹配 "events.scheduler.run" 但不匹配
+            "events.cluster.x"。
 
-This module is a neutral leaf: it imports nothing project-internal.
+本模块是中立叶子：不 import 任何项目内部代码。
 """
 from __future__ import annotations
 
@@ -38,11 +35,10 @@ SubscriptionWatcher = tuple[str, "Callable[[str], None]", "Callable[[str], None]
 
 
 class Subscription:
-    """Handle returned by `MessageBus.subscribe`. `close()` unsubscribes.
+    """`MessageBus.subscribe` 返回的句柄。`close()` 退订。
 
-    Closing is idempotent and safe to call after the bus is gone. `order` is a
-    process-monotonic sequence so fan-out can restore global subscription order
-    even though subscriptions are indexed by topic.
+    close 幂等，总线销毁后调用也安全。`order` 是进程内单调递增序号，让 fan-out
+    能恢复全局订阅顺序（尽管订阅按 topic 索引）。
     """
 
     def __init__(
@@ -66,7 +62,7 @@ class Subscription:
 
 
 class MessageBus:
-    """Synchronous, ordered, content-agnostic publish/subscribe."""
+    """同步、有序、内容无关的 publish/subscribe。"""
 
     def __init__(
         self,
@@ -74,21 +70,19 @@ class MessageBus:
         machine_id: str = "",
         id_factory: "Callable[[], str] | None" = None,
     ) -> None:
-        # machine_id stamps every packet's `sender`; id_factory mints `message_id`
-        # at the send() seam (injectable so tests get deterministic ids — never
-        # uuid4() deep in the fan-out, which would break the clock-free/testable
-        # contract, same reasoning as caller-supplied ts).
+        # machine_id 盖在每个 packet 的 `sender` 上；id_factory 在 send() 处生成
+        # `message_id`（可注入，让测试拿到确定性 id——绝不在 fan-out 深处 uuid4()，
+        # 那会破坏无时钟/可测试契约，同 caller 提供 ts 的理由）。
         self._machine_id = machine_id
         self._id_factory: "Callable[[], str]" = (
             id_factory if id_factory is not None else (lambda: uuid.uuid4().hex)
         )
-        # Indexed by topic so a publish touches only the relevant subscriptions,
-        # not every subscription in the process (the whole node shares one bus,
-        # so a chat stream_delta must not scan unrelated event/chat subs):
-        #   _exact:  exact-topic patterns → subs, O(1) lookup (the chat hot path)
-        #   _prefix: prefix patterns (ending in ".") → scanned with startswith
-        #            (only the events.* family + a handful of /events SSE subs)
-        # `order` restores global first-subscribed-first ordering across both.
+        # 按 topic 索引，让一次 publish 只碰相关订阅，而非进程内全部订阅（整个节点
+        # 共用一根总线，故 chat stream_delta 不能扫无关的 event/chat 订阅）：
+        #   _exact：exact-topic pattern → subs，O(1) 查找（chat 热路径）
+        #   _prefix：prefix pattern（以 "." 结尾）→ 用 startswith 扫描
+        #            （只有 events.* 家族 + 少量 /events SSE 订阅）
+        # `order` 恢复两者间的全局先订阅先执行顺序。
         self._exact: dict[str, list[Subscription]] = {}
         self._prefix: list[Subscription] = []
         self._next_order = 0
@@ -105,7 +99,7 @@ class MessageBus:
         的 EXACT topic 时，分别调用 ``on_add(topic)`` / ``on_remove(topic)``。
 
         每次 add/remove 都触发（不去重）；调用方自行 refcount。只报告 exact-topic
-        订阅——bridge 自己在同一 prefix 上的前缀订阅不会被当成 demand。"""
+        订阅——bridge 自己在同一 prefix 上的前缀订阅不算 demand。"""
         self._watchers.append((topic_prefix, on_add, on_remove))
 
     def subscribe(
@@ -113,11 +107,11 @@ class MessageBus:
         topic_pattern: str,
         subscriber: "Subscriber",
     ) -> Subscription:
-        """Register a subscriber for a topic pattern.
+        """为一个 topic pattern 注册订阅者。
 
-        `topic_pattern` is either an exact topic ("chat.m.b.c") or a prefix
-        ending in "." ("events." / "events.scheduler."). Returns a
-        `Subscription`; call `.close()` to unsubscribe.
+        `topic_pattern` 要么是 exact topic（"chat.m.b.c"），要么是以 "." 结尾的
+        prefix（"events." / "events.scheduler."）。返回 `Subscription`，调 `.close()`
+        退订。
         """
         subscription = Subscription(self, topic_pattern, subscriber, self._next_order)
         self._next_order += 1
@@ -128,15 +122,20 @@ class MessageBus:
             self._notify_watchers(topic_pattern, added=True)
         return subscription
 
-    def send(self, *, receiver: str, topic: str, payload: dict, ts: float) -> str:
-        """Location-unified send. Stamp `message_id` (UUID) + `sender` (this
-        machine), then deliver to local subscribers when the packet is addressed
-        here — `receiver == ""` (broadcast) or `receiver ==` this machine. Return
-        the stamped `message_id`.
+    def has_subscribers(self, topic: str) -> bool:
+        """publish 到 ``topic`` 是否有任何存活订阅会收到（exact 桶或匹配的
+        prefix）。只读探查。"""
+        if self._exact.get(topic):
+            return True
+        return any(topic.startswith(sub.topic_pattern) for sub in self._prefix)
 
-        A LocalBus reaches only this machine: a packet addressed to a *different*
-        machine is stamped and its id returned, but has nowhere to go here — the
-        ClusterBus is what ships it over a link.
+    def send(self, *, receiver: str, topic: str, payload: dict, ts: float) -> str:
+        """位置统一的 send。盖上 `message_id`（UUID）+ `sender`（本机），当 packet
+        寻址到本机时投递给本地订阅者——`receiver == ""`（广播）或 `receiver ==` 本机。
+        返回盖好的 `message_id`。
+
+        LocalBus 只能到达本机：寻址到*别的*机器的 packet 会被盖章并返回 id，但在这里
+        无处可去——ClusterBus 才负责经链路发出去。
         """
         packet = Packet(
             message_id=self._id_factory(),
@@ -151,25 +150,24 @@ class MessageBus:
         return packet.message_id
 
     def publish(self, topic: str, payload: dict, ts: float) -> None:
-        """Broadcast shim over `send()` — retained until callers migrate to send."""
+        """`send()` 之上的广播垫片——保留到调用方全部迁移到 send 为止。"""
         self.send(receiver="", topic=topic, payload=payload, ts=ts)
 
     def _deliver_local(self, packet: Packet) -> None:
-        """Fan a packet out to every matching local subscriber, in order.
+        """按顺序把 packet fan-out 给每个匹配的本地订阅者。
 
-        SYNCHRONOUS and ordered: the store-subscriber-first / first-subscribed
-        ordering is preserved by sorting the matched subscriptions by `order`.
-        One subscriber's `deliver` raising is caught, logged, and MUST NOT stop
-        the others (subscriber-exception isolation).
+        同步且有序：按 `order` 排序匹配到的订阅，保持 store-subscriber 优先 /
+        先订阅先执行。某订阅者 `deliver` 抛异常会被捕获并记录，绝不能中断其他
+        订阅者（订阅者异常隔离）。
         """
         topic = packet.topic
-        # Gather matches: O(1) exact bucket + a scan of the (small) prefix list.
+        # 收集匹配：O(1) exact 桶 + 扫描（很小的）prefix 列表。
         matched = list(self._exact.get(topic, ()))
         for subscription in self._prefix:
             if topic.startswith(subscription.topic_pattern):
                 matched.append(subscription)
-        # Restore global registration order; the list is a snapshot, so a
-        # subscriber closing its own (or another) subscription mid-fan-out is safe.
+        # 恢复全局注册顺序；列表是快照，故某订阅者在 fan-out 途中关闭自己（或别人）
+        # 的订阅是安全的。
         if len(matched) > 1:
             matched.sort(key=lambda subscription: subscription.order)
         for subscription in matched:

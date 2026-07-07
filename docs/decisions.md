@@ -8,6 +8,49 @@
 
 > 📦 **2026-03 ~ 2026-05 的历史条目已归档**到 [archive/decisions-2026-03-to-05.md](archive/decisions-2026-03-to-05.md)。本文件保留 2026-06 起的决策。
 
+## 2026-07-07 — 跨机请求对不兼容/不可达机器「秒失败」（版本协商 + dispatch 前置门）
+
+**病**：统一到一根 ClusterBus 后，mixed-version 场景（有机器还在老代码 / 离线 /
+版本不匹配）下，跨机请求发给这种机器时**干等满超时**才失败。web UI 点开这种机器的
+bot 会连发 `/api/history`、`/api/send` 等跨机请求，每个卡满超时，占满浏览器
+HTTP/1.1 的 ~6 个连接槽 → UI 冻住（后台没坏，curl 秒回）。
+
+**修法**：给跨机传输加一层「协商版本 → 前置门 → 秒失败」，不发注定超时的请求。
+
+1. **握手带版本**：guest `hello` 帧加 `v=WIRE_VERSION`（ClusterBus 的 3），host
+   `welcome` 帧同样加 `v`。缺 `v` = 老 peer = 记 `0`（不兼容）。
+2. **attach_link 记真实协商版本**：host 收 hello 用 `payload.v` 建 `GuestSession.version`
+   并 `attach_link(version=...)`；guest 把 `attach_link` **从「发完 hello」挪到「收到
+   welcome」**（host 版本在 welcome 才拿得到）。guest 侧 `welcome`/`machines_snapshot`
+   两帧移到旧 v2 版本门**之前**处理——否则 v3 的 welcome 会被 events 用的 v2 门丢掉。
+3. **版本进 `machines_snapshot`**：`collect_machines` 每台机描述符加 `version`（host
+   自己 = WIRE_VERSION，各 guest 从 `GuestSession.version`；离线机器 = 0）。guest 侧
+   `remote_machines` 原样缓存。
+4. **dispatch 前置门（fast-fail 关键）**：`RequestReply.dispatch_machine_request` 发请求
+   **前**查目标机 version（新增 `TopologyService.version_for`：host 从
+   `guest_registry.sessions[*].version`，guest 从 `guest_client.remote_machines`，自己
+   = WIRE_VERSION，未知 = 0）。`!= WIRE_VERSION` → **立刻回 502**（<1ms，不占槽），不发
+   注定超时的请求。web/server.py 的 13 处调用点无需改。
+5. **定时刷新 + 重连重握手**：机器更新重启会自动重 hello（带新版本），host 收到即
+   `on_topology_change` 重推 snapshot；`HostElection._tick`（每 10s）在 host 稳态额外
+   **定时重推** snapshot，保证「别人更新重启后大家很快知道它是新版本」，不把已更新机器
+   一直当老版本挡。
+6. **默认超时**：保持 `request()` 默认 **30s**（前置门 + `on_unreachable` 已把「已知坏」的
+   机器秒毙；超时只兜底「同版本、在线、但静默」的罕见情况）。曾试过一刀切砍到 8s，**已
+   revert**——它会误杀合法的慢请求，且超时语义是「结果未知」不是「没发生」，非幂等操作
+   （/api/send）据此重试会双发。这块留给后续单独设计的 RPC 框架处理。
+
+**为什么前置门而不是只靠超时**：`on_unreachable` 只在「链路当场不存在」时触发；一个
+**版本不匹配但链路在**的 peer，请求会真发出去、对面（老代码）读不懂或丢弃、requester
+干等超时。前置门在「发」之前就拦，把这一类从「超时级」降到「<1ms 级」。
+
+**改的文件**：`cluster/registry.py`（GuestSession.version + hello 记版本 + welcome 加 v
++ list_machines 带 version）、`cluster/guest_client.py`（hello 加 v + attach_link 挪到
+welcome + welcome/snapshot 提到 v2 门前）、`cluster/topology_service.py`（collect_machines
+带 version + `version_for`）、`cluster/request_reply.py`（dispatch 前置门；timeout 保持 30s）、
+`cluster/host_election.py`（host 稳态定时重推 snapshot）。测试
+`tests/unit/test_cluster_fast_fail.py`（+9）。
+
 ## 2026-07-06 — chat 数据面真正上 MessageBus（ChatSyncer 从 sibling 变 bridge；net +70）
 
 **背景 / 起因**：上一条（PR #34）统一了 API/transport/wiring/帧，但 **chat 的本地↔远端还是缝起来的**：本机 chat 走 `MessageBus`，跨机走 `PeerTransport`，中间靠 `chat_bus.py` 的 owner-pump + `on_local_publish`/`on_local_demand` 两个适配 hook + `ChatSyncer._queues` 独立队列桥接。owner 追问"跨机也走同一根 bus、同协议"这条愿景为什么没兑现 —— 确实没兑现：那时是**两根 bus（本机 `MessageBus` + 跨机 `PeerTransport`）**，chat 骑两根、用适配缝拼。RPC 反而已经 location-transparent（`rpc_over_bus`，host=guest 逐字相同），证明"请求/应答"不妨碍位置透明 —— 所以 chat 没理由不上 bus。
@@ -267,3 +310,17 @@ WC 化后每个组件都要肉眼手验，迟早漏。加自动测试，但**不
 **刻意保留 events 走 EventSyncer**：events 跨机复制需要 `(origin_machine, origin_seq)` 去重 + resync-on-reconnect，naive broadcast 给不了；这是 pub/sub 之外 legitimately 不同的**可靠复制**关切，不是冗余。`events/sync.py` + `bus_wiring.py`(收成 events-only) + `peer_transport.py`(events 帧 WIRE_VERSION=2) 保留。若将来迁 events，见 `docs/bus-protocol.md` 的 Open。
 
 **部署**：big-bang——代码在分支上按可测小步走（每步跑测试），最后全 fleet 一起重启（新旧 bus 不互通，无灰度窗口，3-4 台个人机可接受）。基线 984 → 迁移后 952 passed（降幅=删的 rpc/chat 测试 − 新增 bus 测试）。
+
+## 2026-07-07 — Web UI 推送多路复用：每 chat 一条 SSE → 整页一条 WS（分支 sse-multiplex）
+
+**病因**：Web UI 每打开一个 chat 就开一条 SSE 长连接 `GET /api/stream?bot&machine&chat_id`（`_handle_web_stream` 订一个 bus topic `chat.<owner>.<bot>.<chat_id>` 逐条 SSE 推给浏览器）。一个 chat = 占一个浏览器 HTTP/1.1 连接槽；单 host 上限 ~6 个并发连接，开几个 chat + 其它请求就把槽占满，整个 UI 卡住排队。aiohttp 不支持 HTTP/2（官方 not planned），扩连接数这条路堵死。
+
+**方案（选 WS，非 SSE+POST）**：
+- 动态订/退需要 client→server 指令通道。SSE 单向，要么配一个 POST 控制端点（需 server 用 connection-id 把无状态 POST 和某条在飞 SSE 关联起来，多一层握手），要么直接上 WebSocket（双向，订/退天然干净）。选 **WS**：一根 socket = 永远只占 1 个槽，订/退 + 未来 client→server 需求都骑同一条；唯一代价是重连，用 backoff + 重连后重报订阅集兜住。
+- 旧 `/api/stream` **保留不动**（向后兼容 / iOS 等其它消费者），只新增 `/api/multiplex`；前端 chat 路径切到新端点。
+
+**后端**（`transports/web/server.py`）：新增 `_handle_web_multiplex`——一条 WS 持有**多个** bus 订阅（`dict[topic, Subscription]`），收 `{type:subscribe|unsubscribe, machine, bot, chat_id}` 控制帧动态加/减订阅；每条事件用新的 `TaggedQueueSubscriber`（`bus/subscriber.py`）打上 `{machine,bot,chat_id, event:{...}}` 标签汇入一根共享 queue，pump task 逐条 `send_json` 推下去；WS 关闭时 finally 里 `subscription.close()` 全部退订。topic 解析抽成 `_resolve_chat_topic()` 与旧 SSE handler 共用。`bus/core.py` 加只读 `has_subscribers(topic)` 供测试断言订阅生命周期（不 peek 私有 `_exact`）。
+
+**前端**（`transports/web/static/`）：新增 `multiplex.js`（`MultiplexClient`，一根页面级 WS + backoff 重连 + 订阅集 + 按 `machine|bot|chat_id` demux）。`chat-controller.js` 的 `switchChat` 不再 `EventSource.close()` + 开新流，改成对上一个 chat `app.multiplex.unsubscribe` + 对新 chat `subscribe(handler=handleEvent)`；`openStream()` 保留名字但改成订阅一条 tag。连接数从 N 降到 1。`events.js`（Events 页那条独立 SSE）不在此列，未动。
+
+**测试**：后端 `tests/unit/test_web_multiplex.py`（真 aiohttp server + 真 ws client + 真 MessageBus：订阅→publish→tagged 帧→退订→断连清理，5 条）。前端 `test/multiplex.test.js`（fake WebSocket 注入 via `app._makeSocket`：单 socket 多 chat、demux、退订、幂等、缓冲、drop 重连、close 不重连、token 上 URL，9 条）；`chat-controller.test.js` 的 `es`/EventSource 断言改为 `app.multiplex` spy。基线后端 886 → 958 passed；前端 76 → 85 passed。

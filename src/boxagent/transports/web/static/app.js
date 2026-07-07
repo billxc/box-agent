@@ -1,4 +1,4 @@
-/* BoxAgent Web Chat — vanilla JS, no build step */
+/* BoxAgent Web Chat — 原生 JS，无构建步骤 */
 (() => {
   const params = new URLSearchParams(location.search);
   const TOKEN = params.get("token") || localStorage.getItem("ba.token") || "";
@@ -19,33 +19,31 @@
   const sidebar = $("sidebar");
   const recapBanner = $("recap-banner");
 
-  // Per-session dismissed-recap memory (browser-local). When user closes the
-  // banner we don't show it again for that chat unless the recap text changes.
-  // <recap-banner> (components/recap-banner.js) owns the dismiss / collapse /
-  // persist behaviour; we just supply the recap text + a key scoped to the
-  // current machine|bot|chat (app state).
+  // 按会话记住已关闭的 recap（浏览器本地）。用户关掉后，除非 recap 文本变化，
+  // 否则该 chat 不再显示。<recap-banner> 负责关闭/折叠/持久化；
+  // 这里只提供 recap 文本 + 一个 machine|bot|chat 作用域的 key。
   function showRecapBanner(recap, chatId) {
     recapBanner.show(recap, "ba.recap-dismissed." + curKey() + "|" + chatId);
   }
 
   const state = {
     machines: [],         // [{machine_id, online, role, self, bots, last_seen}]
-    bot: null,            // selected bot name
-    botMachine: null,     // selected bot's machine_id (for display)
-    sessions: {},         // "machine|bot" -> {chat_id: {title, preview, ts}}  (local browser-side)
+    bot: null,            // 当前选中的 bot 名
+    botMachine: null,     // 当前 bot 所在的 machine_id（用于显示）
+    sessions: {},         // "machine|bot" -> {chat_id: {title, preview, ts}}（浏览器本地）
     serverSessions: {},   // "machine|bot" -> [{chat_id, platform, preview, last_ts, ...}]
     chatId: null,
-    es: null,
+    subscribed: null,     // 当前订阅到 multiplex socket 的 {machine, bot, chat_id}
     streamMsgs: {},
     refreshTimer: null,
-    historyOffset: 0,     // how many items already loaded from end of history
-    historyTotal: 0,      // total items reported by server
+    historyOffset: 0,     // 已从历史末尾加载的条目数
+    historyTotal: 0,      // 服务端报告的总条目数
     historyLoading: false,
     historyExhausted: false,
   };
   const HISTORY_PAGE_SIZE = 50;
 
-  // ── Helpers ──
+  // ── 辅助函数 ──
   function api(path, opts = {}) {
     const headers = { ...(opts.headers || {}) };
     if (TOKEN) headers["Authorization"] = "Bearer " + TOKEN;
@@ -60,10 +58,9 @@
   function botKey(machine, bot) { return `${machine}|${bot}`; }
   function curKey() { return botKey(state.botMachine, state.bot); }
 
-  // ── Recents (cross-bot, browser-local) — component: components/recents-panel.js
-  // The <recents-panel> element owns the localStorage data + list render. We
-  // inject the current selection (for active/offline marking) and handle its
-  // "open" via the navigation below.
+  // ── 最近记录（跨 bot，浏览器本地）— 组件：components/recents-panel.js
+  // <recents-panel> 负责 localStorage 数据 + 列表渲染。这里注入当前选中项
+  // （用于标记 active/offline），并通过下面的导航处理它的 "open"。
   const recents = $("recents");
   recents.getContext = () => ({
     machines: state.machines,
@@ -73,8 +70,8 @@
   });
   recents.onOpen = openRecent;
 
-  // Open a recent: switch bot+machine if needed, then open the chat.
-  // Falls back to a friendly alert if the target machine is offline.
+  // 打开一条最近记录：必要时切换 bot+machine，再打开该 chat。
+  // 目标机器离线时弹提示。
   async function openRecent(r) {
     const m = state.machines.find(x => x.machine_id === r.machine);
     if (m && !m.online) {
@@ -82,8 +79,8 @@
       return;
     }
     if (state.bot !== r.bot || state.botMachine !== r.machine) {
-      // selectBot will load sessions and open last-opened chat; we override
-      // by setting ba.last so it lands on the recent chat instead.
+      // selectBot 会加载会话并打开上次的 chat；这里改写 ba.last，
+      // 让它落到这条最近记录的 chat 上。
       localStorage.setItem("ba.last." + botKey(r.machine, r.bot), r.chat_id);
       await selectBot(r.bot, r.machine);
     } else if (state.chatId !== r.chat_id) {
@@ -95,7 +92,7 @@
   }
 
   // loadSessions / saveSessions / buildSessionList / defaultTitle / shortId
-  // live in session-data.js (pure helpers, exposed as globals).
+  // 在 session-data.js（纯函数，挂为全局）。
 
   async function fetchServerSessions(machine, bot) {
     try {
@@ -111,16 +108,15 @@
     connLabel.textContent = state_;
   }
 
-  // ── Sessions ──
-  // buildSessionList(local, server) / defaultTitle / shortId live in
-  // session-data.js. Resolve the current bot's local+server maps into the
-  // merged, sorted entry list.
+  // ── 会话 ──
+  // buildSessionList(local, server) / defaultTitle / shortId 在 session-data.js。
+  // 把当前 bot 的 local+server map 合并、排序成条目列表。
   function currentSessionEntries() {
     return buildSessionList(state.sessions[curKey()] || {}, state.serverSessions[curKey()] || []);
   }
 
   function refreshSessionList() {
-    // <sessions-panel> renders; app.js owns the server+local merge.
+    // <sessions-panel> 负责渲染；app.js 负责 server+local 合并。
     sessionsPanel.render(currentSessionEntries(), { chatId: state.chatId });
   }
 
@@ -159,11 +155,11 @@
   }
 
   // touchSession / refreshSessionInfo / loadOlderHistory / switchChat /
-  // renderToolCall·renderToolResult / sendText + the message delegators live
-  // in chat-controller.js (ChatController(app), built below). app.js calls
-  // app.switchChat / app.sendText / app.addMessage.
+  // renderToolCall·renderToolResult / sendText 及消息代理都在
+  // chat-controller.js（下面构造的 ChatController(app)）。app.js 调用
+  // app.switchChat / app.sendText / app.addMessage。
 
-  // ── Machines + bot grouping ──
+  // ── 机器 + bot 分组 ──
   async function loadMachines() {
     const r = await api("machines");
     if (!r.ok) {
@@ -178,7 +174,7 @@
     state.machines = machines;
     renderMachines();
     recents.render();
-    // Auto-pick a default bot on first load
+    // 首次加载自动选一个默认 bot
     if (!state.bot) {
       const lastBot = localStorage.getItem("ba.lastBot");
       const lastMachine = localStorage.getItem("ba.lastBotMachine");
@@ -201,7 +197,7 @@
         await selectBot(pick.bot, pick.machine);
       }
     } else {
-      // Mark current bot as stale if its machine went offline
+      // 当前 bot 所在机器离线则标记为 stale
       const m = state.machines.find(m => m.machine_id === state.botMachine);
       if (m && !m.online) {
         chatTitle.textContent = `${state.bot} @ ${state.botMachine} · offline`;
@@ -210,17 +206,15 @@
   }
 
   function renderMachines() {
-    // <machines-panel> renders the tree + owns collapse; app.js owns the data.
+    // <machines-panel> 渲染树 + 负责折叠；app.js 负责数据。
     machinesPanel.render(state.machines, { bot: state.bot, botMachine: state.botMachine });
   }
 
   async function selectBot(botName, machineId) {
-    // Mask the chat panel for the whole switch so the user doesn't see
-    // empty/stale content while we fetch the new bot's session list and
-    // history. switchChat() will keep the mask up through its own swap.
+    // 整个切换过程遮住 chat 面板，避免用户看到旧 bot 的会话列表和历史被
+    // 拉取时的空/过期内容。switchChat() 会在自身 swap 期间继续保持遮罩。
     $("messages-mask").classList.remove("hidden");
-    // Also show a loading placeholder in the sidebar's session list so the
-    // old bot's sessions don't sit there stale during the fetch.
+    // 侧栏会话列表也显示 loading 占位，拉取期间不留旧 bot 的会话。
     sessionsPanel.showLoading();
     state.bot = botName;
     state.botMachine = machineId;
@@ -237,28 +231,30 @@
   }
 
   // ── App context ──
-  // Shared bag the split-out controller reads from + attaches to (no build
-  // step). chat-controller.js (ChatController) owns the whole live-conversation
-  // controller; it reads these and attaches app.switchChat / app.sendText /
-  // app.addMessage / app.openStream / app.handleEvent + wires chatLog.onLoadOlder.
+  // 拆出去的 controller 读取并挂接到这个共享 bag（无构建步骤）。
+  // chat-controller.js（ChatController）负责整个实时会话 controller；
+  // 它读取这些，并挂上 app.switchChat / app.sendText / app.addMessage /
+  // app.openStream / app.handleEvent + 接线 chatLog.onLoadOlder。
   const app = {
     state, api, $, TOKEN, HISTORY_PAGE_SIZE,
     curKey, setConn, showRecapBanner,
     chatTitle, sessionInfoEl, sendBtn, chatLog, recents,
     refreshSessionList, fetchServerSessions, loadMachines,
   };
+  // 一个页面级 multiplex WebSocket；controller 通过 app.multiplex
+  // 增删每个 chat 的订阅，而不是为每个 chat 各开一个 socket。
+  MultiplexClient(app);
   ChatController(app);
 
-  // ── UI events ──
+  // ── UI 事件 ──
   $("refresh-machines").onclick = () => loadMachines().catch(() => {});
   $("restart-all").onclick = () => restartCluster();
-  // Panels signal intent via injected callbacks; app.js owns navigation + actions.
+  // 面板通过注入的回调传达意图；app.js 负责导航 + 动作。
   machinesPanel.onSelectBot = selectBot;
   machinesPanel.onRestartMachine = restartMachine;
   sessionsPanel.onSelectSession = (chatId) => { app.switchChat(chatId); closeSidebar(); };
   $("recents-clear").onclick = () => recents.clear();
-  // Section collapse (caret + persisted state). Same shape for both sidebar
-  // sections, so share one setup.
+  // 分区折叠（caret + 持久化状态）。两个侧栏分区形状一致，共用一套逻辑。
   function setupCollapse(sectionId, toggleId, storageKey) {
     const section = $(sectionId);
     const toggle = $(toggleId);
@@ -275,7 +271,7 @@
   setupCollapse("recents-section", "recents-toggle", "ba.recentsCollapsed");
   setupCollapse("machines-section", "machines-toggle", "ba.machinesCollapsed");
 
-  // ── Sidebar resize ── component: sidebar-resize.js (self-contained behavior)
+  // ── 侧栏拖拽调宽 ── 组件：sidebar-resize.js（自包含行为）
 
   $("new-session").onclick = async () => {
     await app.switchChat(uuid());
@@ -319,7 +315,7 @@
         return;
       }
     } else {
-      // No backend session yet (brand-new web chat) — fall back to local rename.
+      // 没有后端 session（全新 web chat）— 退化为本地重命名。
       current.title = newTitle;
       sessions[state.chatId] = current;
       state.sessions[key] = sessions;
@@ -364,27 +360,26 @@
     return list.length ? list[0].chat_id : null;
   }
 
-  // ── Periodic refresh ──
+  // ── 定期刷新 ──
   function startMachinePoll() {
     if (state.refreshTimer) clearInterval(state.refreshTimer);
     state.refreshTimer = setInterval(() => {
-      loadMachines().catch(() => { /* network blip; UI stays as-is */ });
+      loadMachines().catch(() => { /* 网络抖动；UI 保持原样 */ });
     }, 15000);
   }
 
-  // ── Boot ──
-  recents.render();  // populate from localStorage before machines come back
+  // ── 启动 ──
+  recents.render();  // machines 返回前先从 localStorage 填充
   loadMachines().then(startMachinePoll).catch((e) => {
     console.error(e);
     setConn("offline");
     app.addMessage("assistant", "_Failed to connect: " + e.message + "_");
   });
 
-  // ── Claude session picker (component: components/session-picker.js) ──
-  // The <session-picker> element owns the modal + all Claude-resume HTTP +
-  // pagination. We inject the HTTP wrapper + current-bot context; on a
-  // successful resume it emits "resumed", and we update the local session
-  // caches + navigate (app state the component deliberately doesn't touch).
+  // ── Claude session 选择器（组件：components/session-picker.js）──
+  // <session-picker> 负责弹窗 + 所有 Claude-resume HTTP + 分页。
+  // 这里注入 HTTP 封装 + 当前 bot 上下文；resume 成功时它发出 "resumed"，
+  // 我们更新本地 session 缓存并导航（这些 app state 组件不碰）。
   const picker = $("claude-picker");
   picker.api = api;
   picker.getContext = () => ({ machine: state.botMachine, bot: state.bot });

@@ -1,9 +1,9 @@
-// Minimal DOM stub for testing the vanilla Web Components under `node --test`.
+// 用 `node --test` 测试原生 Web Components 的极简 DOM stub。
 //
-// Deliberately NOT jsdom — no npm / no toolchain. Implements only the surface
-// the components actually touch (createElement, classList, append, querySelector
-// by tag+[data-attr], dataset↔attribute, custom-element upgrade + connectedCallback).
-// Faithful enough for these components; not a general DOM.
+// 刻意不用 jsdom — 无 npm / 无工具链。只实现组件实际用到的表面
+//（createElement、classList、append、按 tag+[data-attr] 的 querySelector、
+// dataset↔attribute、自定义元素升级 + connectedCallback）。
+// 够这些组件用；不是通用 DOM。
 
 "use strict";
 
@@ -26,7 +26,7 @@ class ClassList {
 
 class El {
   constructor(tagName) {
-    const tag = tagName || ""; // custom-element subclasses call super() with no tag
+    const tag = tagName || ""; // 自定义元素子类调 super() 时不传 tag
     this.tagName = tag.toUpperCase();
     this.localName = tag.toLowerCase();
     this.children = [];
@@ -46,10 +46,9 @@ class El {
       get: (t, key) => t[key],
     });
   }
-  // Assigning innerHTML replaces all children (real DOM behavior). We can't
-  // parse the HTML string into nodes, so children are cleared and the raw
-  // string is kept opaque — components that need queryable structure build it
-  // with createElement/append instead.
+  // 赋值 innerHTML 会替换所有子节点（真 DOM 行为）。我们无法把 HTML 串
+  // 解析成节点，所以清空 children、把原串当不透明值保留 —— 需要可查询结构的
+  // 组件改用 createElement/append 构建。
   get innerHTML() { return this._innerHTML; }
   set innerHTML(v) { this._innerHTML = String(v); this.children = []; }
   get className() { return this._className; }
@@ -81,7 +80,7 @@ class El {
     const match = parseSelector(selector);
     return findDescendant(this, match);
   }
-  // Walk all descendants (for assertions in tests).
+  // 遍历所有后代（供测试断言用）。
   _all() {
     const out = [];
     for (const c of this.children) { out.push(c); out.push(...c._all()); }
@@ -96,7 +95,7 @@ function connectTree(el) {
 }
 
 function parseSelector(selector) {
-  // Supports `tag`, `tag[attr="val"]`, `[attr="val"]`, `.class`.
+  // 支持 `tag`、`tag[attr="val"]`、`[attr="val"]`、`.class`。
   const sel = selector.trim();
   if (sel.startsWith(".")) return { cls: sel.slice(1) };
   const m = sel.match(/^([a-z-]+)?(?:\[([a-z-]+)="([^"]*)"\])?$/i);
@@ -126,8 +125,8 @@ function install() {
     createElement: (tag) => {
       const Cls = registry.get(tag.toLowerCase());
       const el = Cls ? new Cls() : new El(tag);
-      // Custom-element subclasses didn't pass a tag to super(); set it here so
-      // localName/tagName + querySelector matching work.
+      // 自定义元素子类没给 super() 传 tag；这里补上，
+      // 让 localName/tagName + querySelector 匹配可用。
       el.tagName = tag.toUpperCase();
       el.localName = tag.toLowerCase();
       return el;
@@ -138,11 +137,10 @@ function install() {
   globalThis.document = document;
   globalThis.customElements = customElements;
   globalThis.CSS = { escape: (s) => String(s).replace(/["\\\]]/g, "\\$&") };
-  // Run rAF callbacks synchronously — tests don't paint, they just need the
-  // scroll-to-bottom logic to execute.
+  // 同步执行 rAF 回调 — 测试不绘制，只需 scroll-to-bottom 逻辑跑起来。
   globalThis.requestAnimationFrame = (fn) => { fn(); return 0; };
-  // Inert EventSource so openStream() can run in tests without a real connection
-  // (no events are ever delivered; the message handler just isn't exercised).
+  // 惰性 EventSource，让 openStream() 能在测试里运行而无需真连接
+  //（永不投递事件；message handler 也就不会被触发）。
   globalThis.EventSource = class EventSource {
     constructor(url) { this.url = url; this.onopen = null; this.onerror = null; this.onmessage = null; }
     close() { this.closed = true; }
@@ -154,10 +152,12 @@ function install() {
     removeItem: (k) => { store.delete(k); },
     clear: () => { store.clear(); },
   };
+  // 最小 location，让构建 URL 的代码（multiplex ws）能在 Node 下运行。
+  globalThis.location = { href: "https://host.example/ui/", protocol: "https:" };
   return { El, document, customElements, connectTree, makeRoot };
 }
 
-// A connected container — children appended to it fire connectedCallback.
+// 一个已连接的容器 — 往里 append 子节点会触发 connectedCallback。
 function makeRoot() {
   const root = new El("div");
   root.isConnected = true;
