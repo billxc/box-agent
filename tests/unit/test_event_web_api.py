@@ -1,5 +1,5 @@
 """Tests for the events HTTP routes — direct handler invocation with
-mocked aiohttp Request objects (no real server)."""
+mocked Starlette Request objects (no real server)."""
 from __future__ import annotations
 
 import json
@@ -38,15 +38,16 @@ def _make_server(tmp_path) -> WebHttpServer:
 def _make_request(query: dict | None = None, remote: str = "127.0.0.1",
                   match_info: dict | None = None, body: dict | None = None):
     req = MagicMock()
-    req.query = query or {}
-    req.remote = remote
-    req.transport = None
+    req.query_params = query or {}
+    req.client = SimpleNamespace(host=remote)
     req.headers = {}
-    req.match_info = match_info or {}
-    req.body_exists = body is not None
+    req.path_params = match_info or {}
     if body is not None:
         async def _json(): return body
         req.json = _json
+    else:
+        async def _json_empty(): raise ValueError("no body")
+        req.json = _json_empty
     return req
 
 
