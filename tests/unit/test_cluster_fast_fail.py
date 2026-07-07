@@ -22,9 +22,8 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from unittest.mock import patch
 
-from aiohttp.web import WSMsgType
+from aiohttp import WSMsgType
 
 from boxagent.cluster.cluster_bus import WIRE_VERSION as CLUSTER_BUS_WIRE_VERSION
 from boxagent.cluster.registry import GuestRegistry, GuestSession, RemoteBot
@@ -32,37 +31,69 @@ from boxagent.cluster.request_reply import RequestReply
 from boxagent.cluster.topology_service import TopologyService
 
 
-# ── 一个先回放脚本化 hello、然后结束的 WebSocketResponse 桩 ──────────
+# ── 一个先回放脚本化 hello、然后结束的 Starlette WebSocket 桩 ──────────
 
 
 class _ScriptedServerWS:
-    """替身，模拟 `handle_ws` 构造的 host 端 WebSocketResponse。
+    """替身，模拟 `handle_ws` 收到的 host 端 Starlette WebSocket。
 
-    回放给定的入站帧（仿佛 guest 发来），记录每个出站 send_json，然后 async 迭代结束，
-    使 `handle_ws` 返回。"""
+    回放给定的入站帧（仿佛 guest 发来），记录每个出站 send_json，帧放完后
+    ``receive_text`` 抛 WebSocketDisconnect，使 `handle_ws` 退出读循环。"""
 
     def __init__(self, inbound_frames: list[dict]) -> None:
         self._inbound = [json.dumps(frame) for frame in inbound_frames]
+        self._index = 0
+        self.accepted = False
         self.sent: list[dict] = []
         self.closed = False
         self.close_code = 0
 
-    async def prepare(self, request):
-        return None
+    async def accept(self):
+        self.accepted = True
 
-    def __aiter__(self):
-        return self._iterate()
+    async def receive_text(self) -> str:
+        from starlette.websockets import WebSocketDisconnect
 
-    async def _iterate(self):
-        for raw in self._inbound:
-            yield SimpleNamespace(type=WSMsgType.TEXT, data=raw)
+        if self._index >= len(self._inbound):
+            raise WebSocketDisconnect(code=1000)
+        raw = self._inbound[self._index]
+        self._index += 1
+        return raw
 
     async def send_json(self, data):
         self.sent.append(data)
 
-    async def close(self, code=1000, message=b""):
+    async def close(self, code=1000, reason=""):
         self.closed = True
         self.close_code = code
+
+
+class _ScriptedClientWS:
+    """替身，模拟 GuestClient._serve 消费的 aiohttp 客户端 WebSocket。
+
+    异步迭代产出脚本化 TEXT 帧（仿佛 host 发来），帧放完即结束循环。
+    guest 侧用 `async for msg in ws`（客户端 WS，未随服务端迁 Starlette）。"""
+
+    def __init__(self, inbound_frames: list[dict]) -> None:
+        self._messages = [
+            SimpleNamespace(type=WSMsgType.TEXT, data=json.dumps(frame))
+            for frame in inbound_frames
+        ]
+        self._index = 0
+        self.sent: list[dict] = []
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._index >= len(self._messages):
+            raise StopAsyncIteration
+        message = self._messages[self._index]
+        self._index += 1
+        return message
+
+    async def send_json(self, data):
+        self.sent.append(data)
 
 
 async def _drive_hello(registry: GuestRegistry, hello: dict) -> tuple[_ScriptedServerWS, GuestSession]:
@@ -82,8 +113,7 @@ async def _drive_hello(registry: GuestRegistry, hello: dict) -> tuple[_ScriptedS
     registry.on_guest_attached = _capture
     server_ws = _ScriptedServerWS([hello])
     try:
-        with patch("boxagent.cluster.registry.web.WebSocketResponse", return_value=server_ws):
-            await registry.handle_ws(request=SimpleNamespace())
+        await registry.handle_ws(server_ws)
     finally:
         registry.on_guest_attached = prior_hook
     return server_ws, captured["session"]
@@ -223,10 +253,10 @@ class TestDispatchFastFail:
         # 确知版本不同（正数且 != 本机）→ 快速失败，绝不发那个注定的请求。
         topology = _topology_with_versions("mbp", {"oldbox": 2})
         rr = _CountingRequestReply(topology=topology)
-        request = SimpleNamespace(query={})
+        request = SimpleNamespace(query_params={})
         response = await rr.dispatch_machine_request("oldbox", "GET", "/api/history", request)
         assert response is not None
-        assert response.status == 502
+        assert response.status_code == 502
         assert rr.request_calls == 0  # 从未发出那个注定的请求
 
     async def test_unknown_version_fails_open(self):
@@ -245,15 +275,15 @@ class TestDispatchFastFail:
             return {"status": 200, "body": {"ok": True}}
 
         rr.request = fake_request  # type: ignore[assignment]
-        request = SimpleNamespace(query={})
+        request = SimpleNamespace(query_params={})
         response = await rr.dispatch_machine_request("unknownbox", "GET", "/api/history", request)
         assert called["machine"] == "unknownbox"  # 放行了，请求发出去了
-        assert response.status == 200
+        assert response.status_code == 200
 
     async def test_local_target_returns_none(self):
         topology = _topology_with_versions("mbp", {})
         rr = _CountingRequestReply(topology=topology)
-        request = SimpleNamespace(query={})
+        request = SimpleNamespace(query_params={})
         # 本机 → None，让调用方本地处理；不查 version_for
         assert await rr.dispatch_machine_request("mbp", "GET", "/x", request) is None
 
@@ -272,10 +302,10 @@ class TestDispatchFastFail:
             return {"status": 200, "body": {"ok": True}}
 
         rr.request = fake_request  # type: ignore[assignment]
-        request = SimpleNamespace(query={})
+        request = SimpleNamespace(query_params={})
         response = await rr.dispatch_machine_request("devbox", "GET", "/api/history", request)
         assert called["machine"] == "devbox"
-        assert response.status == 200
+        assert response.status_code == 200
 
 
 # ── 4. 更新并重连的机器刷新到新版本 ───────────────────────────────
@@ -370,7 +400,7 @@ class TestGuestClientWelcome:
         client = GuestClient(
             host_url="", host_token="", machine_id="mbp", local_web_port=0, cluster_bus=bus,
         )
-        ws = _ScriptedServerWS([{
+        ws = _ScriptedClientWS([{
             "type": "welcome", "v": CLUSTER_BUS_WIRE_VERSION, "machine_id": "devbox-xl",
         }])
         await client._serve(ws)

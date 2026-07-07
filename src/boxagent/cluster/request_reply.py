@@ -23,11 +23,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
-from aiohttp import ClientSession, web
+# aiohttp 仅用于 responder 侧的 127.0.0.1 loopback HTTP 客户端（ClientSession）——
+# 它是 HTTP 客户端，不需要 HTTP/2，保持原样。server 侧已迁到 Starlette。
+from aiohttp import ClientSession
+from starlette.responses import JSONResponse
 
 from .cluster_bus import WIRE_VERSION as CLUSTER_BUS_WIRE_VERSION
+
+if TYPE_CHECKING:
+    from starlette.requests import Request
+    from starlette.responses import Response
+    from starlette.websockets import WebSocket
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +93,8 @@ class RequestReply:
 
     async def dispatch_machine_request(
         self, machine: str, method: str, path: str,
-        request: web.Request, body: dict | None = None,
-    ) -> "web.Response | None":
+        request: "Request", body: dict | None = None,
+    ) -> "Response | None":
         """转发到远端机器并返回其响应。target 是本机时返回 None（调用方继续本地
         处理）。
 
@@ -98,7 +106,7 @@ class RequestReply:
             return None
         target_version = self._topology.version_for(machine)
         if target_version != 0 and target_version != CLUSTER_BUS_WIRE_VERSION:
-            return web.json_response(
+            return JSONResponse(
                 {
                     "ok": False,
                     "error": (
@@ -106,21 +114,25 @@ class RequestReply:
                         f"(wire version {target_version}, this node speaks {CLUSTER_BUS_WIRE_VERSION})"
                     ),
                 },
-                status=502,
+                status_code=502,
             )
         reply = await self.request(
-            machine, method, path, query=dict(request.query), body=body,
+            machine, method, path, query=dict(request.query_params), body=body,
         )
-        return web.json_response(
-            reply.get("body") or {}, status=int(reply.get("status") or 200),
+        return JSONResponse(
+            reply.get("body") or {}, status_code=int(reply.get("status") or 200),
         )
 
-    async def handle_guest_ws(self, request: web.Request) -> web.StreamResponse:
-        """/api/guest/ws——本节点是 host 时委托给 GuestRegistry。"""
+    async def handle_guest_ws(self, websocket: "WebSocket") -> None:
+        """/api/guest/ws——本节点是 host 时委托给 GuestRegistry。
+
+        Starlette WebSocket 路由 handler：非 host 时直接 close（WS 上无法回
+        HTTP 状态码），host 时交给 registry 跑读循环。"""
         registry = self._topology.guest_registry
         if registry is None:
-            return web.json_response({"ok": False, "error": "not host"}, status=503)
-        return await registry.handle_ws(request)
+            await websocket.close(code=1011)
+            return
+        await registry.handle_ws(websocket)
 
     # ── caller 侧 ────────────────────────────────────────────────────────
 

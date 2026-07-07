@@ -27,15 +27,13 @@ ChatSyncer 的 ``chat_subscribe`` / ``chat_event``）落到 ``on_unknown_frame``
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
-from aiohttp import web
-from aiohttp.web import WebSocketResponse
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from boxagent.log import Category, log
 
@@ -61,7 +59,7 @@ class GuestSession:
     """一个已连接的 guest 节点。"""
 
     machine_id: str
-    ws: WebSocketResponse
+    ws: WebSocket
     bots: list[RemoteBot] = field(default_factory=list)
     # 该 guest 在 hello 时协商的 cluster-bus wire 版本。0 = hello 没带 `v`
     # （旧/不兼容 peer）——用于对它快速 fail 请求，而非挂满 timeout。
@@ -158,19 +156,21 @@ class GuestRegistry:
                 pass
         self.sessions.clear()
 
-    async def handle_ws(self, request: web.Request) -> web.WebSocketResponse:
-        """/api/guest/ws 的 aiohttp handler。"""
-        ws = web.WebSocketResponse(heartbeat=30.0)
-        await ws.prepare(request)
+    async def handle_ws(self, websocket: WebSocket) -> None:
+        """/api/guest/ws 的 Starlette WebSocket handler。
+
+        读循环用 ``await websocket.receive_text()``；guest 断开时抛
+        ``WebSocketDisconnect`` 退出循环，走 finally 清理。wire 全是 JSON 文本帧，
+        非文本帧不会出现（旧 aiohttp 版跳过非 TEXT 帧的分支不再需要）。"""
+        await websocket.accept()
 
         # 等 hello
         session: GuestSession | None = None
         try:
-            async for msg in ws:
-                if msg.type != web.WSMsgType.TEXT:
-                    continue
+            while True:
+                data = await websocket.receive_text()
                 try:
-                    payload = json.loads(msg.data)
+                    payload = json.loads(data)
                 except Exception:
                     logger.warning("guest ws: invalid JSON frame")
                     log.warning(Category.CLUSTER_PROTOCOL_ERROR, "guest ws: invalid JSON frame")
@@ -179,15 +179,15 @@ class GuestRegistry:
 
                 if session is None:
                     if t != "hello":
-                        await ws.close(code=4001, message=b"expected hello")
-                        return ws
+                        await websocket.close(code=4001, reason="expected hello")
+                        return
                     if self.expected_token and payload.get("token") != self.expected_token:
-                        await ws.close(code=4003, message=b"bad token")
-                        return ws
+                        await websocket.close(code=4003, reason="bad token")
+                        return
                     machine_id = str(payload.get("machine_id") or "").strip()
                     if not machine_id:
-                        await ws.close(code=4002, message=b"missing machine_id")
-                        return ws
+                        await websocket.close(code=4002, reason="missing machine_id")
+                        return
                     bots_raw = payload.get("bots") or []
                     bots = [
                         RemoteBot(
@@ -201,7 +201,7 @@ class GuestRegistry:
                         if isinstance(bot, dict) and bot.get("name")
                     ]
                     guest_version = int(payload.get("v") or 0)
-                    session = GuestSession(machine_id=machine_id, ws=ws, bots=bots, version=guest_version)
+                    session = GuestSession(machine_id=machine_id, ws=websocket, bots=bots, version=guest_version)
                     # 若同 machine_id 的旧 session 还在，逐出它（guest 重连）。
                     old_session = self.sessions.get(machine_id)
                     if old_session is not None:
@@ -218,13 +218,13 @@ class GuestRegistry:
                         f"guest '{machine_id}' joined with {len(bots)} bot(s)",
                         machine_id=machine_id, bot_count=len(bots), wire_version=guest_version,
                     )
-                    await ws.send_json({
+                    await websocket.send_json({
                         "type": "welcome",
                         "v": CLUSTER_BUS_WIRE_VERSION,
                         "machine_id": self.local_machine_id,
                     })
                     if self.cluster_bus is not None:
-                        self.cluster_bus.attach_link(machine_id, ws.send_json, version=guest_version)
+                        self.cluster_bus.attach_link(machine_id, websocket.send_json, version=guest_version)
                     if self.on_guest_attached is not None:
                         try:
                             self.on_guest_attached(machine_id, session)
@@ -260,7 +260,7 @@ class GuestRegistry:
                     continue
 
                 if t == "ping":
-                    await ws.send_json({"type": "pong"})
+                    await websocket.send_json({"type": "pong"})
                 elif t == "bots_update":
                     # guest 重新宣告 bot 列表（如动态创建后）
                     bots_raw = payload.get("bots") or []
@@ -295,6 +295,9 @@ class GuestRegistry:
                             f"on_unknown_frame({t}) failed",
                             machine_id=session.machine_id, frame_type=str(t), error=repr(e),
                         )
+        except WebSocketDisconnect:
+            # guest 正常/异常断开——退出读循环，走 finally 清理。
+            pass
         finally:
             if session is not None:
                 if self.cluster_bus is not None:
@@ -336,4 +339,3 @@ class GuestRegistry:
                             "on_topology_change(disconnect) failed",
                             machine_id=session.machine_id, error=repr(e),
                         )
-        return ws

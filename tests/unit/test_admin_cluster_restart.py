@@ -38,9 +38,8 @@ def _make_server(tmp_path, *, guest_registry, guest_client):
 
 def _make_request(body):
     req = MagicMock()
-    req.query = {}
-    req.remote = "127.0.0.1"
-    req.transport = None
+    req.query_params = {}
+    req.client = SimpleNamespace(host="127.0.0.1")
     req.headers = {}
     req.json = AsyncMock(return_value=body)
     return req
@@ -60,7 +59,7 @@ async def test_cluster_restart_in_guest_mode_forwards_to_host(tmp_path):
 
     request = _make_request({"machines": ["node-b"], "include_self": True})
     response = await server._handle_admin_cluster_restart(request)
-    assert response.status == 200
+    assert response.status_code == 200
     assert json.loads(response.body) == host_response
 
     guest_client.fetch_host_json.assert_awaited_once()
@@ -77,7 +76,7 @@ async def test_cluster_restart_without_host_connection_returns_503(tmp_path):
     server = _make_server(tmp_path, guest_registry=None, guest_client=None)
     request = _make_request({})
     response = await server._handle_admin_cluster_restart(request)
-    assert response.status == 503
+    assert response.status_code == 503
     body = json.loads(response.body)
     assert body["ok"] is False
     assert "no host connection" in body["error"]
@@ -92,7 +91,7 @@ async def test_cluster_restart_in_guest_mode_surfaces_host_error(tmp_path):
 
     request = _make_request({})
     response = await server._handle_admin_cluster_restart(request)
-    assert response.status == 502
+    assert response.status_code == 502
     body = json.loads(response.body)
     assert body["ok"] is False
     assert "ws closed" in body["error"]

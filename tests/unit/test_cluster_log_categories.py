@@ -8,7 +8,6 @@ RecordingSink picked up the right category.
 from __future__ import annotations
 
 import asyncio
-import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -78,14 +77,12 @@ def test_registry_invalid_json_emits_protocol_error(sink):
 
     registry = GuestRegistry(expected_token="")
 
-    # Build a fake aiohttp-style ws that yields one bad frame, then closes.
-    bad_msg = SimpleNamespace(type=__import__("aiohttp").web.WSMsgType.TEXT, data="not-json{")
-
+    # 一个 Starlette 风格的 fake ws：先给一个坏帧，再抛 WebSocketDisconnect 收尾。
     class FakeWs:
         def __init__(self):
             self._sent = False
 
-        async def prepare(self, _request):
+        async def accept(self):
             return None
 
         async def close(self, **kwargs):
@@ -94,25 +91,14 @@ def test_registry_invalid_json_emits_protocol_error(sink):
         async def send_json(self, _data):
             return None
 
-        def __aiter__(self):
-            return self
+        async def receive_text(self):
+            from starlette.websockets import WebSocketDisconnect
 
-        async def __anext__(self):
             if not self._sent:
                 self._sent = True
-                return bad_msg
-            raise StopAsyncIteration
+                return "not-json{"
+            raise WebSocketDisconnect(code=1000)
 
-    fake_ws = FakeWs()
-
-    # Patch web.WebSocketResponse to return our fake.
-    import boxagent.cluster.registry as registry_mod
-    original_ws = registry_mod.web.WebSocketResponse
-    registry_mod.web.WebSocketResponse = lambda **kwargs: fake_ws
-    try:
-        request = SimpleNamespace()
-        asyncio.run(registry.handle_ws(request))
-    finally:
-        registry_mod.web.WebSocketResponse = original_ws
+    asyncio.run(registry.handle_ws(FakeWs()))
 
     assert Category.CLUSTER_PROTOCOL_ERROR in sink.categories()

@@ -20,7 +20,7 @@ src/boxagent/
 ├── utils.py                 杂项 helpers
 ├── doctor.py                `boxagent doctor` 子命令
 ├── watchdog.py              进程死掉自动重启
-├── web_error_middleware.py  aiohttp middleware：handler 异常 → event log
+├── web_error_middleware.py  error middleware：handler 异常 → event log（Starlette + aiohttp 两版）
 ├── log/                     公共 log facade（业务代码写事件唯一入口）
 │   ├── facade.py            bind_event_bus / get_logger
 │   ├── categories.py        Category 常量（含 cluster.host.* / cluster.tunnel.* /
@@ -65,7 +65,7 @@ src/boxagent/
 ├── transports/
 │   ├── base.py              Channel Protocol / IncomingMessage / Attachment / StreamHandle
 │   ├── telegram/            TelegramChannel + md 格式 + 长消息 splitter
-│   ├── web/                 WebChannel + WebHttpServer + static 前端
+│   ├── web/                 WebChannel + WebHttpServer（Starlette + Hypercorn, HTTP/2）+ static 前端
 │   └── mcp/                 create_mcp_app + McpHttpServer（streamable-http）
 ├── sessions/
 │   ├── storage.py           Storage（session_history.yaml + transcripts/）
@@ -141,7 +141,7 @@ Gateway ──┬─ AgentManager ──── per-bot Router + Backend + Pool
           ├─ Scheduler ──────── cron 任务（独立 process spawn）
           ├─ InternalApiServer  内部 aiohttp（/api/schedule）
           ├─ McpHttpServer     uvicorn streamable-http（/mcp/{base,telegram}）
-          └─ WebHttpServer     Web UI + cluster RPC 路由
+          └─ WebHttpServer     Web UI + cluster guest WS 路由（Starlette + Hypercorn, HTTP/2）
                               （/api/events、/api/schedules、/api/logs，跨机走
                                 cluster_rpc.dispatch_machine_request）
 

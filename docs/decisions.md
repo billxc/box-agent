@@ -8,6 +8,70 @@
 
 > 📦 **2026-03 ~ 2026-05 的历史条目已归档**到 [archive/decisions-2026-03-to-05.md](archive/decisions-2026-03-to-05.md)。本文件保留 2026-06 起的决策。
 
+## 2026-07-07 — Web UI server 从 aiohttp 迁到 Starlette + Hypercorn（拿 HTTP/2）
+
+**病**：web UI 每个 chat 一条推送连接（SSE / WS），几个 chat 一开就占满浏览器
+HTTP/1.1 的 ~6 连接槽，整页卡住。aiohttp **官方不支持 HTTP/2**（server 端 issue
+closed as not planned）——同一个 6-连接上限治不了本。
+
+**修法**：把 9292 这个 web UI server 从 aiohttp 换到 **Starlette + Hypercorn**，
+Hypercorn 支持 HTTP/2（uvicorn 不支持，故不用它；MCP 那边已是 Starlette+uvicorn，
+本次不动）。HTTP/2 一条连接多路复用无数 stream，连接槽问题从根上消失。
+
+1. **框架**：`web.Application` → `Starlette(routes=[...], middleware=[...])`。27 个
+   route handler 从 `(aiohttp Request)->web.Response` 逐个改成
+   `(starlette Request)->JSONResponse/Response`：`request.query`→`query_params`、
+   `match_info`→`path_params`、`web.json_response(d,status=n)`→`JSONResponse(d,status_code=n)`。
+2. **鉴权** `_authorized`：peer 从 `request.transport.get_extra_info("peername")` 改成
+   `request.client.host`；localhost / trusted-header / bearer / query-token 逻辑不变。
+   WebSocket 也有 `client/headers/query_params`，multiplex WS 复用同一函数。
+3. **4 处 SSE**（web_stream / events_stream 等）：`web.StreamResponse` →
+   `StreamingResponse(async_gen(), media_type="text/event-stream")`。断开时 Starlette
+   取消 generator → `finally` 里 `subscription.close()`，等价于旧 aiohttp 写失败清理。
+4. **multiplex WS**：`web.WebSocketResponse` → Starlette `WebSocketRoute` +
+   `await ws.receive_text()` / `await ws.send_json(...)`；断开抛 `WebSocketDisconnect`。
+5. **static**：`add_static("/")` → `Mount("/", StaticFiles(...))`，放路由列表最后不遮 API。
+6. **error 中间件**：新增 Starlette `ErrorLoggingMiddleware`（`BaseHTTPMiddleware`），
+   行为与旧 aiohttp `error_logging_middleware` 对等（handler 异常 + 5xx 打进 event log）。
+   旧 aiohttp 版**保留**——InternalApiServer（`/api/schedule/run`）仍是 aiohttp（独立端口，
+   本次不迁）。
+7. **启动**：`AppRunner`/`TCPSite` → **Hypercorn 编程式启动**。`Config.alpn_protocols =
+   ["h2","http/1.1"]` + `await hypercorn.asyncio.serve(app, config, shutdown_trigger=...)`
+   跑后台 task；`stop()` 设 shutdown event 优雅关闭。
+8. **cluster guest WS 同迁**：`/api/guest/ws`（同端口 9292）从 aiohttp WS 换到 Starlette
+   `WebSocketRoute`。`registry.handle_ws(request)` → `handle_ws(websocket)`：
+   `ws.prepare` → `websocket.accept()`；`async for msg in ws` → `while True:
+   await websocket.receive_text()`（断开抛 `WebSocketDisconnect`）；`ws.close(code,message=b"")`
+   → `websocket.close(code,reason="")`。`ClusterBus.attach_link(mid, ws.send_json)` 照旧
+   用——Starlette WS 的 `send_json` 同样收单个 dict，签名兼容。
+
+**保留 aiohttp（客户端，不需要 HTTP/2）**：`guest_client.py`（ClientSession + ws_connect
+拨号）、`request_reply.py` 的 loopback ClientSession（responder 打 127.0.0.1 跑真
+handler）、`devtunnel.py`、`host_election.py` 的 probe、`fetch_host_json`——这些是
+HTTP/WS **客户端**，原样留着。
+
+**HTTP/2 验证**：起服务后 `curl --http2-prior-knowledge http://127.0.0.1:<port>/api/version`
+报 `http_version: 2`（h2c 明文，无 TLS）。生产链路是浏览器 —(HTTPS,ALPN 协商 h2)→
+devtunnel —(h2c)→ 本机 origin。测试见 `tests/unit/test_web_server_http2.py`（起真
+Hypercorn + curl 验 h2）。
+
+**为什么 curl 而非 httpx 验 h2**：httpx `http2=True` 在明文连接上**不发** h2
+prior-knowledge 前导，只在 TLS 上靠 ALPN 升级；curl `--http2-prior-knowledge` 直接
+跑 h2c，正是 devtunnel 终结 TLS 后对本机 origin 的连法。
+
+**改的文件**：`pyproject.toml`（+`starlette` +`hypercorn[h2]`）、
+`transports/web/server.py`（整体重写为 Starlette）、`web_error_middleware.py`（+Starlette
+版）、`cluster/http_routes.py`（register 追加到 routes 列表）、`cluster/registry.py`
+（handle_ws 改 Starlette WS）、`cluster/request_reply.py`（dispatch/handle_guest_ws 适配
+Starlette，loopback ClientSession 保留）。测试：`test_web_multiplex` / `test_cluster_fast_fail`
+/ `test_cluster_log_categories` 的 WS 桩改 Starlette 形；handler-direct 测试的 fake
+request 改 `query_params`/`path_params`/`client.host`；新增 `test_web_server_http2.py`。
+
+**风险点**：SSE 断开检测语义（generator 取消 vs 旧写失败）、multiplex WS 的
+pump task 清理、guest WS 读循环退出条件（`WebSocketDisconnect`）——都写了测试锁定。
+
+---
+
 ## 2026-07-07 — 跨机请求对不兼容/不可达机器「秒失败」（版本协商 + dispatch 前置门）
 
 **病**：统一到一根 ClusterBus 后，mixed-version 场景（有机器还在老代码 / 离线 /
