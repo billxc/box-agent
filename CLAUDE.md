@@ -19,6 +19,17 @@ BoxAgent (BA) 是 **Personal Agent Network**：一个用户、多台机器、多
 1. 读 `docs/codebase-guide.md` — 当前实际架构
 2. 读 `docs/decisions.md` — 为什么现在是这样
 
+## OpenWiki
+
+This repository has documentation located in the /openwiki directory.
+
+Start here:
+- [OpenWiki quickstart](openwiki/quickstart.md)
+
+OpenWiki includes repository overview, architecture notes, workflows, domain concepts, operations, integrations, testing guidance, and source maps.
+
+When working in this repository, read the OpenWiki quickstart first, then follow its links to the relevant architecture, workflow, domain, operation, and testing notes.
+
 ---
 
 ## 迭代工作流（Step-by-Step）
