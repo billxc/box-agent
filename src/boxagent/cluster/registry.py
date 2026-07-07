@@ -90,6 +90,9 @@ class GuestRegistry:
     # cluster-bus 链路，入站 `packet` 帧路由给它。由 gateway 在 on_registry_ready
     # 里注入。
     cluster_bus: object | None = None
+    # host 自己的 machine_id，随 welcome 发给 guest，好让 guest 把"host 这条链路"
+    # 对上一个具体 machine_id（从活连接握手读版本，而非等异步 snapshot）。
+    local_machine_id: str = ""
 
     def get(self, machine_id: str) -> GuestSession | None:
         return self.sessions.get(machine_id)
@@ -215,7 +218,11 @@ class GuestRegistry:
                         f"guest '{machine_id}' joined with {len(bots)} bot(s)",
                         machine_id=machine_id, bot_count=len(bots), wire_version=guest_version,
                     )
-                    await websocket.send_json({"type": "welcome", "v": CLUSTER_BUS_WIRE_VERSION})
+                    await websocket.send_json({
+                        "type": "welcome",
+                        "v": CLUSTER_BUS_WIRE_VERSION,
+                        "machine_id": self.local_machine_id,
+                    })
                     if self.cluster_bus is not None:
                         self.cluster_bus.attach_link(machine_id, websocket.send_json, version=guest_version)
                     if self.on_guest_attached is not None:

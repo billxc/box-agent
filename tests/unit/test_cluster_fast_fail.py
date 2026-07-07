@@ -9,17 +9,21 @@
 注定超时的请求。
 
 这些测试锁定：
-  1. 带 `v` 的 hello 把协商版本记到 GuestSession 和 bus link；不带 `v` 的 hello 记为
-     0（老/不兼容）。
+  1. 带 `v` 的 hello 把协商版本记到 GuestSession 和 bus link；不带 `v` 的 hello 记为 0。
+     welcome 帧带上 host 自己的 machine_id（供 guest 对上 host 链路）。
   2. machines_snapshot 描述符携带每台机器的版本。
-  3. 向不兼容 peer dispatch_machine_request 返回 502，且从不调用 `request()`（无注定
-     发送）。
+  3. dispatch 只对**确知不同版本**（正数且 != 本机）返回 502，且从不调用 `request()`；
+     版本 0（未知/没学到）**放行**（0 不等于"不兼容"，宁可走一遭也不误杀）。
   4. "更新后重连"的机器刷新到新版本——不再被当成老机器。
+  5. guest 判 host 版本取**活连接握手值**（welcome，重连即刷新），盖过会 stale 的快照——
+     这是核心 bug 修复：host 升级重连后，guest 不重启也能立刻认它为新版本。
 """
 from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+
+from aiohttp import WSMsgType
 
 from boxagent.cluster.cluster_bus import WIRE_VERSION as CLUSTER_BUS_WIRE_VERSION
 from boxagent.cluster.registry import GuestRegistry, GuestSession, RemoteBot
@@ -62,6 +66,34 @@ class _ScriptedServerWS:
     async def close(self, code=1000, reason=""):
         self.closed = True
         self.close_code = code
+
+
+class _ScriptedClientWS:
+    """替身，模拟 GuestClient._serve 消费的 aiohttp 客户端 WebSocket。
+
+    异步迭代产出脚本化 TEXT 帧（仿佛 host 发来），帧放完即结束循环。
+    guest 侧用 `async for msg in ws`（客户端 WS，未随服务端迁 Starlette）。"""
+
+    def __init__(self, inbound_frames: list[dict]) -> None:
+        self._messages = [
+            SimpleNamespace(type=WSMsgType.TEXT, data=json.dumps(frame))
+            for frame in inbound_frames
+        ]
+        self._index = 0
+        self.sent: list[dict] = []
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._index >= len(self._messages):
+            raise StopAsyncIteration
+        message = self._messages[self._index]
+        self._index += 1
+        return message
+
+    async def send_json(self, data):
+        self.sent.append(data)
 
 
 async def _drive_hello(registry: GuestRegistry, hello: dict) -> tuple[_ScriptedServerWS, GuestSession]:
@@ -110,14 +142,15 @@ class _RecordingBus:
 class TestHelloVersion:
     async def test_hello_with_version_records_it(self):
         bus = _RecordingBus()
-        registry = GuestRegistry(cluster_bus=bus)
+        registry = GuestRegistry(cluster_bus=bus, local_machine_id="host-machine")
         ws, session = await _drive_hello(registry, {
             "type": "hello", "v": CLUSTER_BUS_WIRE_VERSION,
             "machine_id": "devbox", "bots": [],
         })
-        # welcome 携带我们的版本
+        # welcome 携带我们的版本 + host 自己的 machine_id（供 guest 对上 host 链路）
         welcome = next(frame for frame in ws.sent if frame.get("type") == "welcome")
         assert welcome["v"] == CLUSTER_BUS_WIRE_VERSION
+        assert welcome["machine_id"] == "host-machine"
         # session + bus link 记下协商版本
         assert session.version == CLUSTER_BUS_WIRE_VERSION
         assert bus.attached_version["devbox"] == CLUSTER_BUS_WIRE_VERSION
@@ -216,14 +249,36 @@ def _topology_with_versions(local: str, versions: dict[str, int]):
 
 
 class TestDispatchFastFail:
-    async def test_incompatible_peer_returns_502_without_request(self):
-        topology = _topology_with_versions("mbp", {"oldbox": 0})
+    async def test_known_mismatch_returns_502_without_request(self):
+        # 确知版本不同（正数且 != 本机）→ 快速失败，绝不发那个注定的请求。
+        topology = _topology_with_versions("mbp", {"oldbox": 2})
         rr = _CountingRequestReply(topology=topology)
         request = SimpleNamespace(query_params={})
         response = await rr.dispatch_machine_request("oldbox", "GET", "/api/history", request)
         assert response is not None
         assert response.status_code == 502
         assert rr.request_calls == 0  # 从未发出那个注定的请求
+
+    async def test_unknown_version_fails_open(self):
+        # 版本 0（未知/没学到/旧构建没报版本但可能同协议）→ 放行，让请求正常走，
+        # 而不是误杀（0 不等于"不兼容"）。
+        topology = _topology_with_versions("mbp", {"unknownbox": 0})
+        bus = SimpleNamespace(
+            subscribe=lambda *a, **k: SimpleNamespace(close=lambda: None),
+            send=lambda **k: "mid",
+        )
+        rr = RequestReply(bus=bus, topology=topology, local_web_port=0)
+        called = {}
+
+        async def fake_request(machine, method, path, *, query=None, body=None):
+            called["machine"] = machine
+            return {"status": 200, "body": {"ok": True}}
+
+        rr.request = fake_request  # type: ignore[assignment]
+        request = SimpleNamespace(query_params={})
+        response = await rr.dispatch_machine_request("unknownbox", "GET", "/api/history", request)
+        assert called["machine"] == "unknownbox"  # 放行了，请求发出去了
+        assert response.status_code == 200
 
     async def test_local_target_returns_none(self):
         topology = _topology_with_versions("mbp", {})
@@ -289,3 +344,66 @@ class TestReconnectRefreshesVersion:
         registry.sessions["devbox"] = new_session
         assert topology.version_for("devbox") == CLUSTER_BUS_WIRE_VERSION  # 已刷新
         assert bus.attached_version["devbox"] == CLUSTER_BUS_WIRE_VERSION
+
+
+# ── 5. guest 看 host 用活连接握手值，盖过会 stale 的快照 ────────────────
+
+
+class TestGuestSeesHostVersionLive:
+    def _guest_topology(self, *, host_machine_id, host_version, remote_machines):
+        config = SimpleNamespace(machine_id="guest-machine", node_id="", cluster_tunnel=True)
+        client = SimpleNamespace(
+            host_machine_id=host_machine_id,
+            host_version=host_version,
+            remote_machines=remote_machines,
+        )
+        host_election = SimpleNamespace(registry=None, client=client, state="guest")
+        topology = TopologyService(config=config, web_channels={})
+        topology.set_host_election(host_election)
+        return topology
+
+    def test_host_version_from_live_handshake_beats_stale_snapshot(self):
+        # 这是核心 bug 修复：host 升级重连后 welcome 报 v3，但快照缓存可能还 stale 在
+        # 0。version_for(host) 必须取活的 host_version（3），而非 stale 快照（0）。
+        topology = self._guest_topology(
+            host_machine_id="devbox-xl",
+            host_version=CLUSTER_BUS_WIRE_VERSION,           # 活值：welcome 报的
+            remote_machines=[{"machine_id": "devbox-xl", "version": 0}],  # stale 快照
+        )
+        assert topology.version_for("devbox-xl") == CLUSTER_BUS_WIRE_VERSION
+
+    def test_other_guest_still_read_from_snapshot(self):
+        # 非 host 的机器（没直连）仍从快照读——那是唯一来源。
+        topology = self._guest_topology(
+            host_machine_id="devbox-xl",
+            host_version=CLUSTER_BUS_WIRE_VERSION,
+            remote_machines=[
+                {"machine_id": "devbox-xl", "version": CLUSTER_BUS_WIRE_VERSION},
+                {"machine_id": "macmini", "version": 0},
+            ],
+        )
+        assert topology.version_for("macmini") == 0
+
+    def test_disconnected_host_version_is_zero(self):
+        # 断连后 host_version 清 0、host_machine_id 清空 → version_for 落回快照/0。
+        topology = self._guest_topology(
+            host_machine_id="", host_version=0, remote_machines=[],
+        )
+        assert topology.version_for("devbox-xl") == 0
+
+
+class TestGuestClientWelcome:
+    async def test_welcome_sets_live_host_version_and_machine_id(self):
+        # guest 收到 welcome 时把 host 的 version + machine_id 存成活值。
+        from boxagent.cluster.guest_client import GuestClient
+        bus = _RecordingBus()
+        client = GuestClient(
+            host_url="", host_token="", machine_id="mbp", local_web_port=0, cluster_bus=bus,
+        )
+        ws = _ScriptedClientWS([{
+            "type": "welcome", "v": CLUSTER_BUS_WIRE_VERSION, "machine_id": "devbox-xl",
+        }])
+        await client._serve(ws)
+        assert client.host_version == CLUSTER_BUS_WIRE_VERSION
+        assert client.host_machine_id == "devbox-xl"
+        assert bus.attached_version["host"] == CLUSTER_BUS_WIRE_VERSION

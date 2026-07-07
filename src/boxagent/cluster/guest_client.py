@@ -57,6 +57,11 @@ class GuestClient:
     # `machines_snapshot` 帧推来。guest 侧 _handle_web_machines / _handle_web_bots
     # 读它，好让本地 webui 渲染完整的 cluster sidebar。
     remote_machines: list[dict] = field(default_factory=list)
+    # host 在 welcome 里报的 machine_id + cluster-bus wire 版本。活值：每次重连
+    # 由 welcome 刷新，断连清 0。version_for 直接读这里判 host 兼容性，不走会
+    # stale 的 machines_snapshot 缓存。
+    host_machine_id: str = ""
+    host_version: int = 0
 
     def start(self) -> None:
         if self._task is not None:
@@ -221,6 +226,8 @@ class GuestClient:
                 )
             finally:
                 self._ws = None
+                self.host_version = 0
+                self.host_machine_id = ""
                 if self.cluster_bus is not None:
                     self.cluster_bus.detach_link("host")
             if self._stop:
@@ -251,13 +258,16 @@ class GuestClient:
                         self.cluster_bus.on_inbound("host", payload)
                     continue
                 if payload.get("type") == "welcome":
-                    # 在旧 v2 门之前处理：welcome 带 cluster-bus wire 版本（v3），
-                    # v2 门会丢掉它。现在挂上 host 链路，带 host 协商的版本
-                    # （缺 v = 旧 host = 0 = 不兼容 → 之后 fast-fail）。
+                    # 在旧 v2 门之前处理：welcome 带 cluster-bus wire 版本（v3）和
+                    # host machine_id，v2 门会丢掉它。存成活值供 version_for 直接读，
+                    # 并挂上 host 链路。缺 v = 旧 host = 0（此时对它 fail-open，见 dispatch）。
                     host_version = int(payload.get("v") or 0)
+                    self.host_version = host_version
+                    self.host_machine_id = str(payload.get("machine_id") or "")
                     if self.cluster_bus is not None:
                         self.cluster_bus.attach_link("host", ws.send_json, version=host_version)
-                    logger.info("guest: welcome received (host wire v%d)", host_version)
+                    logger.info("guest: welcome received (host=%s wire v%d)",
+                                self.host_machine_id or "?", host_version)
                     continue
                 if payload.get("type") == "machines_snapshot":
                     # 也在 v2 门之前处理：host 给快照只盖 type（无 `v`）；每个
