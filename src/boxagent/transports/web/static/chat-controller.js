@@ -1,27 +1,26 @@
-// chat-controller.js — the live-conversation controller, factored out of app.js.
+// chat-controller.js — 从 app.js 拆出的实时会话 controller。
 //
-// No build step: app.js is the composition root. It builds a shared `app`
-// context (state + the DOM/components/helpers this controller needs) and calls
-// `ChatController(app)`, which attaches its public functions back onto `app`
-// (app.switchChat / app.sendText / app.addMessage / app.openStream /
-// app.handleEvent) and wires app.chatLog.onLoadOlder.
+// 无构建步骤：app.js 是装配根。它构造共享的 `app` 上下文
+//（state + 本 controller 需要的 DOM/组件/辅助函数）并调用
+// `ChatController(app)`，后者把自己的公开函数挂回 `app`
+//（app.switchChat / app.sendText / app.addMessage / app.openStream /
+// app.handleEvent），并接线 app.chatLog.onLoadOlder。
 //
-// Everything the controller needs from the outside is read through `app.*`, so
-// this file never touches app.js internals. That injection is also what makes
-// the controller unit-testable: chat-controller.test.js drives it with a fake
-// `app` (mock api + spy components + spy app.multiplex) — no real socket/DOM needed.
+// controller 对外的一切都经 `app.*` 读取，因此本文件从不碰 app.js 内部。
+// 这种注入也让 controller 可单测：chat-controller.test.js 用假 `app`
+//（mock api + spy 组件 + spy app.multiplex）驱动它，无需真的 socket/DOM。
 //
-// Stays in app.js (on the `app` bag): state, api, $, TOKEN, HISTORY_PAGE_SIZE,
+// 仍留在 app.js（挂在 `app` bag 上）：state, api, $, TOKEN, HISTORY_PAGE_SIZE,
 // curKey, setConn, showRecapBanner, chatTitle, sessionInfoEl, sendBtn, chatLog,
-// recents, refreshSessionList, fetchServerSessions, loadMachines.
-// Globals from session-data.js: defaultTitle, saveSessions.
+// recents, refreshSessionList, fetchServerSessions, loadMachines。
+// 来自 session-data.js 的全局：defaultTitle, saveSessions。
 (function () {
   "use strict";
 
   function ChatController(app) {
     const state = app.state;
 
-    // ── Message-area delegators (all display lives in <chat-log>) ──
+    // ── 消息区代理（所有显示都在 <chat-log>）──
     function scrollDown() { app.chatLog.scrollToBottom(); }
     function addMessage(role, text, opts = {}) { return app.chatLog.addMessage(role, text, opts); }
     function showTyping() { app.chatLog.showTyping(); }
@@ -33,9 +32,9 @@
       app.chatLog.applyToolResult(toolId, ok, summary, error);
     }
 
-    // ── Session bookkeeping ──
+    // ── 会话记账 ──
 
-    // Bump the local session meta + cross-bot recents on each turn.
+    // 每轮对话更新本地 session 元信息 + 跨 bot 最近记录。
     function touchSession(preview) {
       const key = app.curKey();
       const sessions = state.sessions[key] || {};
@@ -61,8 +60,8 @@
       });
     }
 
-    // <session-info> owns rendering + token formatting; we just fetch + hand it
-    // the info object (or null).
+    // <session-info> 负责渲染 + token 格式化；这里只 fetch 后把 info 对象
+    // （或 null）交给它。
     async function refreshSessionInfo() {
       if (!state.botMachine) { app.sessionInfoEl.setInfo(null); return; }
       const serverList = state.serverSessions[app.curKey()] || [];
@@ -90,7 +89,7 @@
       }
     }
 
-    // ── History ──
+    // ── 历史 ──
 
     async function loadOlderHistory() {
       if (state.historyLoading || state.historyExhausted) return;
@@ -104,7 +103,7 @@
         const items = j.history || [];
         state.historyTotal = j.total || state.historyTotal;
         if (!items.length) { state.historyExhausted = true; return; }
-        app.chatLog.prependHistory(items); // builds bubbles + preserves scroll position
+        app.chatLog.prependHistory(items); // 构建气泡 + 保持滚动位置
         state.historyOffset += items.length;
         if (state.historyOffset >= state.historyTotal) state.historyExhausted = true;
       } catch (e) {
@@ -114,12 +113,11 @@
       }
     }
 
-    // ── Switch to a chat: title, history swap, stream ──
+    // ── 切换 chat：标题、历史替换、stream ──
 
     async function switchChat(chatId) {
-      // Drop the previous chat's multiplex subscription. One page-level socket
-      // stays open across chats; switching only adds/removes interest, so we
-      // never churn a connection (and never occupy more than one slot).
+      // 丢掉上一个 chat 的 multiplex 订阅。一个页面级 socket 跨 chat 常驻，
+      // 切换只增删订阅，从不 churn 连接（也从不占用超过一个 slot）。
       if (state.subscribed) {
         app.multiplex.unsubscribe(state.subscribed.machine, state.subscribed.bot, state.subscribed.chat_id);
         state.subscribed = null;
@@ -136,7 +134,7 @@
       refreshSessionInfo();
       localStorage.setItem("ba.last." + app.curKey(), chatId);
 
-      // Record this open in the cross-bot recents.
+      // 记录本次打开到跨 bot 最近记录。
       const botInfo = (state.machines || [])
         .find((m) => m.machine_id === state.botMachine)?.bots
         ?.find((b) => b.name === state.bot);
@@ -154,7 +152,7 @@
 
       app.showRecapBanner(serverMeta?.recap || "", chatId);
 
-      // Mask the chat panel so the fetch + swap + scroll-to-bottom are invisible.
+      // 遮住 chat 面板，让 fetch + swap + 滚到底的过程不可见。
       const mask = app.$("messages-mask");
       mask.classList.remove("hidden");
 
@@ -175,18 +173,17 @@
         }
       } catch (e) { console.warn("history load failed", e); }
 
-      app.chatLog.setHistory(history); // replace bubbles + jump to bottom (no smooth)
+      app.chatLog.setHistory(history); // 替换气泡 + 跳到底部（无平滑动画）
 
       requestAnimationFrame(() => mask.classList.add("hidden"));
 
       openStream();
     }
 
-    // ── Multiplex subscription + event router ──
+    // ── Multiplex 订阅 + 事件路由 ──
 
-    // Subscribe the active chat to the page-level multiplex socket. Events for
-    // this (machine, bot, chat_id) are demuxed back into handleEvent. Named
-    // openStream for continuity with the old per-chat SSE entrypoint.
+    // 把当前 chat 订阅到页面级 multiplex socket。属于该 (machine, bot, chat_id)
+    // 的事件被 demux 回 handleEvent。沿用旧的 per-chat SSE 入口名 openStream。
     function openStream() {
       const machine = state.botMachine;
       const bot = state.bot;
@@ -224,7 +221,7 @@
             touchSession(ev.text || m.text);
             delete state.streamMsgs[ev.message_id];
           }
-          // Refresh server-side session list (other platforms may have new turns).
+          // 刷新服务端 session 列表（其他平台可能有新轮次）。
           app.fetchServerSessions(state.botMachine, state.bot).then((list) => {
             state.serverSessions[app.curKey()] = list;
             app.refreshSessionList();
@@ -246,7 +243,7 @@
       }
     }
 
-    // ── Send ──
+    // ── 发送 ──
 
     async function sendText(text) {
       if (!text.trim()) return;
@@ -266,7 +263,7 @@
           const err = await r.text();
           addMessage("assistant", `_Error (${r.status}): ${err}_`);
           if (r.status === 502 || r.status === 504) {
-            // Likely the guest dropped — refresh machines so UI reflects it.
+            // guest 大概率掉线了 — 刷新 machines 让 UI 反映。
             app.loadMachines().catch(() => {});
           }
         }
@@ -277,12 +274,12 @@
       }
     }
 
-    // Public surface used by app.js (wiring + boot):
+    // app.js（接线 + 启动）使用的公开接口：
     app.switchChat = switchChat;
     app.sendText = sendText;
-    app.addMessage = addMessage;       // boot's "failed to connect" notice
-    app.openStream = openStream;       // (also exposed for tests)
-    app.handleEvent = handleEvent;     // (exposed for tests)
+    app.addMessage = addMessage;       // 启动时 "failed to connect" 提示
+    app.openStream = openStream;       // （也暴露给测试）
+    app.handleEvent = handleEvent;     // （暴露给测试）
     app.chatLog.onLoadOlder = loadOlderHistory;
   }
 

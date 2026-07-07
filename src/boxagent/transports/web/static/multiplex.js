@@ -1,16 +1,14 @@
-// multiplex.js — one page-level WebSocket that carries every open chat's events.
+// multiplex.js — 一个页面级 WebSocket，承载所有打开 chat 的事件。
 //
-// Why: a per-chat SSE stream burns one of the browser's ~6 HTTP/1.1 connection
-// slots each, so a few open chats stall the whole UI (and aiohttp has no HTTP/2).
-// This client holds a single WebSocket to /api/multiplex and tells the server
-// which (machine, bot, chat_id) chats it cares about via subscribe/unsubscribe
-// frames. Each pushed event is tagged {machine,bot,chat_id,event:{...}}, so we
-// demux it to the subscriber registered for that chat.
+// 为什么：per-chat SSE 每条各占浏览器约 6 个 HTTP/1.1 连接 slot 之一，
+// 开几个 chat 就会卡死整个 UI（且 aiohttp 无 HTTP/2）。本 client 只对
+// /api/multiplex 保持一个 WebSocket，用 subscribe/unsubscribe 帧告诉服务端
+// 关心哪些 (machine, bot, chat_id)。每个推送事件带 {machine,bot,chat_id,event:{...}} 标签，
+// 据此 demux 给对应 chat 的订阅者。
 //
-// No build step: app.js calls MultiplexClient(app) and hangs the returned object
-// on app.multiplex. chat-controller.js talks to it through that boundary, which
-// also makes both unit-testable (the controller gets a spy multiplex; this
-// client gets a spy WebSocket via app._makeSocket).
+// 无构建步骤：app.js 调 MultiplexClient(app)，把返回对象挂到 app.multiplex。
+// chat-controller.js 经此边界与它对话，也让两者可单测（controller 拿到 spy
+// multiplex；本 client 经 app._makeSocket 拿到 spy WebSocket）。
 (function () {
   "use strict";
 
@@ -19,7 +17,7 @@
   }
 
   function MultiplexClient(app) {
-    // key -> handler(event). One live subscription per chat.
+    // key -> handler(event)。每个 chat 一个 live 订阅。
     const handlers = new Map();
     let socket = null;
     let reconnectDelay = 1000;
@@ -33,13 +31,13 @@
       return base.toString();
     }
 
-    // EventSource has no header path; the socket factory is injectable for tests.
+    // EventSource 无法带 header；socket 工厂可注入以便测试。
     function makeSocket(url) {
       return app._makeSocket ? app._makeSocket(url) : new WebSocket(url);
     }
 
     function sendFrame(frame) {
-      if (socket && socket.readyState === 1 /* OPEN */) {
+      if (socket && socket.readyState === 1 /* 已打开 */) {
         socket.send(JSON.stringify(frame));
         return true;
       }
@@ -61,7 +59,7 @@
       ws.onopen = () => {
         reconnectDelay = 1000;
         app.setConn && app.setConn("online");
-        // Re-declare interest after a (re)connect; server holds no state across sockets.
+        // （重）连后重新声明订阅；服务端跨 socket 不保存状态。
         resubscribeAll();
       };
       ws.onmessage = (e) => {
@@ -78,7 +76,7 @@
         scheduleReconnect();
       };
       ws.onerror = () => {
-        // onclose follows; let it drive reconnect.
+        // onclose 会跟着触发；让它驱动重连。
         try { ws.close(); } catch (_) {}
       };
     }
@@ -92,7 +90,7 @@
       reconnectDelay = Math.min(reconnectDelay * 2, 15000);
     }
 
-    // Register interest in a chat. Replaces any prior handler for the same chat.
+    // 注册对某 chat 的订阅。会替换该 chat 之前的 handler。
     function subscribe(machine, bot, chatId, handler) {
       if (!machine || !bot || !chatId) return;
       const key = tagKey(machine, bot, chatId);

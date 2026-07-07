@@ -1,13 +1,12 @@
-"""Web transport — aiohttp server, auth, and route handlers for the Web UI.
+"""Web transport — Web UI 的 aiohttp server、鉴权与路由 handler。
 
-Composition class. Held by Gateway as ``self._web_server``. Built in one
-phase with config + storage + shared dicts + topology + cluster_rpc +
-cluster_routes (all Phase-1 siblings).
+装配类，由 Gateway 持有为 ``self._web_server``，一次性用
+config + storage + 共享 dict + topology + cluster_rpc + cluster_routes
+（都是 Phase-1 兄弟）装配。
 
-The host's *web* port (default 9292) also carries the cluster guest WS
-route (``/api/guest/ws``); it is mounted by ``ClusterHttpRoutes.register``
-on the same aiohttp app, since the rest of the cluster code already
-targets that port.
+host 的 web 端口（默认 9292）同时承载 cluster guest WS 路由
+（``/api/guest/ws``），由 ``ClusterHttpRoutes.register`` 挂到同一个
+aiohttp app 上——因为 cluster 其余代码本就指向这个端口。
 """
 
 import asyncio
@@ -22,11 +21,10 @@ logger = logging.getLogger(__name__)
 
 
 def _project_to_dict(p) -> dict:
-    """Serialise a ``boxagent.history.ProjectInfo`` for the Web UI.
+    """把 ``boxagent.history.ProjectInfo`` 序列化给 Web UI。
 
-    Frontend expects ``encoded`` (legacy field name) — we round-trip the
-    project_id through it so the resume picker can hand it back to
-    ``/api/claude/sessions``.
+    前端期望 ``encoded``（历史字段名）——用它承载 project_id，
+    resume 选择器再原样传回 ``/api/claude/sessions``。
     """
     return {
         "encoded": p.project_id,
@@ -38,7 +36,7 @@ def _project_to_dict(p) -> dict:
 
 
 def _session_info_to_dict(s) -> dict:
-    """Serialise a ``boxagent.history.SessionInfo`` for the Web UI."""
+    """把 ``boxagent.history.SessionInfo`` 序列化给 Web UI。"""
     return {
         "session_id": s.session_id,
         "first_user": s.first_user,
@@ -54,8 +52,7 @@ def _session_info_to_dict(s) -> dict:
 
 
 def _message_to_dict(m) -> dict:
-    """Serialise a ``boxagent.history.Message`` to the legacy record shape
-    consumed by the web UI's transcript replay."""
+    """把 ``boxagent.history.Message`` 序列化成 web UI transcript 回放用的旧记录结构。"""
     base = {"role": m.role, "ts": m.ts}
     if m.cwd:
         base["cwd"] = m.cwd
@@ -101,8 +98,8 @@ class WebHttpServer:
         self.cluster_routes = cluster_routes
         self.message_bus = message_bus
         self.event_bus = None
-        # Internal state — process-local preview cache (sid → {mtime, ...})
-        # used by /api/sessions to avoid re-reading transcript JSONL every poll.
+        # 进程内 preview 缓存（sid → {mtime, ...}），
+        # /api/sessions 用它避免每次轮询都重读 transcript JSONL。
         self.session_meta_cache: dict = {}
         self._runner: web.AppRunner | None = None
 
@@ -113,21 +110,21 @@ class WebHttpServer:
     def web_port_file(self) -> Path:
         return self.local_dir / "web-port.txt"
 
-    # ── Lifecycle ──
+    # ── 生命周期 ──
 
     async def start(self) -> None:
-        """Build and start the Web UI aiohttp server (own port)."""
+        """构建并启动 Web UI aiohttp server（独立端口）。"""
         from boxagent.web_error_middleware import error_logging_middleware
         web_app = web.Application(middlewares=[error_logging_middleware])
 
-        # Web UI / API routes
+        # Web UI / API 路由
         self._register_routes(web_app)
 
-        # Hook for non-web routes that share this port (cluster RPC etc.)
+        # 共用此端口的非 web 路由（cluster RPC 等）
         if self.cluster_routes is not None:
             self.cluster_routes.register(web_app)
 
-        # Static files last so the catch-all doesn't shadow API routes
+        # 静态文件放最后，避免 catch-all 遮蔽 API 路由
         web_static = Path(__file__).parent / "static"
         if web_static.is_dir():
             web_app.router.add_static("/", path=str(web_static), show_index=False)
@@ -169,24 +166,24 @@ class WebHttpServer:
         app.router.add_get("/api/claude/sessions", self._handle_claude_sessions)
         app.router.add_get("/api/claude/transcript", self._handle_claude_transcript)
         app.router.add_post("/api/claude/resume", self._handle_claude_resume)
-        # Event log routes (commit #4)
+        # 事件日志路由
         app.router.add_get("/api/events", self._handle_events_query)
         app.router.add_get("/api/events/stream", self._handle_events_stream)
         app.router.add_get("/api/events/categories", self._handle_events_categories)
         app.router.add_get("/api/events/machines", self._handle_events_machines)
         app.router.add_post("/api/events/{event_id}/read", self._handle_events_mark_read)
         app.router.add_post("/api/events/read_all", self._handle_events_read_all)
-        # Raw log file (boxagent.log)
+        # 原始日志文件（boxagent.log）
         app.router.add_get("/api/logs", self._handle_logs_query)
-        # Schedule run-log routes
+        # schedule 运行记录路由
         app.router.add_get("/api/schedules", self._handle_schedules_list)
         app.router.add_get("/api/schedules/runs", self._handle_schedules_runs)
         app.router.add_get("/api/schedules/runs/{task_id}/{run_index}", self._handle_schedules_run_detail)
 
-    # ── Auth ──
+    # ── 鉴权 ──
 
     def _authorized(self, request: web.Request) -> bool:
-        """Allow localhost, trusted-header (tunnel), or matching bearer/query token."""
+        """放行 localhost、可信 header（tunnel）或匹配的 bearer/query token。"""
         token = (self.config.web_token or "").strip()
         peer = request.transport.get_extra_info("peername") if request.transport else None
         host = (peer[0] if peer else request.remote) or ""
@@ -207,10 +204,10 @@ class WebHttpServer:
     def _unauthorized(self) -> web.Response:
         return web.json_response({"ok": False, "error": "unauthorized"}, status=401)
 
-    # ── Handlers ──
+    # ── 请求处理 ──
 
     async def _handle_web_index(self, request: web.Request) -> web.Response:
-        # Always serve the index page so users can paste ?token=... to log in.
+        # 始终返回 index 页，便于用户粘贴 ?token=... 登录。
         index = Path(__file__).parent / "static" / "index.html"
         if not index.is_file():
             return web.Response(text="web UI not installed", status=404)
@@ -306,9 +303,8 @@ class WebHttpServer:
             try:
                 from boxagent.history import get_history
                 history = get_history(backend)
-                # SDK gives us session metadata directly per-sid via
-                # get_session_info — no need to scan the project tree.
-                # We populate claude_session_info lazily in the loop below.
+                # SDK 通过 get_session_info 直接按 sid 给出会话元数据，
+                # 无需扫描 project 树。claude_session_info 在下面循环里懒填。
                 _claude_history = history
             except Exception:
                 _claude_history = None
@@ -329,13 +325,12 @@ class WebHttpServer:
 
             cached = self.session_meta_cache.get(sid)
 
-            # Try claude-native lookup first (covers claude-cli + agent-sdk-claude).
+            # 先试 claude-native 查找（覆盖 claude-cli + agent-sdk-claude）。
             if _claude_history is not None:
                 info = await _claude_history.get_session_info(sid)
                 if info is not None:
-                    # Reuse cache only when SDK reports the same last_modified —
-                    # otherwise the session has new messages / away_summary /
-                    # rename and we must re-read.
+                    # 仅当 SDK 报告的 last_modified 一致时才复用缓存——
+                    # 否则会话有新消息 / away_summary / 改名，必须重读。
                     if cached and cached.get("last_ts") == info.last_ts:
                         s["preview"] = cached.get("preview", "")
                         s["last_ts"] = cached.get("last_ts", 0)
@@ -503,9 +498,9 @@ class WebHttpServer:
         except Exception:
             data = {}
         if self.topology.guest_registry is None:
-            # Guest mode: only the host owns the cluster registry, so forward
-            # the request upstream and surface its response. Lets the per-machine
-            # Restart button work from any node's UI.
+            # Guest 模式：只有 host 持有 cluster registry，
+            # 故把请求上抛并透传其响应。让每机的 Restart 按钮
+            # 从任意节点 UI 都能用。
             guest_client = self.topology.guest_client
             if guest_client is None:
                 return web.json_response(
@@ -585,26 +580,25 @@ class WebHttpServer:
             if saved_backend in ("claude-cli", "agent-sdk-claude") and sids:
                 from boxagent.history import get_history
                 history_impl = get_history(saved_backend)
-                # Walk the SDK's compact chain off whichever session is the
-                # oldest one we already know about — catches cases where
-                # storage's previous_session_ids missed a hop (cross-machine
-                # restore, manual /resume of a native session, native
-                # auto-compact while storage was unavailable).
+                # 从已知最老的 session 开始沿 SDK 的 compact 链回溯——
+                # 兜住 storage 的 previous_session_ids 漏跳的情况
+                # （跨机恢复、手动 /resume native session、storage 不可用时
+                # native 自动 compact）。
                 walk_method = getattr(history_impl, "walk_compact_chain", None)
                 if walk_method is not None and sids:
                     try:
                         ancestors = await walk_method(sids[-1])
-                    except Exception:  # walking is best-effort
+                    except Exception:  # 回溯是尽力而为
                         ancestors = []
                     if ancestors:
                         existing = set(sids)
-                        # ancestors are oldest-first; we render newest-first → reverse
+                        # ancestors 是老到新；我们渲染新到老 → 反转
                         for sid in reversed(ancestors):
                             if sid not in existing:
                                 sids.append(sid)
                                 existing.add(sid)
-                # SDK can find a session without us knowing the project
-                # — pass empty project_id and let it search.
+                # SDK 不需要我们知道 project 也能找到 session——
+                # 传空 project_id 让它自己搜。
                 for sid in sids:
                     messages = await history_impl.read_messages(sid)
                     history.extend(_message_to_dict(m) for m in messages)
@@ -651,11 +645,10 @@ class WebHttpServer:
         return web.json_response({"ok": True, "total": total, "history": history})
 
     async def _handle_web_session_info(self, request: web.Request) -> web.Response:
-        """SessionInfo for one ``session_id`` (chat-decoupled).
+        """单个 ``session_id`` 的 SessionInfo（与 chat 解耦）。
 
-        Required: ``session_id``, ``backend_kind``, ``machine`` (for
-        cluster_rpc dispatch). Optional: ``model`` (for context_window
-        lookup), ``workspace`` (helps locate Codex transcripts).
+        必填：``session_id``、``backend_kind``、``machine``（cluster_rpc 分发用）。
+        可选：``model``（查 context_window）、``workspace``（帮助定位 Codex transcript）。
         """
         if not self._authorized(request):
             return self._unauthorized()
@@ -726,13 +719,12 @@ class WebHttpServer:
         return web.json_response({"ok": True})
 
     def _resolve_chat_topic(self, machine: str, bot: str, chat_id: str) -> str | None:
-        """Map a (machine, bot, chat_id) selector to its bus topic, or None if
-        the bot is local but not web-enabled.
+        """把 (machine, bot, chat_id) 选择器映射到其 bus topic；
+        若 bot 在本机但未开启 web 则返回 None。
 
-        Location-transparent: a browser subscribes to chat.<owner>.<bot>.<chat_id>
-        and the bus delivers whether the owning bot is on this machine (its
-        WebChannel publishes locally) or remote (the ClusterBus forwards its
-        broadcast packet here).
+        位置透明：浏览器订阅 chat.<owner>.<bot>.<chat_id>，bus 负责投递——
+        无论 owning bot 在本机（其 WebChannel 本地发布）还是远端
+        （ClusterBus 把广播包转发过来）。
         """
         local_machine = self.topology.local_machine_id()
         owner = machine or local_machine
@@ -788,15 +780,15 @@ class WebHttpServer:
         return response
 
     async def _handle_web_multiplex(self, request: web.Request) -> web.WebSocketResponse:
-        """One page-level WebSocket that fans in many chats' events.
+        """一个页面级 WebSocket，汇聚多个 chat 的事件。
 
-        A per-chat SSE stream burns one of the browser's ~6 HTTP/1.1 connection
-        slots each, so a few open chats stall the whole UI. This endpoint holds
-        many bus subscriptions on a single socket instead: the client sends
+        每 chat 一条 SSE 会各占浏览器约 6 个 HTTP/1.1 连接槽之一，
+        开几个 chat 就把整个 UI 卡死。此端点改为在单个 socket 上持有多个 bus
+        订阅：客户端开关 chat 时发送
         ``{"type":"subscribe","machine":..,"bot":..,"chat_id":..}`` /
-        ``"unsubscribe"`` frames as it opens/closes chats, and every pushed event
-        is tagged ``{machine,bot,chat_id,event:{...}}`` so the browser demuxes it
-        to the right window. Connection count drops from N to 1.
+        ``"unsubscribe"`` 帧，每个推送事件都带
+        ``{machine,bot,chat_id,event:{...}}`` 标签，浏览器据此解复用到对应窗口。
+        连接数从 N 降到 1。
         """
         if not self._authorized(request):
             return self._unauthorized()
@@ -809,7 +801,7 @@ class WebHttpServer:
         await ws.prepare(request)
 
         queue: asyncio.Queue = asyncio.Queue(maxsize=4096)
-        # topic -> Subscription, so re-subscribe is idempotent and unsubscribe finds it.
+        # topic -> Subscription，使重复订阅幂等、取消订阅能找到它。
         subscriptions: dict[str, object] = {}
 
         def subscribe(machine: str, bot: str, chat_id: str) -> None:
@@ -830,8 +822,8 @@ class WebHttpServer:
                 subscription.close()
 
         async def pump() -> None:
-            # Drain the merged queue onto the socket. Tagged events already carry
-            # their {machine,bot,chat_id}; the browser routes on that.
+            # 把合并队列排空到 socket。tagged 事件已带 {machine,bot,chat_id}，
+            # 浏览器据此路由。
             while True:
                 event = await queue.get()
                 await ws.send_json(event)
@@ -854,7 +846,7 @@ class WebHttpServer:
                     subscribe(machine, bot, chat_id)
                 elif kind == "unsubscribe":
                     unsubscribe(machine, bot, chat_id)
-                # unknown frames ignored
+                # 未知帧忽略
         except (ConnectionResetError, asyncio.CancelledError):
             pass
         finally:
@@ -864,7 +856,7 @@ class WebHttpServer:
             subscriptions.clear()
         return ws
 
-    # ── Claude native session picker ──
+    # ── Claude 原生 session 选择器 ──
 
     async def _handle_claude_projects(self, request: web.Request) -> web.Response:
         if not self._authorized(request):
@@ -990,9 +982,8 @@ class WebHttpServer:
                 backend = backend_override or "claude-cli"
             else:
                 backend = (config.ai_backend if config else None) or "claude-cli"
-            # ``encoded`` (project_id) is now the cwd path — use it
-            # directly. Older callers that don't supply project still
-            # fall back to bot defaults below.
+            # ``encoded``（project_id）现在就是 cwd 路径，直接用。
+            # 老调用方不传 project 时仍走下面的 bot 默认值。
             workspace = encoded or (config.workspace if config else "")
             chat_id = f"{backend.split('-')[0]}-{sid}" if is_raw else f"claude-{sid}"
             self.storage.save_session(
@@ -1021,7 +1012,7 @@ class WebHttpServer:
             "workspace": workspace if self.storage else "",
         })
 
-    # ── Event log handlers (commit #4) ──
+    # ── 事件日志 handler ──
 
     @staticmethod
     def _event_to_dict(event) -> dict:
@@ -1091,7 +1082,7 @@ class WebHttpServer:
         })
 
     async def _handle_events_categories(self, request: web.Request) -> web.Response:
-        """Distinct categories for the tree-nav builder."""
+        """给树状导航用的去重 category 列表。"""
         if not self._authorized(request):
             return self._unauthorized()
         if self.event_bus is None:
@@ -1103,7 +1094,7 @@ class WebHttpServer:
         return web.json_response({"ok": True, "categories": rows})
 
     async def _handle_events_machines(self, request: web.Request) -> web.Response:
-        """Distinct origin_machine values seen in event history (includes offline nodes)."""
+        """事件历史中出现过的去重 origin_machine（含离线节点）。"""
         if not self._authorized(request):
             return self._unauthorized()
         if self.event_bus is None:
@@ -1144,14 +1135,14 @@ class WebHttpServer:
         return web.json_response({"ok": True, "updated": n})
 
     async def _handle_logs_query(self, request: web.Request) -> web.Response:
-        """Tail of <local-dir>/boxagent.log for the Web UI Logs page.
+        """Web UI Logs 页用的 <local-dir>/boxagent.log 尾部。
 
-        Query params:
-          machine — target machine_id (forwarded via cluster RPC if not local)
-          limit   — max entries to return (default 200, capped at 2000)
-          offset  — entries to skip from end (for pagination, default 0)
-          levels  — comma-separated level filter (case-insensitive)
-          grep    — case-insensitive substring filter
+        query 参数：
+          machine — 目标 machine_id（非本机则经 cluster RPC 转发）
+          limit   — 最多返回条数（默认 200，上限 2000）
+          offset  — 从末尾跳过的条数（分页用，默认 0）
+          levels  — 逗号分隔的 level 过滤（大小写不敏感）
+          grep    — 大小写不敏感的子串过滤
         """
         if not self._authorized(request):
             return self._unauthorized()
@@ -1229,7 +1220,7 @@ class WebHttpServer:
     # ── Schedules ──
 
     async def _handle_schedules_list(self, request: web.Request) -> web.Response:
-        """GET /api/schedules?machine= — list schedules.yaml entries."""
+        """GET /api/schedules?machine= — 列出 schedules.yaml 条目。"""
         if not self._authorized(request):
             return self._unauthorized()
         machine = request.query.get("machine", "")
@@ -1264,7 +1255,7 @@ class WebHttpServer:
         return web.json_response({"ok": True, "schedules": items, "node_id": self.config.node_id})
 
     async def _handle_schedules_runs(self, request: web.Request) -> web.Response:
-        """GET /api/schedules/runs?task=&machine=&limit= — list run records."""
+        """GET /api/schedules/runs?task=&machine=&limit= — 列出运行记录。"""
         if not self._authorized(request):
             return self._unauthorized()
         machine = request.query.get("machine", "")
@@ -1292,7 +1283,7 @@ class WebHttpServer:
         })
 
     async def _handle_schedules_run_detail(self, request: web.Request) -> web.Response:
-        """GET /api/schedules/runs/<task>/<index>?machine= — single run record."""
+        """GET /api/schedules/runs/<task>/<index>?machine= — 单条运行记录。"""
         if not self._authorized(request):
             return self._unauthorized()
         machine = request.query.get("machine", "")

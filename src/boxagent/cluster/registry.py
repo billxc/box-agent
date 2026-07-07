@@ -1,30 +1,28 @@
-"""Host-side: track connected guest nodes and proxy RPC to them.
+"""Host 侧：跟踪已连接的 guest 节点并向它们代理 RPC。
 
-A *host* node accepts WebSocket connections from *guest* nodes at
-``/api/guest/ws`` (legacy alias: ``/api/sat/ws``). Each guest
-registers its bots with a ``hello`` frame.
-The host then forwards web-UI HTTP requests bound for a remote bot over
-the WS to the guest that owns it, using a generic RPC envelope.
+*host* 节点在 ``/api/guest/ws``（旧别名 ``/api/sat/ws``）接受 *guest* 节点的
+WebSocket 连接。每个 guest 用 ``hello`` 帧注册自己的 bot。host 随后把发往远端
+bot 的 web-UI HTTP 请求，通过 WS 用通用 RPC 信封转发给拥有它的 guest。
 
-Wire protocol::
+wire 协议::
 
-  # Guest → Host (immediately after open)
+  # Guest → Host（open 后立即）
   {"type": "hello", "machine_id": "pc", "token": "...", "bots": [...]}
 
-  # Host → Guest (a request)
+  # Host → Guest（一个请求）
   {"type": "rpc", "id": "<uuid>", "method": "GET",
    "path": "/api/history", "query": {"bot": "x", "chat_id": "y"}, "body": null}
 
-  # Guest → Host (response)
+  # Guest → Host（响应）
   {"type": "rpc_resp", "id": "<uuid>", "status": 200, "body": {...}}
 
-  # Either direction
+  # 双向
   {"type": "ping"}  /  {"type": "pong"}
 
-Frames the registry doesn't recognize (``event_batch`` / ``event_resync`` from
-the EventSyncer, ``chat_subscribe`` / ``chat_event`` from the ChatSyncer) fall
-through to ``on_unknown_frame``. Live chat SSE used to ride ``rpc_stream`` /
-``rpc_end`` here; it now rides the ChatSyncer's ``chat_*`` frames instead.
+registry 不认识的帧（EventSyncer 的 ``event_batch`` / ``event_resync``，
+ChatSyncer 的 ``chat_subscribe`` / ``chat_event``）落到 ``on_unknown_frame``。
+实时 chat SSE 以前走这里的 ``rpc_stream`` / ``rpc_end``，现在改走 ChatSyncer 的
+``chat_*`` 帧。
 """
 
 from __future__ import annotations
@@ -49,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RemoteBot:
-    """Metadata for a bot owned by a guest node."""
+    """guest 节点拥有的一个 bot 的元数据。"""
 
     name: str
     display_name: str = ""
@@ -60,53 +58,46 @@ class RemoteBot:
 
 @dataclass
 class GuestSession:
-    """One connected guest node."""
+    """一个已连接的 guest 节点。"""
 
     machine_id: str
     ws: WebSocketResponse
     bots: list[RemoteBot] = field(default_factory=list)
-    # Cluster-bus wire version this guest negotiated at hello. 0 = the hello
-    # carried no `v` (an old/incompatible peer) — used to fast-fail requests to
-    # it instead of hanging the full timeout.
+    # 该 guest 在 hello 时协商的 cluster-bus wire 版本。0 = hello 没带 `v`
+    # （旧/不兼容 peer）——用于对它快速 fail 请求，而非挂满 timeout。
     version: int = 0
     _closed: bool = False
 
 
 @dataclass
 class GuestRegistry:
-    """Host-side registry of currently-connected guests."""
+    """Host 侧当前已连接 guest 的注册表。"""
 
     expected_token: str = ""
     sessions: dict[str, GuestSession] = field(default_factory=dict)
-    # Machines we've seen this process lifetime; survives disconnect so the
-    # web UI can show an offline tile instead of the row vanishing.
+    # 本进程生命周期内见过的机器；断连后仍保留，好让 web UI 显示 offline 图块
+    # 而非整行消失。
     history: dict[str, dict] = field(default_factory=dict)  # machine_id → {bots: [...], last_seen}
-    # Optional: called by handle_ws after a guest's hello/bots_update, and after
-    # any guest disconnects. Lets the host push a machines_snapshot to all (or
-    # just the changed) guests so each guest learns the current cluster topology.
-    # None = no push.
+    # 可选：guest hello/bots_update 后、以及任意 guest 断连后由 handle_ws 调。
+    # 让 host 向全部（或仅变更的）guest 推 machines_snapshot，使每个 guest 获知
+    # 当前 cluster 拓扑。None = 不推。
     on_topology_change: Callable[[str | None], Awaitable[None]] | None = None
-    # Optional: called for any unknown frame type from a guest. Returns True
-    # if the frame was consumed. Used by the events syncer to handle
-    # event_batch / event_resync frames without bloating the registry.
+    # 可选：guest 发来任意未知类型帧时调。返回 True 表示已消费。events syncer 用它
+    # 处理 event_batch / event_resync 帧，不必往 registry 里塞。
     on_unknown_frame: Callable[[str, dict], Awaitable[bool]] | None = None
-    # Optional: called when a guest hello/welcome handshake completes, so the
-    # syncer can attach a peer keyed by machine_id.
+    # 可选：guest hello/welcome 握手完成时调，让 syncer 按 machine_id 挂上 peer。
     on_guest_attached: Callable[[str, "GuestSession"], None] | None = None
     on_guest_detached: Callable[[str], None] | None = None
-    # Loopback config so the host can serve guest→host reverse RPCs by re-issuing
-    # the request against its own web server (mirrors the guest-side pattern
-    # in guest_client._handle_rpc). Injected by gateway after web app starts.
-    # The process ClusterBus (duck-typed to avoid an import cycle). When set, a
-    # connected guest becomes a cluster-bus link and inbound `packet` frames are
-    # routed to it. Injected by gateway in on_registry_ready.
+    # 进程内的 ClusterBus（duck-typed，避免 import 环）。设置后，已连接 guest 成为
+    # cluster-bus 链路，入站 `packet` 帧路由给它。由 gateway 在 on_registry_ready
+    # 里注入。
     cluster_bus: object | None = None
 
     def get(self, machine_id: str) -> GuestSession | None:
         return self.sessions.get(machine_id)
 
     def list_machines(self) -> list[dict]:
-        """All known machines: connected + recently seen."""
+        """所有已知机器：已连接 + 最近见过。"""
         out: list[dict] = []
         seen: set[str] = set()
         now = time.time()
@@ -136,7 +127,7 @@ class GuestRegistry:
         return out
 
     def list_bots(self) -> list[tuple[str, RemoteBot]]:
-        """Yield (machine_id, RemoteBot) for every registered remote bot."""
+        """产出每个已注册远端 bot 的 (machine_id, RemoteBot)。"""
         out: list[tuple[str, RemoteBot]] = []
         for machine_id, session in self.sessions.items():
             for bot in session.bots:
@@ -144,7 +135,7 @@ class GuestRegistry:
         return out
 
     def get_bot(self, machine_id: str, name: str) -> RemoteBot | None:
-        """Return the RemoteBot named `name` on guest `machine_id`, or None."""
+        """返回 guest `machine_id` 上名为 `name` 的 RemoteBot，无则 None。"""
         session = self.sessions.get(machine_id)
         if session is None:
             return None
@@ -154,9 +145,8 @@ class GuestRegistry:
         return None
 
     async def close_all_sessions(self) -> None:
-        """Force-close every connected guest WS. Used by HostElection
-        during demote so guests immediately reconnect to the new active host
-        instead of dangling on a soon-to-be-stopped tunnel."""
+        """强制关闭每个已连接 guest WS。HostElection 降级时用，让 guest 立即重连到
+        新 active host，而非吊在即将停掉的 tunnel 上。"""
         for session in list(self.sessions.values()):
             session._closed = True
             try:
@@ -166,11 +156,11 @@ class GuestRegistry:
         self.sessions.clear()
 
     async def handle_ws(self, request: web.Request) -> web.WebSocketResponse:
-        """Aiohttp handler for /api/guest/ws."""
+        """/api/guest/ws 的 aiohttp handler。"""
         ws = web.WebSocketResponse(heartbeat=30.0)
         await ws.prepare(request)
 
-        # Expect hello
+        # 等 hello
         session: GuestSession | None = None
         try:
             async for msg in ws:
@@ -209,8 +199,7 @@ class GuestRegistry:
                     ]
                     guest_version = int(payload.get("v") or 0)
                     session = GuestSession(machine_id=machine_id, ws=ws, bots=bots, version=guest_version)
-                    # If a previous session with this machine_id is still around,
-                    # evict it (a guest reconnect).
+                    # 若同 machine_id 的旧 session 还在，逐出它（guest 重连）。
                     old_session = self.sessions.get(machine_id)
                     if old_session is not None:
                         old_session._closed = True
@@ -252,9 +241,8 @@ class GuestRegistry:
                     continue
 
                 if t == "packet":
-                    # Unified cluster bus: route to ClusterBus (which runs its own
-                    # v3 version gate). Intercept BEFORE the legacy v2 gate below,
-                    # which would otherwise drop a v3 packet frame.
+                    # 统一 cluster bus：路由给 ClusterBus（它跑自己的 v3 版本门）。
+                    # 在下面的旧 v2 门之前拦截，否则 v3 packet 帧会被丢掉。
                     if self.cluster_bus is not None:
                         self.cluster_bus.on_inbound(session.machine_id, payload)
                     continue
@@ -267,7 +255,7 @@ class GuestRegistry:
                 if t == "ping":
                     await ws.send_json({"type": "pong"})
                 elif t == "bots_update":
-                    # Guest re-announces its bot list (e.g. after dynamic create)
+                    # guest 重新宣告 bot 列表（如动态创建后）
                     bots_raw = payload.get("bots") or []
                     session.bots = [
                         RemoteBot(
@@ -306,7 +294,7 @@ class GuestRegistry:
                     self.cluster_bus.detach_link(session.machine_id)
             if session is not None and not session._closed:
                 self.sessions.pop(session.machine_id, None)
-                # Remember bots so the UI keeps showing the row as "offline"
+                # 记住 bot，好让 UI 继续把该行显示为 "offline"
                 self.history[session.machine_id] = {
                     "bots": [
                         {"name": bot.name, "display_name": bot.display_name,

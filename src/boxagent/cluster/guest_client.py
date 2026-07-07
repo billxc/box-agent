@@ -1,4 +1,4 @@
-"""Guest-side: dial host WS, register bots, serve incoming RPCs."""
+"""Guest 侧：拨号 host WS、注册 bot、服务入站 RPC。"""
 
 from __future__ import annotations
 
@@ -24,41 +24,38 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class GuestClient:
-    """Maintains a long-lived WebSocket connection from this node to a host node.
+    """维持本节点到 host 节点的长连 WebSocket。
 
-    On each incoming RPC frame, the client re-issues the request against its
-    own local web server (``http://127.0.0.1:<web_port>``) using the local
-    web_token, and forwards the response (or SSE stream) back over the WS.
+    每收到一个入站 RPC 帧，就用本地 web_token 把请求重新打到自己的本地 web
+    server（``http://127.0.0.1:<web_port>``），再把响应（或 SSE 流）经 WS 转回。
     """
 
-    host_url: str           # e.g. https://abc-9292.jpe1.devtunnels.ms
-    host_token: str         # cluster shared token (gates WS hello)
+    host_url: str           # 如 https://abc-9292.jpe1.devtunnels.ms
+    host_token: str         # cluster 共享 token（把关 WS hello）
     machine_id: str
     local_web_port: int
     local_web_token: str = ""
-    tunnel_name: str = ""   # devtunnel id, derived from host_url if empty
+    tunnel_name: str = ""   # devtunnel id，为空则从 host_url 推导
     bot_provider: Callable[[], list[dict]] = field(default=lambda: [])
     reconnect_delay: float = 3.0
-    # Optional hook for frames the client doesn't natively handle (e.g.
-    # event_batch / event_resync from the events syncer). Called with the
-    # raw payload; should return True if consumed.
+    # 可选：client 不原生处理的帧的 hook（如 events syncer 的
+    # event_batch / event_resync）。传入原始 payload；消费了返回 True。
     on_unknown_frame: Callable[[dict], Awaitable[bool]] | None = None
-    # Optional hooks fired when the WS connection is established / lost so the
-    # syncer can attach/detach its peer (key: "host").
+    # 可选：WS 连接建立 / 断开时触发的 hook，让 syncer 挂上/摘下它的 peer
+    # （key: "host"）。
     on_connect: Callable[["GuestClient"], None] | None = None
     on_disconnect: Callable[[], None] | None = None
-    # The process ClusterBus (duck-typed). When set, the host link is registered
-    # with it and inbound `packet` frames are routed to it. Injected by gateway.
+    # 进程内的 ClusterBus（duck-typed）。设置后 host 链路注册给它，入站 `packet`
+    # 帧路由给它。由 gateway 注入。
     cluster_bus: object | None = None
 
     _task: asyncio.Task | None = None
     _stop: bool = False
     _ws: aiohttp.ClientWebSocketResponse | None = None
     _session: ClientSession | None = None
-    # Cluster machine list (host + all sats minus self), pushed by host via
-    # `machines_snapshot` frames after every topology change. Read by guest-side
-    # _handle_web_machines / _handle_web_bots so the local webui can render
-    # the full cluster sidebar.
+    # cluster machine 列表（host + 所有 sat 减自己），host 在每次拓扑变更后经
+    # `machines_snapshot` 帧推来。guest 侧 _handle_web_machines / _handle_web_bots
+    # 读它，好让本地 webui 渲染完整的 cluster sidebar。
     remote_machines: list[dict] = field(default_factory=list)
 
     def start(self) -> None:
@@ -98,11 +95,10 @@ class GuestClient:
         self, path: str, query: dict | None = None,
         method: str = "GET", body: dict | None = None,
     ) -> dict:
-        """Issue a one-shot HTTPS request against the host's web app and return JSON.
+        """向 host 的 web app 发一次性 HTTPS 请求并返回 JSON。
 
-        Uses the same devtunnel auth flow as the WS connection. Lets guest-side
-        endpoints (e.g. /api/version?cluster=1, /api/peer/send) reach back
-        through the host without inventing a reverse-RPC channel.
+        用与 WS 连接相同的 devtunnel 鉴权流程。让 guest 侧端点（如
+        /api/version?cluster=1、/api/peer/send）不必造反向 RPC 通道就能回到 host。
         """
         if self._session is None:
             self._session = ClientSession()
@@ -137,8 +133,7 @@ class GuestClient:
             try:
                 if self._session is None:
                     self._session = ClientSession()
-                # Resolve the host URL fresh each attempt — host might have
-                # rebuilt the tunnel.
+                # 每次尝试都重新解析 host URL——host 可能重建了 tunnel。
                 if self.host_url:
                     resolved_url = self.host_url
                 else:
@@ -157,7 +152,7 @@ class GuestClient:
                         backoff = min(backoff * 1.5, 60.0)
                         continue
                 ws_url = self._derive_ws_url(resolved_url)
-                # Mint a fresh devtunnel connect token each attempt.
+                # 每次尝试都新铸一个 devtunnel connect token。
                 try:
                     devtunnel_token = await devtunnel.connect_token(effective_tunnel_name)
                 except Exception as e:
@@ -184,9 +179,8 @@ class GuestClient:
                         "token": self.host_token,
                         "bots": self.bot_provider(),
                     })
-                    # NB: the ClusterBus link is attached on the `welcome` frame
-                    # (see _serve), not here — the host's wire version is only
-                    # known once welcome arrives, so we negotiate it there.
+                    # 注意：ClusterBus 链路在 `welcome` 帧上挂（见 _serve），不在这
+                    # 里——host 的 wire 版本要等 welcome 到达才知道，届时才协商。
                     logger.info("guest: hello sent (machine_id=%s)", self.machine_id)
                     log.info(
                         Category.CLUSTER_GUEST_CONNECTED,
@@ -251,25 +245,23 @@ class GuestClient:
                 except Exception:
                     continue
                 if payload.get("type") == "packet":
-                    # Unified cluster bus: route to ClusterBus (own v3 gate).
-                    # Intercept before the legacy v2 gate below.
+                    # 统一 cluster bus：路由给 ClusterBus（自己的 v3 门）。
+                    # 在下面的旧 v2 门之前拦截。
                     if self.cluster_bus is not None:
                         self.cluster_bus.on_inbound("host", payload)
                     continue
                 if payload.get("type") == "welcome":
-                    # Handled BEFORE the legacy v2 gate: welcome carries the
-                    # cluster-bus wire version (v3), which the v2 gate would drop.
-                    # Attach the host link now, with the host's negotiated version
-                    # (missing v = old host = 0 = incompatible → fast-fail later).
+                    # 在旧 v2 门之前处理：welcome 带 cluster-bus wire 版本（v3），
+                    # v2 门会丢掉它。现在挂上 host 链路，带 host 协商的版本
+                    # （缺 v = 旧 host = 0 = 不兼容 → 之后 fast-fail）。
                     host_version = int(payload.get("v") or 0)
                     if self.cluster_bus is not None:
                         self.cluster_bus.attach_link("host", ws.send_json, version=host_version)
                     logger.info("guest: welcome received (host wire v%d)", host_version)
                     continue
                 if payload.get("type") == "machines_snapshot":
-                    # Also handled before the v2 gate: the host stamps snapshots
-                    # with type only (no `v`); each machine descriptor carries its
-                    # own `version` field, consumed as-is below.
+                    # 也在 v2 门之前处理：host 给快照只盖 type（无 `v`）；每个
+                    # machine 描述符自带 `version` 字段，下面原样消费。
                     raw = payload.get("machines") or []
                     self.remote_machines = [
                         m for m in raw if isinstance(m, dict) and m.get("machine_id")

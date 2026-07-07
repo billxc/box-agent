@@ -1,23 +1,20 @@
-"""Tests for cross-machine fast-fail on incompatible / unreachable peers.
+"""跨机对不兼容/不可达 peer 快速失败的测试。
 
-The病: mixed-version clusters made a request to an old / offline / incompatible
-machine hang the full request timeout (~30s). The web UI fires several such
-cross-machine requests per bot, each hanging a browser HTTP/1.1 connection slot
-(~6), so the UI froze even though the backend was fine.
+病根：混版本集群里，向老/离线/不兼容机器发请求会挂满整个请求超时（~30s）。web UI
+每个 bot 会发好几个这种跨机请求，每个挂住一个浏览器 HTTP/1.1 连接槽（~6 个），故即使
+后端正常，UI 也冻住。
 
-The fix negotiates a cluster-bus wire version at the hello/welcome handshake,
-propagates it through machines_snapshot, and lets `dispatch_machine_request`
-fast-fail (502 in <1ms) to any peer whose version isn't ours — never sending a
-doomed request that would just time out.
+修法：在 hello/welcome 握手时协商 cluster-bus wire 版本，经 machines_snapshot 传播，
+让 `dispatch_machine_request` 对版本不匹配的 peer 快速失败（<1ms 返回 502）——绝不发
+注定超时的请求。
 
-These tests lock:
-  1. hello with a `v` records the negotiated version on the GuestSession and the
-     bus link; a hello WITHOUT `v` records 0 (old/incompatible).
-  2. machines_snapshot descriptors carry each machine's version.
-  3. dispatch_machine_request to an incompatible peer returns 502 without ever
-     calling `request()` (no doomed send).
-  4. a machine that "updated and reconnected" refreshes to the new version — it
-     is no longer treated as the old one.
+这些测试锁定：
+  1. 带 `v` 的 hello 把协商版本记到 GuestSession 和 bus link；不带 `v` 的 hello 记为
+     0（老/不兼容）。
+  2. machines_snapshot 描述符携带每台机器的版本。
+  3. 向不兼容 peer dispatch_machine_request 返回 502，且从不调用 `request()`（无注定
+     发送）。
+  4. "更新后重连"的机器刷新到新版本——不再被当成老机器。
 """
 from __future__ import annotations
 
@@ -33,14 +30,14 @@ from boxagent.cluster.request_reply import RequestReply
 from boxagent.cluster.topology_service import TopologyService
 
 
-# ── a WebSocketResponse stub that replays a scripted hello, then ends ──────────
+# ── 一个先回放脚本化 hello、然后结束的 WebSocketResponse 桩 ──────────
 
 
 class _ScriptedServerWS:
-    """Stand-in for the host-side WebSocketResponse `handle_ws` constructs.
+    """替身，模拟 `handle_ws` 构造的 host 端 WebSocketResponse。
 
-    Replays the given inbound frames (as if a guest sent them), records every
-    outbound send_json, then the async iteration ends so `handle_ws` returns."""
+    回放给定的入站帧（仿佛 guest 发来），记录每个出站 send_json，然后 async 迭代结束，
+    使 `handle_ws` 返回。"""
 
     def __init__(self, inbound_frames: list[dict]) -> None:
         self._inbound = [json.dumps(frame) for frame in inbound_frames]
@@ -67,12 +64,11 @@ class _ScriptedServerWS:
 
 
 async def _drive_hello(registry: GuestRegistry, hello: dict) -> tuple[_ScriptedServerWS, GuestSession]:
-    """Run handle_ws against a single scripted hello and return (ws, session).
+    """对单个脚本化 hello 跑 handle_ws，返回 (ws, session)。
 
-    handle_ws pops the session on the (immediate) disconnect its scripted stream
-    triggers, so we capture the live session via on_guest_attached — which fires
-    at hello time with the negotiated version already set — rather than reading
-    it back out of registry.sessions afterwards."""
+    handle_ws 会在其脚本流触发的（立即）断连时弹出 session，故我们通过
+    on_guest_attached 捕获活的 session——它在 hello 时触发、协商版本已设好——而不是
+    事后从 registry.sessions 读回。"""
     captured: dict[str, GuestSession] = {}
     prior_hook = registry.on_guest_attached
 
@@ -92,10 +88,9 @@ async def _drive_hello(registry: GuestRegistry, hello: dict) -> tuple[_ScriptedS
 
 
 class _RecordingBus:
-    """ClusterBus stand-in. `links` is the live link map (detach removes an
-    entry); `attached_version` remembers the last version each link_key was
-    attached with, so an assertion survives the disconnect-time detach that
-    handle_ws performs when its scripted stream ends."""
+    """ClusterBus 替身。`links` 是活的 link 映射（detach 会移除一项）；
+    `attached_version` 记住每个 link_key 最后一次 attach 的版本，让断言能挺过
+    handle_ws 在脚本流结束时做的 detach。"""
 
     def __init__(self) -> None:
         self.links: dict[str, int] = {}
@@ -109,7 +104,7 @@ class _RecordingBus:
         self.links.pop(link_key, None)
 
 
-# ── 1. hello version negotiation ──────────────────────────────────────────────
+# ── 1. hello 版本协商 ──────────────────────────────────────────────
 
 
 class TestHelloVersion:
@@ -120,16 +115,15 @@ class TestHelloVersion:
             "type": "hello", "v": CLUSTER_BUS_WIRE_VERSION,
             "machine_id": "devbox", "bots": [],
         })
-        # welcome carries our version
+        # welcome 携带我们的版本
         welcome = next(frame for frame in ws.sent if frame.get("type") == "welcome")
         assert welcome["v"] == CLUSTER_BUS_WIRE_VERSION
-        # session + bus link recorded the negotiated version
+        # session + bus link 记下协商版本
         assert session.version == CLUSTER_BUS_WIRE_VERSION
         assert bus.attached_version["devbox"] == CLUSTER_BUS_WIRE_VERSION
 
     async def test_hello_without_version_records_zero(self):
-        # An old peer's hello carries no `v` → recorded as 0 (incompatible), so
-        # requests to it fast-fail instead of hanging.
+        # 老 peer 的 hello 不带 `v` → 记为 0（不兼容），故对它的请求快速失败而非挂住。
         bus = _RecordingBus()
         registry = GuestRegistry(cluster_bus=bus)
         _ws, session = await _drive_hello(registry, {
@@ -139,7 +133,7 @@ class TestHelloVersion:
         assert bus.attached_version["oldbox"] == 0
 
 
-# ── 2. snapshot carries version ───────────────────────────────────────────────
+# ── 2. snapshot 携带版本 ───────────────────────────────────────────────
 
 
 class TestSnapshotVersion:
@@ -161,27 +155,27 @@ class TestSnapshotVersion:
     def test_collect_machines_stamps_version(self):
         topology = self._topology({"devbox": CLUSTER_BUS_WIRE_VERSION, "oldbox": 0})
         machines = {m["machine_id"]: m for m in topology.collect_machines()}
-        # host stamps itself as current
+        # host 把自己盖成当前版本
         assert machines["host-machine"]["version"] == CLUSTER_BUS_WIRE_VERSION
         assert machines["host-machine"]["self"] is True
-        # guests carry their negotiated version
+        # guest 携带其协商版本
         assert machines["devbox"]["version"] == CLUSTER_BUS_WIRE_VERSION
         assert machines["oldbox"]["version"] == 0
 
     def test_version_for_reads_guest_session(self):
         topology = self._topology({"devbox": CLUSTER_BUS_WIRE_VERSION, "oldbox": 0})
-        assert topology.version_for("host-machine") == CLUSTER_BUS_WIRE_VERSION  # self
+        assert topology.version_for("host-machine") == CLUSTER_BUS_WIRE_VERSION  # 自己
         assert topology.version_for("devbox") == CLUSTER_BUS_WIRE_VERSION
         assert topology.version_for("oldbox") == 0
-        assert topology.version_for("ghost") == 0  # unknown machine
+        assert topology.version_for("ghost") == 0  # 未知机器
 
     def test_version_for_reads_guest_client_cache(self):
-        # A guest reads peer versions from the host-pushed snapshot cache.
+        # guest 从 host 推来的 snapshot 缓存读取 peer 版本。
         config = SimpleNamespace(machine_id="guest-machine", node_id="", cluster_tunnel=True)
         client = SimpleNamespace(remote_machines=[
             {"machine_id": "host-machine", "version": CLUSTER_BUS_WIRE_VERSION},
             {"machine_id": "oldbox", "version": 0},
-            {"machine_id": "noversion"},  # snapshot from an old host → treated as 0
+            {"machine_id": "noversion"},  # 老 host 来的 snapshot → 当作 0
         ])
         host_election = SimpleNamespace(registry=None, client=client, state="guest")
         topology = TopologyService(config=config, web_channels={})
@@ -191,16 +185,16 @@ class TestSnapshotVersion:
         assert topology.version_for("noversion") == 0
 
 
-# ── 3. dispatch fast-fails incompatible peers ─────────────────────────────────
+# ── 3. dispatch 对不兼容 peer 快速失败 ─────────────────────────────────
 
 
 class _CountingRequestReply(RequestReply):
-    """RequestReply that fails loudly if `request()` is ever called — proving the
-    version pre-check short-circuits before any doomed send."""
+    """一旦 `request()` 被调用就大声失败的 RequestReply——证明版本预检在任何注定
+    发送前就短路了。"""
 
     def __init__(self, *, topology):
-        # Minimal init: we only exercise dispatch_machine_request, which needs
-        # topology + a bus for the base subscribe calls.
+        # 最小 init：我们只跑 dispatch_machine_request，它需要 topology + 一个 bus
+        # 供基类的 subscribe 调用。
         bus = SimpleNamespace(
             subscribe=lambda *a, **k: SimpleNamespace(close=lambda: None),
             send=lambda **k: "mid",
@@ -229,17 +223,17 @@ class TestDispatchFastFail:
         response = await rr.dispatch_machine_request("oldbox", "GET", "/api/history", request)
         assert response is not None
         assert response.status == 502
-        assert rr.request_calls == 0  # never sent the doomed request
+        assert rr.request_calls == 0  # 从未发出那个注定的请求
 
     async def test_local_target_returns_none(self):
         topology = _topology_with_versions("mbp", {})
         rr = _CountingRequestReply(topology=topology)
         request = SimpleNamespace(query={})
-        # local → None so the caller handles it locally; version_for not consulted
+        # 本机 → None，让调用方本地处理；不查 version_for
         assert await rr.dispatch_machine_request("mbp", "GET", "/x", request) is None
 
     async def test_compatible_peer_proceeds_to_request(self):
-        # A same-version peer must NOT be fast-failed — dispatch calls request().
+        # 同版本 peer 不能被快速失败——dispatch 会调用 request()。
         topology = _topology_with_versions("mbp", {"devbox": CLUSTER_BUS_WIRE_VERSION})
         bus = SimpleNamespace(
             subscribe=lambda *a, **k: SimpleNamespace(close=lambda: None),
@@ -259,14 +253,13 @@ class TestDispatchFastFail:
         assert response.status == 200
 
 
-# ── 4. updated-and-reconnected machine refreshes to the new version ───────────
+# ── 4. 更新并重连的机器刷新到新版本 ───────────────────────────────
 
 
 class TestReconnectRefreshesVersion:
     async def test_reconnect_upgrades_version(self):
-        # A machine first connects as an old peer (no `v`, recorded 0), then
-        # updates and reconnects with the new version — topology must report the
-        # new version, so it stops being fast-failed.
+        # 机器先作为老 peer 连入（无 `v`，记为 0），然后更新并以新版本重连——topology
+        # 必须报告新版本，使它不再被快速失败。
         bus = _RecordingBus()
         registry = GuestRegistry(cluster_bus=bus)
 
@@ -278,22 +271,21 @@ class TestReconnectRefreshesVersion:
         topology = TopologyService(config=config, web_channels={})
         topology.set_host_election(host_election)
 
-        # First connection: old code, no version. handle_ws pops the session on
-        # its scripted disconnect, so re-seat the captured session to model a
-        # still-open link, then query topology.
+        # 第一次连接：老代码，无版本。handle_ws 在脚本断连时弹出 session，故重新
+        # 坐回捕获的 session 来模拟仍打开的 link，再查 topology。
         _ws, old_session = await _drive_hello(registry, {
             "type": "hello", "machine_id": "devbox", "bots": [],
         })
         assert old_session.version == 0
         registry.sessions["devbox"] = old_session
-        assert topology.version_for("devbox") == 0  # incompatible → would fast-fail
+        assert topology.version_for("devbox") == 0  # 不兼容 → 会被快速失败
 
-        # devbox updates and reconnects with the current version.
+        # devbox 更新并以当前版本重连。
         _ws2, new_session = await _drive_hello(registry, {
             "type": "hello", "v": CLUSTER_BUS_WIRE_VERSION,
             "machine_id": "devbox", "bots": [],
         })
         assert new_session.version == CLUSTER_BUS_WIRE_VERSION
         registry.sessions["devbox"] = new_session
-        assert topology.version_for("devbox") == CLUSTER_BUS_WIRE_VERSION  # refreshed
+        assert topology.version_for("devbox") == CLUSTER_BUS_WIRE_VERSION  # 已刷新
         assert bus.attached_version["devbox"] == CLUSTER_BUS_WIRE_VERSION

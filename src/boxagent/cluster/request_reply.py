@@ -1,23 +1,22 @@
-"""Request/reply over the cluster bus.
+"""基于 cluster bus 的 request/reply。
 
-A caller names a target machine and an HTTP-shaped request; the reply comes back
-correlated. Location-unified: the caller does not branch on a transport — the bus
-routes (guest→host→guest relay included). Built on `bus.send` + `bus.subscribe`,
-NOT a separate transport ("share the pipe, not the pattern"): request/reply is a
-thin business layer over pub/sub.
+调用方指定目标机器和一个 HTTP 形状的请求，回复按 correlation_id 关联返回。
+位置透明：调用方不区分 transport，由 bus 路由（含 guest→host→guest 中继）。
+建在 `bus.send` + `bus.subscribe` 之上，不是独立 transport（"共用管道，不共用
+模式"）：request/reply 只是 pub/sub 上的一层薄业务逻辑。
 
-Wire shape (all ordinary `packet` frames on the bus):
+wire 形状（都是 bus 上普通的 `packet` 帧）：
   request  : receiver=<target>, topic="request.<target>",
              payload={method, path, query, body, correlation_id, reply_machine}
   reply    : receiver=<reply_machine>, topic="reply.<reply_machine>.<correlation_id>",
              payload={status, body, correlation_id}
 
-The responder runs the request against its OWN web port over a real 127.0.0.1 HTTP
-loopback (so auth + the real _handle_web_* handlers run), then sends a reply packet.
-Two-hop relay is the bus's job (receiver-based routing) — the loopback never relays.
+responder 把请求打到自己的 web 端口、走真实 127.0.0.1 HTTP loopback（这样鉴权 +
+真实的 _handle_web_* handler 都会跑），再发 reply 包。两跳中继由 bus 负责
+（按 receiver 路由），loopback 从不中继。
 
-Drop-in for the old ClusterRpc: same `dispatch_machine_request` + `handle_guest_ws`
-surface, so the 13 web-server call sites and ClusterHttpRoutes are unchanged.
+drop-in 替代旧 ClusterRpc：`dispatch_machine_request` + `handle_guest_ws` 接口
+不变，13 处 web-server 调用点和 ClusterHttpRoutes 无需改动。
 """
 from __future__ import annotations
 
@@ -34,9 +33,8 @@ logger = logging.getLogger(__name__)
 
 
 class _RequestSubscriber:
-    """Bus subscriber for inbound requests addressed to this machine. Schedules
-    the async handler (create_task is fine here — requests are low-frequency and
-    order-independent, unlike the chat hot path)."""
+    """接收发给本机的入站请求的 bus 订阅者。用 create_task 调度异步 handler
+    （请求低频且顺序无关，不像 chat 热路径）。"""
 
     def __init__(self, owner: "RequestReply") -> None:
         self._owner = owner
@@ -46,7 +44,7 @@ class _RequestSubscriber:
 
 
 class _ReplySubscriber:
-    """Bus subscriber for inbound replies to this machine's pending requests."""
+    """接收发给本机 pending 请求的入站回复的 bus 订阅者。"""
 
     def __init__(self, owner: "RequestReply") -> None:
         self._owner = owner
@@ -70,10 +68,10 @@ class RequestReply:
         self._local_web_port = local_web_port
         self._local_web_token = local_web_token
         self._id_factory: "Callable[[], str]" = id_factory or (lambda: uuid.uuid4().hex)
-        # correlation_id -> (future, target_machine). target is kept so a peer going
-        # unreachable can fail exactly the requests waiting on it.
+        # correlation_id -> (future, target_machine)。保留 target，好在某个 peer
+        # 变不可达时精确 fail 掉等它的那些请求。
         self._pending: dict[str, tuple[asyncio.Future, str]] = {}
-        self._tasks: set = set()   # strong refs to in-flight responder tasks
+        self._tasks: set = set()   # 在飞 responder task 的强引用
         self._http_session: ClientSession | None = None
         local = topology.local_machine_id()
         bus.subscribe(f"request.{local}", _RequestSubscriber(self))
@@ -83,19 +81,18 @@ class RequestReply:
     def _local(self) -> str:
         return self._topology.local_machine_id()
 
-    # ── drop-in ClusterRpc surface ─────────────────────────────────────────
+    # ── drop-in ClusterRpc 接口 ─────────────────────────────────────────
 
     async def dispatch_machine_request(
         self, machine: str, method: str, path: str,
         request: web.Request, body: dict | None = None,
     ) -> "web.Response | None":
-        """Forward to a remote machine and return its response. None when the
-        target is local (caller continues with local handling).
+        """转发到远端机器并返回其响应。target 是本机时返回 None（调用方继续本地
+        处理）。
 
-        Fast-fail gate: before sending a doomed request, check the target's
-        negotiated cluster-bus wire version. An incompatible peer (old / offline /
-        version-mismatch) returns 502 in <1ms instead of hanging the full timeout,
-        so the web UI never wedges its ~6 browser connection slots on it."""
+        Fast-fail 门：发出注定失败的请求前，先查目标的 cluster-bus wire 版本。
+        不兼容的 peer（旧 / 离线 / 版本不匹配）<1ms 返回 502，不再挂满整个
+        timeout，避免 web UI 把 ~6 个浏览器连接槽都卡死在它上面。"""
         if machine == self._local:
             return None
         target_version = self._topology.version_for(machine)
@@ -118,26 +115,24 @@ class RequestReply:
         )
 
     async def handle_guest_ws(self, request: web.Request) -> web.StreamResponse:
-        """/api/guest/ws — delegate to the GuestRegistry when this node is host."""
+        """/api/guest/ws——本节点是 host 时委托给 GuestRegistry。"""
         registry = self._topology.guest_registry
         if registry is None:
             return web.json_response({"ok": False, "error": "not host"}, status=503)
         return await registry.handle_ws(request)
 
-    # ── caller side ────────────────────────────────────────────────────────
+    # ── caller 侧 ────────────────────────────────────────────────────────
 
     async def request(
         self, target_machine: str, method: str, path: str,
         *, query: dict | None = None, body: dict | None = None, timeout: float = 30.0,
     ) -> dict:
-        """Send a request to `target_machine`, await the correlated reply.
-        Returns ``{"status": int, "body": dict}``. Fails fast (not a full timeout)
-        if the target's version is known-incompatible (dispatch pre-check) or the
-        bus reports it unreachable mid-flight. The timeout is only a last-resort
-        backstop for a compatible, online peer that goes silent — NOT the primary
-        fast-fail path. (A shorter blanket timeout was tried and reverted: it
-        false-fails legitimately-slow requests, and timeout means 'outcome
-        unknown', not 'did not happen' — a real RPC framework will address this.)"""
+        """向 `target_machine` 发请求，等待关联的回复。返回
+        ``{"status": int, "body": dict}``。若目标版本已知不兼容（dispatch 前置
+        检查）或 bus 中途报它不可达，会 fast-fail（而非等满 timeout）。timeout 只是
+        针对"兼容、在线但突然沉默的 peer"的兜底，不是主要 fast-fail 路径。
+        （试过缩短统一 timeout 又撤回了：会误杀合法的慢请求；且 timeout 意味着
+        "结果未知"而非"没发生"——真正的 RPC 框架会处理这个。）"""
         correlation_id = self._id_factory()
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[correlation_id] = (future, target_machine)
@@ -172,13 +167,13 @@ class RequestReply:
             })
 
     def fail_unreachable(self, machine: str) -> None:
-        """Fail every pending request targeting `machine` fast (bus signalled the
-        peer is down / version-incompatible) instead of hanging to timeout."""
+        """快速 fail 掉所有指向 `machine` 的 pending 请求（bus 已告知该 peer 下线 /
+        版本不兼容），不再挂到 timeout。"""
         for _correlation_id, (future, target) in list(self._pending.items()):
             if target == machine and not future.done():
                 future.set_result({"status": 502, "body": {"ok": False, "error": f"{machine} unreachable"}})
 
-    # ── responder side ─────────────────────────────────────────────────────
+    # ── responder 侧 ─────────────────────────────────────────────────────
 
     def _spawn_serve(self, payload: dict) -> None:
         task = asyncio.create_task(self._serve_request(payload))
@@ -204,8 +199,8 @@ class RequestReply:
         )
 
     async def _loopback(self, method: str, path: str, query: dict, body) -> dict:
-        """Re-issue against this node's own web port over real 127.0.0.1 HTTP, so
-        the real _handle_web_* handlers run with auth. Returns {status, body}."""
+        """走真实 127.0.0.1 HTTP 重新打到本节点自己的 web 端口，让真实的
+        _handle_web_* handler 带鉴权跑一遍。返回 {status, body}。"""
         if not self._local_web_port:
             return {"status": 503, "body": {"ok": False, "error": "loopback not configured"}}
         if self._http_session is None:

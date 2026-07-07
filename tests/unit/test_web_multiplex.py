@@ -1,9 +1,8 @@
-"""Tests for the /api/multiplex WebSocket — one socket, many tagged chat streams.
+"""/api/multiplex WebSocket 的测试——一个 socket，多个带 tag 的 chat 流。
 
-The page-level multiplex endpoint replaces N per-chat SSE streams with a single
-WebSocket that holds many bus subscriptions. These drive a real aiohttp server +
-real ws client + real MessageBus, so they cover the whole subscribe → publish →
-tagged-frame → unsubscribe → cleanup loop end to end.
+页级 multiplex 端点用单个持有多个总线订阅的 WebSocket 取代 N 条 per-chat SSE 流。
+这些测试用真的 aiohttp server + 真的 ws client + 真的 MessageBus，端到端覆盖整个
+subscribe → publish → 带 tag 的帧 → unsubscribe → cleanup 回路。
 """
 from __future__ import annotations
 
@@ -58,7 +57,7 @@ async def test_multiplex_delivers_tagged_events_for_subscribed_chat():
     try:
         ws = await client.ws_connect("/api/multiplex")
         await ws.send_json({"type": "subscribe", "machine": "local", "bot": "b", "chat_id": "c1"})
-        # Let the handler register the subscription before we publish.
+        # 在 publish 前让 handler 完成订阅注册。
         await asyncio.sleep(0.05)
         bus.publish("chat.local.b.c1", {"type": "message", "text": "hi"}, 1.0)
         frame = await asyncio.wait_for(ws.receive_json(), timeout=2.0)
@@ -103,7 +102,7 @@ async def test_multiplex_unsubscribe_stops_delivery():
         await asyncio.sleep(0.05)
         await ws.send_json({"type": "unsubscribe", "machine": "local", "bot": "b", "chat_id": "c1"})
         await asyncio.sleep(0.05)
-        # After unsubscribe the bus has no subscriber for this topic.
+        # unsubscribe 后总线对该 topic 没有订阅者了。
         assert not bus.has_subscribers("chat.local.b.c1")
         bus.publish("chat.local.b.c1", {"type": "message"}, 1.0)
         with pytest.raises(asyncio.TimeoutError):
@@ -127,7 +126,7 @@ async def test_multiplex_closes_all_subscriptions_on_disconnect():
         assert bus.has_subscribers("chat.local.b.c2")
         await ws.close()
         await asyncio.sleep(0.05)
-        # Both subscriptions torn down when the socket dropped.
+        # socket 断开时两个订阅都被拆除。
         assert not bus.has_subscribers("chat.local.b.c1")
         assert not bus.has_subscribers("chat.local.b.c2")
     finally:
@@ -141,7 +140,7 @@ async def test_multiplex_ignores_unknown_local_bot():
     client = await _client(server)
     try:
         ws = await client.ws_connect("/api/multiplex")
-        # "nope" is not a local web-enabled bot → no subscription created.
+        # "nope" 不是本机启用 web 的 bot → 不创建订阅。
         await ws.send_json({"type": "subscribe", "machine": "local", "bot": "nope", "chat_id": "c1"})
         await asyncio.sleep(0.05)
         assert not bus.has_subscribers("chat.local.nope.c1")

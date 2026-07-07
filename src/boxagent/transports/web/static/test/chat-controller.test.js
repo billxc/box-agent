@@ -3,11 +3,10 @@ const { test } = require("node:test");
 const assert = require("node:assert");
 const { ChatController } = require("./load");
 
-// The whole live-conversation controller is injected through `app`, so we drive
-// it with a fake app (mock api + spy components) — no real EventSource/fetch/DOM.
-// Assertions are against the `app` *service boundary* (chatLog / recents / api /
-// setConn / sessionInfoEl / refreshSessionList), since the controller's own
-// helpers (addMessage, touchSession, …) are internal to it.
+// 整个实时会话 controller 都经 `app` 注入，所以用假 app（mock api + spy 组件）
+// 驱动它 — 无真 EventSource/fetch/DOM。断言针对 `app` 服务边界
+//（chatLog / recents / api / setConn / sessionInfoEl / refreshSessionList），
+// 因为 controller 自身的辅助函数（addMessage、touchSession…）是其内部实现。
 function makeApp(over = {}) {
   const calls = [];
   const setTexts = [];
@@ -50,7 +49,7 @@ const has = (app, n) => app._calls.some((c) => c[0] === n);
 const arg = (app, n) => (app._calls.find((c) => c[0] === n) || [])[1];
 const arg2 = (app, n) => (app._calls.find((c) => c[0] === n) || []).slice(1);
 
-// ── wiring ──
+// ── 接线 ──
 
 test("ChatController attaches the public surface + wires onLoadOlder", () => {
   const app = makeApp();
@@ -60,7 +59,7 @@ test("ChatController attaches the public surface + wires onLoadOlder", () => {
   assert.equal(typeof app.chatLog.onLoadOlder, "function", "onLoadOlder wired");
 });
 
-// ── handleEvent ──
+// ── handleEvent 事件处理 ──
 
 test("message → adds a bubble + bumps the session (touchSession)", () => {
   const app = makeApp();
@@ -95,7 +94,7 @@ test("stream_end clears the stream msg + refreshes list/info", async () => {
   app.state.streamMsgs.m1 = { el: { setText() {} }, text: "done" };
   app.handleEvent({ type: "stream_end", message_id: "m1", text: "done" });
   assert.ok(!app.state.streamMsgs.m1, "stream msg removed");
-  await new Promise((r) => setTimeout(r, 0)); // fetchServerSessions().then(...)
+  await new Promise((r) => setTimeout(r, 0)); // 等 fetchServerSessions().then(...)
   assert.ok(has(app, "refreshSessionList"));
   assert.ok(has(app, "setInfo"), "refreshSessionInfo ran");
 });
@@ -114,7 +113,7 @@ test("_close → connection offline", () => {
   assert.deepEqual(app._calls.at(-1), ["setConn", "offline"]);
 });
 
-// ── switchChat ──
+// ── switchChat 切换会话 ──
 
 test("switchChat resolves title, swaps history, opens the stream", async () => {
   const app = makeApp({
@@ -146,7 +145,7 @@ test("switchChat with a failed history fetch renders an empty log", async () => 
   assert.deepEqual(arg(app, "setHistory"), []);
 });
 
-// ── sendText ──
+// ── sendText 发送 ──
 
 test("sendText: offline machine → notice, no POST", async () => {
   let posted = false;
@@ -180,7 +179,7 @@ test("sendText: happy path posts, no error bubble", async () => {
   assert.ok(!app._calls.some((c) => c[0] === "addMessage"), "no error message on success");
 });
 
-// ── loadOlderHistory ──
+// ── loadOlderHistory 加载更早历史 ──
 
 test("loadOlderHistory prepends + advances offset; empty → exhausted", async () => {
   const app = makeApp({ api: async () => ({ ok: true, json: async () => ({ history: [{ role: "user", text: "x" }], total: 9 }) }) });
@@ -201,7 +200,7 @@ test("loadOlderHistory bails when already exhausted", async () => {
   assert.ok(!called);
 });
 
-// ── refreshSessionInfo (exercised via stream_end path already; direct here) ──
+// ── refreshSessionInfo（已在 stream_end 路径覆盖过；此处直接测）──
 
 test("touchSession infers platform + persists via recents", () => {
   const app = makeApp({ state: { chatId: "web-42" } });
