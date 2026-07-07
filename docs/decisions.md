@@ -35,8 +35,10 @@ HTTP/1.1 的 ~6 个连接槽 → UI 冻住（后台没坏，curl 秒回）。
    `on_topology_change` 重推 snapshot；`HostElection._tick`（每 10s）在 host 稳态额外
    **定时重推** snapshot，保证「别人更新重启后大家很快知道它是新版本」，不把已更新机器
    一直当老版本挡。
-6. **默认超时兜底**：`request()` 默认 30s → **8s**（前置门 + `on_unreachable` 正常会更
-   早失败，8s 只是最后的网）。
+6. **默认超时**：保持 `request()` 默认 **30s**（前置门 + `on_unreachable` 已把「已知坏」的
+   机器秒毙；超时只兜底「同版本、在线、但静默」的罕见情况）。曾试过一刀切砍到 8s，**已
+   revert**——它会误杀合法的慢请求，且超时语义是「结果未知」不是「没发生」，非幂等操作
+   （/api/send）据此重试会双发。这块留给后续单独设计的 RPC 框架处理。
 
 **为什么前置门而不是只靠超时**：`on_unreachable` 只在「链路当场不存在」时触发；一个
 **版本不匹配但链路在**的 peer，请求会真发出去、对面（老代码）读不懂或丢弃、requester
@@ -45,7 +47,7 @@ HTTP/1.1 的 ~6 个连接槽 → UI 冻住（后台没坏，curl 秒回）。
 **改的文件**：`cluster/registry.py`（GuestSession.version + hello 记版本 + welcome 加 v
 + list_machines 带 version）、`cluster/guest_client.py`（hello 加 v + attach_link 挪到
 welcome + welcome/snapshot 提到 v2 门前）、`cluster/topology_service.py`（collect_machines
-带 version + `version_for`）、`cluster/request_reply.py`（dispatch 前置门 + timeout 8s）、
+带 version + `version_for`）、`cluster/request_reply.py`（dispatch 前置门；timeout 保持 30s）、
 `cluster/host_election.py`（host 稳态定时重推 snapshot）。测试
 `tests/unit/test_cluster_fast_fail.py`（+9）。
 

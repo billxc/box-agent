@@ -128,13 +128,16 @@ class RequestReply:
 
     async def request(
         self, target_machine: str, method: str, path: str,
-        *, query: dict | None = None, body: dict | None = None, timeout: float = 8.0,
+        *, query: dict | None = None, body: dict | None = None, timeout: float = 30.0,
     ) -> dict:
         """Send a request to `target_machine`, await the correlated reply.
         Returns ``{"status": int, "body": dict}``. Fails fast (not a full timeout)
-        if the bus reports the target unreachable mid-flight. The 8s default is a
-        backstop only — the version pre-check and on_unreachable signal normally
-        fail an unreachable peer far sooner."""
+        if the target's version is known-incompatible (dispatch pre-check) or the
+        bus reports it unreachable mid-flight. The timeout is only a last-resort
+        backstop for a compatible, online peer that goes silent — NOT the primary
+        fast-fail path. (A shorter blanket timeout was tried and reverted: it
+        false-fails legitimately-slow requests, and timeout means 'outcome
+        unknown', not 'did not happen' — a real RPC framework will address this.)"""
         correlation_id = self._id_factory()
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[correlation_id] = (future, target_machine)
