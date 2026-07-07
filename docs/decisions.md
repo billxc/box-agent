@@ -267,3 +267,17 @@ WC 化后每个组件都要肉眼手验，迟早漏。加自动测试，但**不
 **刻意保留 events 走 EventSyncer**：events 跨机复制需要 `(origin_machine, origin_seq)` 去重 + resync-on-reconnect，naive broadcast 给不了；这是 pub/sub 之外 legitimately 不同的**可靠复制**关切，不是冗余。`events/sync.py` + `bus_wiring.py`(收成 events-only) + `peer_transport.py`(events 帧 WIRE_VERSION=2) 保留。若将来迁 events，见 `docs/bus-protocol.md` 的 Open。
 
 **部署**：big-bang——代码在分支上按可测小步走（每步跑测试），最后全 fleet 一起重启（新旧 bus 不互通，无灰度窗口，3-4 台个人机可接受）。基线 984 → 迁移后 952 passed（降幅=删的 rpc/chat 测试 − 新增 bus 测试）。
+
+## 2026-07-07 — Web UI 推送多路复用：每 chat 一条 SSE → 整页一条 WS（分支 sse-multiplex）
+
+**病因**：Web UI 每打开一个 chat 就开一条 SSE 长连接 `GET /api/stream?bot&machine&chat_id`（`_handle_web_stream` 订一个 bus topic `chat.<owner>.<bot>.<chat_id>` 逐条 SSE 推给浏览器）。一个 chat = 占一个浏览器 HTTP/1.1 连接槽；单 host 上限 ~6 个并发连接，开几个 chat + 其它请求就把槽占满，整个 UI 卡住排队。aiohttp 不支持 HTTP/2（官方 not planned），扩连接数这条路堵死。
+
+**方案（选 WS，非 SSE+POST）**：
+- 动态订/退需要 client→server 指令通道。SSE 单向，要么配一个 POST 控制端点（需 server 用 connection-id 把无状态 POST 和某条在飞 SSE 关联起来，多一层握手），要么直接上 WebSocket（双向，订/退天然干净）。选 **WS**：一根 socket = 永远只占 1 个槽，订/退 + 未来 client→server 需求都骑同一条；唯一代价是重连，用 backoff + 重连后重报订阅集兜住。
+- 旧 `/api/stream` **保留不动**（向后兼容 / iOS 等其它消费者），只新增 `/api/multiplex`；前端 chat 路径切到新端点。
+
+**后端**（`transports/web/server.py`）：新增 `_handle_web_multiplex`——一条 WS 持有**多个** bus 订阅（`dict[topic, Subscription]`），收 `{type:subscribe|unsubscribe, machine, bot, chat_id}` 控制帧动态加/减订阅；每条事件用新的 `TaggedQueueSubscriber`（`bus/subscriber.py`）打上 `{machine,bot,chat_id, event:{...}}` 标签汇入一根共享 queue，pump task 逐条 `send_json` 推下去；WS 关闭时 finally 里 `subscription.close()` 全部退订。topic 解析抽成 `_resolve_chat_topic()` 与旧 SSE handler 共用。`bus/core.py` 加只读 `has_subscribers(topic)` 供测试断言订阅生命周期（不 peek 私有 `_exact`）。
+
+**前端**（`transports/web/static/`）：新增 `multiplex.js`（`MultiplexClient`，一根页面级 WS + backoff 重连 + 订阅集 + 按 `machine|bot|chat_id` demux）。`chat-controller.js` 的 `switchChat` 不再 `EventSource.close()` + 开新流，改成对上一个 chat `app.multiplex.unsubscribe` + 对新 chat `subscribe(handler=handleEvent)`；`openStream()` 保留名字但改成订阅一条 tag。连接数从 N 降到 1。`events.js`（Events 页那条独立 SSE）不在此列，未动。
+
+**测试**：后端 `tests/unit/test_web_multiplex.py`（真 aiohttp server + 真 ws client + 真 MessageBus：订阅→publish→tagged 帧→退订→断连清理，5 条）。前端 `test/multiplex.test.js`（fake WebSocket 注入 via `app._makeSocket`：单 socket 多 chat、demux、退订、幂等、缓冲、drop 重连、close 不重连、token 上 URL，9 条）；`chat-controller.test.js` 的 `es`/EventSource 断言改为 `app.multiplex` spy。基线后端 886 → 958 passed；前端 76 → 85 passed。

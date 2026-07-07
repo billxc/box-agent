@@ -15,6 +15,7 @@ const staticDir = path.join(__dirname, "..");
 for (const rel of [
   "util.js",
   "session-data.js",
+  "multiplex.js",
   "chat-controller.js",
   "components/tool-card.js",
   "components/chat-message.js",
@@ -49,4 +50,5 @@ module.exports = {
   get defaultTitle() { return globalThis.defaultTitle; },
   get shortId() { return globalThis.shortId; },
   get ChatController() { return globalThis.ChatController; },
+  get MultiplexClient() { return globalThis.MultiplexClient; },
 };
