@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# boxrun — 通过本机 boxagent 的 /api/exec 在集群任意机器上同步跑一条 shell 命令。
+#
+#   boxrun <machine> <command...>          # 默认 30s 超时
+#   boxrun -t 120 <machine> <command...>   # 自定义超时（秒，1..600）
+#
+# 打印目标机的 stdout/stderr（已合并），并以目标命令的 exit_code 退出。
+# 走 127.0.0.1:<web_port>/api/exec（localhost 免鉴权），跨机由 host 中继。
+set -euo pipefail
+
+timeout=30
+if [[ "${1:-}" == "-t" ]]; then
+  timeout="${2:-30}"
+  shift 2
+fi
+
+machine="${1:-}"
+shift || true
+command_str="$*"
+
+if [[ -z "$machine" || -z "$command_str" ]]; then
+  echo "Usage: boxrun [-t SECONDS] <machine> <command...>" >&2
+  exit 2
+fi
+
+# web 端口：优先 web-port.txt，其次 env，最后默认 9292
+ba_dir="${BOXAGENT_DIR:-$HOME/.boxagent}"
+port="${BOXAGENT_WEB_PORT:-}"
+if [[ -z "$port" && -f "$ba_dir/local/web-port.txt" ]]; then
+  port="$(cat "$ba_dir/local/web-port.txt" 2>/dev/null || true)"
+fi
+port="${port:-9292}"
+
+python3 - "$machine" "$command_str" "$timeout" "$port" <<'PY'
+import json, sys, urllib.request
+
+machine, command_str, timeout, port = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+payload = json.dumps({"machine": machine, "command": command_str, "timeout": timeout}).encode()
+req = urllib.request.Request(
+    f"http://127.0.0.1:{port}/api/exec",
+    data=payload, headers={"Content-Type": "application/json"}, method="POST",
+)
+try:
+    with urllib.request.urlopen(req, timeout=timeout + 15) as response:
+        body = json.loads(response.read())
+except urllib.error.HTTPError as e:
+    try:
+        body = json.loads(e.read())
+    except Exception:
+        print(f"boxrun: HTTP {e.code}", file=sys.stderr)
+        sys.exit(1)
+except Exception as e:
+    print(f"boxrun: request failed: {e}", file=sys.stderr)
+    sys.exit(1)
+
+output = body.get("output", "")
+if output:
+    print(output)
+if not body.get("ok"):
+    print(f"boxrun: {body.get('error', 'exec failed')}", file=sys.stderr)
+    sys.exit(1)
+sys.exit(int(body.get("exit_code") or 0))
+PY

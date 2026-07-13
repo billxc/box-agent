@@ -416,3 +416,20 @@ WC 化后每个组件都要肉眼手验，迟早漏。加自动测试，但**不
 **改的文件**：`cluster/registry.py`（finally 守卫）。测试 `tests/unit/test_cluster_reconnect_race.py` 加 2 个（重叠协程后新 link 仍在；正常断连仍 detach + 清 session），用能被 `close()` 确定性触发断连的 fake WebSocket 驱动真 `handle_ws`。977 → 979 passed。
 
 **清现存幽灵态**：代码修好后仍需让当前"卡住"的 guest 干净重连一次（停掉 → 等 host 标 offline → 再启动），或重启 host 清空 link 表。
+
+## 2026-07-13 — 跨机同步 shell 执行：`POST /api/exec` 融合 `/exec`（分支 remote-exec）
+
+**需求**：owner 要能方便地在集群里任意机器上跑 shell 命令（起因：修上面那个 devbox-xl 幽灵态时，本地够不着远端机器操作）。
+
+**为什么不走 SSH**：节点本有 `cloudflared access ssh`（`edgexl`/`claw`/`macmini`）通道，但当时全 banner 超时（cloudflared access 需重登 / WSL sshd 没起），且 SSH 是产品外的一条独立链路、要单独维护鉴权。选**做进 boxagent**、复用已有的 request/reply 中继（`dispatch_machine_request`），一个入口、一套鉴权，位置透明。
+
+**为什么复用 `/exec` 而非新造**：Telegram 早有 `/exec` slash 命令（`router/commands/tools.py`），pwsh(Win)/shell(Unix) + 超时杀进程树 + strip ANSI 逻辑已成熟。把这段抽成 leaf util `shell_exec.py::run_shell_command`，`/exec` 与新端点共用——全项目一份 exec 实现。
+
+**做法**：
+- `shell_exec.py`（新，leaf util，不依赖 router/web）：`run_shell_command(command, *, workspace, timeout) -> ShellResult(exit_code, output, timed_out)` + `clamp_timeout`（1..600）。`cmd_exec` 改调它（`-t` 解析 / Telegram 文件上传格式化仍留在命令层）。
+- `POST /api/exec`（`transports/web/server.py`）：body `{machine, command, timeout?, workspace?}`。`machine != 本机` → `dispatch_machine_request(machine,"POST","/api/exec",...)` 中继（在目标机落本机分支跑真 shell），同步拿回 `{exit_code, output}`；本机 → `run_shell_command`（cwd 默认 `default_workspace_dir`）。output 截断上限 `_EXEC_MAX_OUTPUT=200_000` 防撑爆中继帧。鉴权沿用现有（localhost 开放 + tunnel 需 cluster token），**不加额外开关**——与既有 `/exec` 同等能力，不新增攻击面（owner 决策）。
+- `scripts/boxrun`：`boxrun [-t N] <machine> <command...>` → curl 本机 `127.0.0.1:<web_port>/api/exec`，同步打印输出并以目标命令的 exit_code 退出。web_port 读 `local/web-port.txt`，兜底 9292。
+
+**测试**：`test_shell_exec.py`（6：echo/exit code/stderr 合并/超时杀/缺 workspace 兜底/clamp）、`test_web_exec_route.py`（5：本机跑通/缺参 400/非零退出/跨机 relay mock/非 localhost 401）。979 → 990 passed。
+
+**部署注意（chicken-and-egg）**：端点是跨机链路，要**目标机也跑新代码**才有 `/api/exec`。所以它救不了当下仍在旧代码上的 devbox-xl——那台得先用别的办法（恢复 SSH / 手动上机）把新代码弄上去，之后 `boxrun` 才够得着它。

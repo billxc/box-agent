@@ -2,47 +2,17 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
-import re
-import shutil
-import signal
-import sys
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from boxagent.router.commands.registry import CommandCategory, command
+from boxagent.shell_exec import EXEC_DEFAULT_TIMEOUT, run_shell_command
 
 if TYPE_CHECKING:
     from boxagent.router.core import Router
     from boxagent.transports.base import Channel, IncomingMessage
 
 logger = logging.getLogger(__name__)
-
-
-EXEC_DEFAULT_TIMEOUT = 30
-
-
-def _kill_process_tree(backend: asyncio.subprocess.Process) -> None:
-    """Kill a subprocess and its children via process group (Unix) or taskkill (Windows)."""
-    if backend.returncode is not None:
-        return
-    pid = backend.pid
-    if sys.platform == "win32":
-        import subprocess
-        try:
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(pid)],
-                capture_output=True, timeout=5,
-            )
-        except Exception:
-            backend.kill()
-    else:
-        try:
-            os.killpg(os.getpgid(pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            backend.kill()
 
 
 @command("/exec", help="Run a shell command (e.g. /exec ls -la)", category=CommandCategory.TOOLS)
@@ -70,59 +40,22 @@ async def cmd_exec(router: "Router", msg: "IncomingMessage", channel: "Channel")
                 pass
 
     command_str = rest
-    workspace = router.workspace
     await channel.show_typing(msg.chat_id)
 
-    cwd = workspace if workspace and Path(workspace).is_dir() else None
-    shell_args: list[str] | None
-    shell_env: dict[str, str] | None
-    if sys.platform == "win32":
-        pwsh = shutil.which("pwsh") or shutil.which("pwsh.exe")
-        if not pwsh:
-            pwsh = shutil.which("powershell") or shutil.which("powershell.exe")
-        if pwsh:
-            shell_args = [pwsh, "-NoProfile", "-NoLogo", "-Command", command_str]
-            shell_env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb"}
-        else:
-            shell_args = None
-            shell_env = None
-    else:
-        shell_args = None
-        shell_env = None
-
     try:
-        if shell_args:
-            backend = await asyncio.create_subprocess_exec(
-                *shell_args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                cwd=cwd,
-                env=shell_env,
-                start_new_session=True,
-            )
-        else:
-            backend = await asyncio.create_subprocess_shell(
-                command_str,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                cwd=cwd,
-                start_new_session=True,
-            )
-        try:
-            stdout, _ = await asyncio.wait_for(backend.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
-            _kill_process_tree(backend)
-            await backend.wait()
-            await channel.send_text(msg.chat_id, f"Command timed out after {timeout}s (killed).")
-            return
-
-        output = stdout.decode("utf-8", errors="replace").rstrip()
-        output = re.sub(r"\x1b\[[0-9;]*m", "", output)
-        exit_code = backend.returncode
-
+        result = await run_shell_command(
+            command_str, workspace=router.workspace, timeout=timeout,
+        )
     except Exception as e:
         await channel.send_text(msg.chat_id, f"Exec failed: {e}")
         return
+
+    if result.timed_out:
+        await channel.send_text(msg.chat_id, f"Command timed out after {timeout}s (killed).")
+        return
+
+    output = result.output
+    exit_code = result.exit_code
 
     header = f"Exit: {exit_code}"
     if not output:

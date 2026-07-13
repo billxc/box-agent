@@ -29,6 +29,9 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
 
+# /api/exec 输出上限——防超大结果撑爆跨机中继帧 / 浏览器
+_EXEC_MAX_OUTPUT = 200_000
+
 
 def _project_to_dict(p) -> dict:
     """把 ``boxagent.history.ProjectInfo`` 序列化给 Web UI。
@@ -206,6 +209,7 @@ class WebHttpServer:
             Route("/api/admin/cluster_restart", self._handle_admin_cluster_restart, methods=["POST"]),
             Route("/api/history", self._handle_web_history, methods=["GET"]),
             Route("/api/send", self._handle_web_send, methods=["POST"]),
+            Route("/api/exec", self._handle_web_exec, methods=["POST"]),
             Route("/api/stream", self._handle_web_stream, methods=["GET"]),
             WebSocketRoute("/api/multiplex", self._handle_web_multiplex),
             Route("/api/claude/projects", self._handle_claude_projects, methods=["GET"]),
@@ -767,6 +771,63 @@ class WebHttpServer:
             logger.exception("web send failed")
             return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
         return JSONResponse({"ok": True})
+
+    async def _handle_web_exec(self, request: Request) -> Response:
+        """POST /api/exec — 在指定机器上同步跑一条 shell 命令并返回输出。
+
+        body: {machine, command, timeout?, workspace?}。`machine` 非本机时经
+        `dispatch_machine_request` 中继到目标机（在那边落本机分支跑真 shell），
+        同步拿回 {exit_code, output}。与 `/exec` slash 命令共用 shell_exec 核心。
+        鉴权沿用现有：localhost 开放、tunnel 需 cluster token。"""
+        from boxagent.shell_exec import (
+            EXEC_DEFAULT_TIMEOUT, clamp_timeout, run_shell_command,
+        )
+        from boxagent.utils import default_workspace_dir
+
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"ok": False, "error": "invalid JSON"}, status_code=400)
+        machine = str(body.get("machine") or "")
+        command = str(body.get("command") or "")
+        if not machine or not command:
+            return JSONResponse(
+                {"ok": False, "error": "missing machine/command"}, status_code=400,
+            )
+        try:
+            timeout = clamp_timeout(int(body.get("timeout") or EXEC_DEFAULT_TIMEOUT))
+        except (TypeError, ValueError):
+            timeout = EXEC_DEFAULT_TIMEOUT
+
+        if machine != self.topology.local_machine_id():
+            response = await self.cluster_rpc.dispatch_machine_request(
+                machine, "POST", "/api/exec", request, body=body,
+            )
+            if response is not None:
+                return response
+
+        workspace = str(body.get("workspace") or "") or str(default_workspace_dir(self.config_dir))
+        try:
+            result = await run_shell_command(command, workspace=workspace, timeout=timeout)
+        except Exception as e:
+            logger.exception("web exec failed")
+            return JSONResponse(
+                {"ok": False, "error": str(e), "machine": machine}, status_code=500,
+            )
+        if result.timed_out:
+            return JSONResponse(
+                {"ok": False, "error": f"timed out after {timeout}s (killed)",
+                 "timed_out": True, "machine": machine},
+                status_code=504,
+            )
+        output = result.output
+        if len(output) > _EXEC_MAX_OUTPUT:  # 防超大 JSON 撑爆中继/浏览器
+            output = output[:_EXEC_MAX_OUTPUT] + "\n... (truncated)"
+        return JSONResponse(
+            {"ok": True, "machine": machine, "exit_code": result.exit_code, "output": output},
+        )
 
     def _resolve_chat_topic(self, machine: str, bot: str, chat_id: str) -> str | None:
         """把 (machine, bot, chat_id) 选择器映射到其 bus topic；
