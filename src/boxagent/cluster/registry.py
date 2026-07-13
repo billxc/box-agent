@@ -302,10 +302,14 @@ class GuestRegistry:
             # guest 正常/异常断开——退出读循环，走 finally 清理。
             pass
         finally:
-            if session is not None:
+            # 被顶掉的旧协程（session._closed=True）绝不能碰共享状态——它的 link 和
+            # sessions 槽位已被新连接接管。若在此无条件 detach_link，旧协程的 finally
+            # 会把新连接刚 attach 的 link 删掉，留下"拓扑在线（sessions 里有）但
+            # ClusterBus 不可达"的幽灵态，令该 guest 的所有跨机 RPC 应答被丢弃。
+            # 故 detach 与 sessions.pop 同守卫：只有真·断连（未被顶掉）才清理。
+            if session is not None and not session._closed:
                 if self.cluster_bus is not None:
                     self.cluster_bus.detach_link(session.machine_id)
-            if session is not None and not session._closed:
                 self.sessions.pop(session.machine_id, None)
                 # 记住 bot，好让 UI 继续把该行显示为 "offline"
                 self.history[session.machine_id] = {

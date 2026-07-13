@@ -402,3 +402,17 @@ WC 化后每个组件都要肉眼手验，迟早漏。加自动测试，但**不
 - `dispatch_machine_request`：**只对确知不同版本**（正数且 != 本机）回 502；**0/未知放行**（宁可走一遭，兼容就成、真不通才走原 timeout），不误杀。
 
 **改的文件**：`cluster/registry.py`（local_machine_id 字段 + welcome 带 machine_id）、`cluster/host_election.py`（注入 local_machine_id）、`cluster/guest_client.py`（host_machine_id/host_version 活值 + welcome 存 + 断连清）、`cluster/topology_service.py`（version_for 走活值）、`cluster/request_reply.py`（dispatch 未知放行）。测试 `test_cluster_fast_fail.py` 加 5 个（活值盖 stale 快照、未知放行、welcome 带 machine_id 等）。972 passed。
+
+## 2026-07-13 — 修 guest 重连竞态：旧协程 finally 误删新连接的 ClusterBus link
+
+**病**：mbp（guest）到全网所有远端 bot 的 RPC 全部 30s 超时，但 web UI 里 mbp 及各机器都显示在线、心跳新鲜。从 host（devbox-xl）侧反向验证：`host→mbp` 秒回 `mbp unreachable`，`host→macmini` 正常。即 host 认为 mbp 在线，却路由不到它。
+
+**根因**：`GuestRegistry.handle_ws` 的 `finally` 块里 `detach_link` **无条件执行**，而紧邻的 `sessions.pop` 有 `not session._closed` 守卫——两者不对称。guest 重连时新旧两个 `handle_ws` 协程短暂并存：新协程处理 hello 时逐出旧 session（`old._closed=True` + `close(old.ws)`）并 `attach_link` 自己的 link；随后被关的旧 ws 让旧协程从 `receive_text` 抛 `WebSocketDisconnect` → 进旧协程 finally → **无条件 `detach_link` 把新连接刚 attach 的 link 删掉**。结果：`registry.sessions[mbp]` 是新 session（拓扑在线、心跳走**广播**路径不查 link），但 `cluster_bus._links` 没有 mbp（点对点走 `_usable` 门被判 unreachable）→ 一切发给 mbp 的点对点 packet（**含 RPC 应答**）被丢弃 → mbp 发的请求到得了 host、host 也处理了，但应答回不来 → 全部超时。
+
+**触发条件**：guest 的旧连接**没被及时回收**就发生重连（网络抖动后 host 靠 ~30s 心跳才发现旧 ws 死、或进程重启与旧连接回收重叠）。所以"重启 mbp"这种 naive 补救**会再次触发同一竞态**，不可靠——现象上就是"越重启越坏"。这与 [07-07 fix-version-refresh] 是同一家族（guest 重连留下 host 侧 stale 状态），但那次是 stale 版本缓存，这次是 link 生命周期。
+
+**修**：把 `detach_link` 挪进 `not session._closed` 守卫，与 `sessions.pop` 同条件。被顶掉的旧协程（`_closed=True`）在 finally 里**什么都不碰**——link 和 sessions 槽位都已被新连接接管；只有真·断连（未被顶掉）才 detach + pop。1 处 ~6 行改动。
+
+**改的文件**：`cluster/registry.py`（finally 守卫）。测试 `tests/unit/test_cluster_reconnect_race.py` 加 2 个（重叠协程后新 link 仍在；正常断连仍 detach + 清 session），用能被 `close()` 确定性触发断连的 fake WebSocket 驱动真 `handle_ws`。977 → 979 passed。
+
+**清现存幽灵态**：代码修好后仍需让当前"卡住"的 guest 干净重连一次（停掉 → 等 host 标 offline → 再启动），或重启 host 清空 link 表。
