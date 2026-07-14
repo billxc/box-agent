@@ -116,6 +116,9 @@ class WebHttpServer:
         self.session_meta_cache: dict = {}
         self._serve_task: asyncio.Task | None = None
         self._shutdown_event: asyncio.Event | None = None
+        # 节点近似启动时刻（web server 在 gateway.start() 早期构造）——供 /api/status
+        # 报 uptime。
+        self._started_at = time.time()
 
     def set_event_bus(self, event_bus) -> None:
         self.event_bus = event_bus
@@ -205,6 +208,7 @@ class WebHttpServer:
             Route("/api/sessions/rename", self._handle_rename_session, methods=["POST"]),
             Route("/api/session_info", self._handle_web_session_info, methods=["GET"]),
             Route("/api/version", self._handle_version, methods=["GET"]),
+            Route("/api/status", self._handle_status, methods=["GET"]),
             Route("/api/admin/restart", self._handle_admin_restart, methods=["POST"]),
             Route("/api/admin/cluster_restart", self._handle_admin_cluster_restart, methods=["POST"]),
             Route("/api/history", self._handle_web_history, methods=["GET"]),
@@ -532,6 +536,45 @@ class WebHttpServer:
                 host_result = {"error": str(e)}
             return JSONResponse({"ok": True, "self": local, "host": host_result})
         return JSONResponse({"ok": True, "self": local, "sats": {}})
+
+    async def _handle_status(self, request: Request) -> Response:
+        """GET /api/status — 节点自检，本地直答、零 bus 依赖。
+
+        专为 bus 链路异常时单机自证设计：直连该节点即可拿到它的 role / 版本 /
+        与 host 的连接活值 / guest 列表 / uptime，全程不经 dispatch_machine_request
+        或任何跨机 RPC。故意不提供 ?cluster=1 聚合变体——聚合就得走 bus，违背本意。
+        """
+        from boxagent._version import __version__, _git_commit
+
+        if not self._authorized(request):
+            return self._unauthorized()
+        topology = self.topology
+        role = topology.local_role()
+        cluster: dict = {"role": role}
+        # guest：读 guest_client 的握手活值（welcome 置、断连清），不碰 bus
+        guest_client = topology.guest_client
+        if guest_client is not None:
+            cluster["host_connected"] = bool(guest_client.host_machine_id)
+            cluster["host_machine_id"] = guest_client.host_machine_id or ""
+            cluster["host_version"] = guest_client.host_version
+        # host：读 registry 当前已连接 guest
+        registry = topology.guest_registry
+        if registry is not None:
+            cluster["guest_count"] = len(registry.sessions)
+            cluster["guests"] = [
+                {"machine_id": machine_id, "version": session.version}
+                for machine_id, session in registry.sessions.items()
+            ]
+        return JSONResponse({
+            "ok": True,
+            "machine_id": topology.local_machine_id(),
+            "role": role,
+            "version": __version__,
+            "commit": _git_commit(),
+            "uptime_seconds": int(time.time() - self._started_at),
+            "bots": topology.local_bot_descriptors(),
+            "cluster": cluster,
+        })
 
     async def _handle_admin_restart(self, request: Request) -> Response:
         if not self._authorized(request):

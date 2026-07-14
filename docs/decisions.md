@@ -433,3 +433,20 @@ WC 化后每个组件都要肉眼手验，迟早漏。加自动测试，但**不
 **测试**：`test_shell_exec.py`（6：echo/exit code/stderr 合并/超时杀/缺 workspace 兜底/clamp）、`test_web_exec_route.py`（5：本机跑通/缺参 400/非零退出/跨机 relay mock/非 localhost 401）。979 → 990 passed。
 
 **部署注意（chicken-and-egg）**：端点是跨机链路，要**目标机也跑新代码**才有 `/api/exec`。所以它救不了当下仍在旧代码上的 devbox-xl——那台得先用别的办法（恢复 SSH / 手动上机）把新代码弄上去，之后 `boxrun` 才够得着它。
+
+## 2026-07-13 — 节点自检端点 `GET /api/status`（本地直答、零 bus 依赖）
+
+**需求**：owner 要一组「不经 bus 总线」的基础 API 查版本 + 状态。动机直接来自上面那个幽灵态——bus 链路坏时，恰恰需要能**绕过 bus 单机自证**的探针。
+
+**盘点已有**：`GET /api/version`（不带 `?cluster=1`）本就是本地直答；`/api/machines`、`/api/bots` 也是本地读缓存。缺的是**节点自身健康**的直答端点——`/status` 只是 Telegram slash 命令（还按 bot+chat 上下文），gateway 内部 API（api-port）只有 `POST /api/schedule/run`。
+
+**加**：`GET /api/status`——只读本地 topology 活值，**不触发任何 `dispatch_machine_request`/跨机 RPC**（故意不做 `?cluster=1` 聚合，聚合就得走 bus）：
+- `machine_id / role / version / commit / uptime_seconds / bots[]`
+- guest：`cluster.host_connected`（读 `guest_client.host_machine_id`——welcome 置、断连清的握手活值）、`host_machine_id / host_version`
+- host：`cluster.guest_count / guests[]`（读 `guest_registry.sessions`）
+
+刻意**不塞 bot backend 运行态**——一个 bot 多 chat/session，没有干净的节点级单值。鉴权沿用现有（localhost 开放 + tunnel cluster token）。
+
+**reachability 限制**：由每节点自己的 web server 提供。本机 127.0.0.1 都能问；外部只有 host 有 devtunnel 可直连，guest 往外拨号无独立入口——想从外部直连某 guest（不经 host、不经 bus）需给 guest 加独立 ingress。
+
+**测试**：`test_web_status_route.py`（4：guest 报 host 链路 / guest 断连 / host 报 guests / 非 localhost 401，都断言不触发跨机 RPC）。990 → 994 passed。
